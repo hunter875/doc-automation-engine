@@ -1,0 +1,174 @@
+"""Engine 1 — RAG: Upload Documents + Query."""
+
+import json
+from typing import Any
+
+import sys
+from pathlib import Path
+
+import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from api_client import (
+    get_json,
+    post_file,
+    post_json,
+    render_sidebar,
+    init_state,
+)
+
+st.set_page_config(page_title="Engine 1 — RAG", page_icon="🔍", layout="wide")
+init_state()
+render_sidebar()
+
+# ─── Header ───────────────────────────────────────────────────
+st.title("🔍 Engine 1 — RAG Query")
+st.caption("Upload tài liệu → Xử lý embedding → Hỏi đáp AI")
+
+if not st.session_state.access_token:
+    st.warning("⚠️ Hãy **Login** ở sidebar trước.")
+    st.stop()
+if not st.session_state.tenant_id:
+    st.warning("⚠️ Hãy **chọn Tenant** ở sidebar trước.")
+    st.stop()
+
+# ─── Tabs ─────────────────────────────────────────────────────
+upload_tab, query_tab, docs_tab = st.tabs(["📤 Upload", "💬 RAG Query", "📁 Tài liệu"])
+
+# ═══════════════════════════════════════════════════════════════
+# TAB: UPLOAD
+# ═══════════════════════════════════════════════════════════════
+with upload_tab:
+    st.subheader("Upload Document")
+
+    upload_file = st.file_uploader(
+        "Chọn file",
+        type=["pdf", "txt", "md", "docx", "doc", "json", "csv"],
+        key="e1_upload",
+    )
+    upload_tags = st.text_input("Tags (phân cách bởi dấu phẩy)", value="", key="e1_tags")
+
+    if st.button("📤 Upload", use_container_width=True, key="e1_upload_btn"):
+        if not upload_file:
+            st.error("Chưa chọn file.")
+        else:
+            with st.spinner("Đang upload…"):
+                ok, data = post_file(
+                    "/api/v1/documents/upload",
+                    file_name=upload_file.name,
+                    file_bytes=upload_file.getvalue(),
+                    tags=upload_tags,
+                )
+            if ok:
+                st.success("✅ Upload thành công! Document đang được xử lý nền.")
+                st.json(data)
+            else:
+                st.error(data)
+
+    st.markdown("---")
+    st.caption("💡 Sau khi upload, hệ thống sẽ parse → chunk → embedding tự động.")
+
+# ═══════════════════════════════════════════════════════════════
+# TAB: RAG QUERY
+# ═══════════════════════════════════════════════════════════════
+with query_tab:
+    st.subheader("Hỏi đáp với tài liệu")
+
+    # Load documents for filter
+    doc_map: dict[str, str] = {}
+    ok_d, docs_data = get_json("/api/v1/documents", require_tenant=True)
+    if ok_d and isinstance(docs_data, dict):
+        for doc in docs_data.get("items", []):
+            label = f"{doc.get('file_name','?')} [{doc.get('status','?')}] ({str(doc.get('id',''))[:8]}…)"
+            doc_map[label] = str(doc.get("id", ""))
+
+    selected_doc_ids: list[str] = []
+    if doc_map:
+        sel_labels = st.multiselect("📌 Lọc theo document (bỏ trống = tìm tất cả)", list(doc_map.keys()))
+        selected_doc_ids = [doc_map[l] for l in sel_labels]
+        for lbl in sel_labels:
+            if "pending" in lbl or "failed" in lbl:
+                st.warning(f"⚠️ '{lbl}' chưa xử lý xong, kết quả có thể rỗng.")
+    else:
+        st.info("Tenant chưa có document. Upload trước ở tab Upload.")
+
+    question = st.text_area(
+        "❓ Câu hỏi",
+        value="Tóm tắt nội dung chính của tài liệu.",
+        height=120,
+        key="e1_question",
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        top_k = st.slider("top_k", 1, 10, 5, key="e1_topk")
+    with c2:
+        temperature = st.slider("temperature", 0.0, 1.0, 0.3, key="e1_temp")
+
+    if st.button("🚀 Ask RAG", use_container_width=True, type="primary", key="e1_ask"):
+        payload: dict[str, Any] = {
+            "question": question,
+            "top_k": top_k,
+            "temperature": float(temperature),
+            "use_hybrid": True,
+        }
+        if selected_doc_ids:
+            payload["document_ids"] = selected_doc_ids
+
+        with st.spinner("Đang tìm kiếm & sinh câu trả lời…"):
+            ok, data = post_json("/api/v1/rag/query", payload, require_tenant=True)
+
+        if ok:
+            if isinstance(data, dict) and data.get("answer"):
+                st.markdown("### 💡 Câu trả lời")
+                st.write(data["answer"])
+
+                sources = data.get("sources", [])
+                if sources:
+                    st.markdown(f"**📚 Sources:** {len(sources)} chunk(s)")
+                    for i, s in enumerate(sources):
+                        with st.expander(f"Source {i+1} — score {s.get('score',0):.3f}"):
+                            st.write(s.get("content", ""))
+
+                with st.expander("📦 Raw response"):
+                    st.json(data)
+            else:
+                st.json(data)
+        else:
+            st.error(data)
+
+# ═══════════════════════════════════════════════════════════════
+# TAB: DOCUMENTS
+# ═══════════════════════════════════════════════════════════════
+with docs_tab:
+    st.subheader("Danh sách tài liệu")
+
+    if st.button("🔄 Refresh", key="e1_refresh_docs"):
+        st.rerun()
+
+    ok, data = get_json("/api/v1/documents", require_tenant=True)
+    if ok and isinstance(data, dict):
+        items = data.get("items", [])
+        if items:
+            for doc in items:
+                status_icon = {
+                    "pending": "⏳",
+                    "processing": "🔄",
+                    "completed": "✅",
+                    "failed": "❌",
+                }.get(doc.get("status", ""), "❓")
+
+                with st.expander(f"{status_icon} {doc.get('file_name','?')} — {doc.get('status','')}"):
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.text(f"ID:       {doc.get('id')}")
+                        st.text(f"Size:     {doc.get('file_size', 0):,} bytes")
+                        st.text(f"Type:     {doc.get('mime_type', '?')}")
+                    with col_b:
+                        st.text(f"Chunks:   {doc.get('chunk_count', '?')}")
+                        st.text(f"Status:   {doc.get('status')}")
+                        st.text(f"Created:  {doc.get('created_at', '?')[:19]}")
+        else:
+            st.info("Chưa có tài liệu nào.")
+    elif not ok:
+        st.error(data)

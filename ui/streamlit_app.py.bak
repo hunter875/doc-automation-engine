@@ -1,0 +1,108 @@
+"""Home — Document Automation Platform.
+
+Multi-page Streamlit app. This file is the landing / dashboard page.
+Sub-pages live under ui/pages/:
+  1_🔍_Engine1_RAG.py       — Upload + RAG Q&A
+  2_⚙️_Engine2_Extraction.py — Template → Extract → Review → Export
+  3_📄_Document_Preview.py   — Browse & preview documents
+"""
+
+import sys
+from pathlib import Path
+
+import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).parent))
+from api_client import get_json, init_state, render_sidebar
+
+st.set_page_config(page_title="Doc Automation", page_icon="🏠", layout="wide")
+init_state()
+render_sidebar()
+
+
+# ─── Dashboard ────────────────────────────────────────────────
+st.title("🏠 Document Automation Platform")
+st.caption("Enterprise RAG + AI Structured Data Extraction")
+
+st.markdown("---")
+
+# ── Quick status ──────────────────────────────────────────────
+if st.session_state.access_token:
+    col_auth, col_tenant = st.columns(2)
+    with col_auth:
+        st.success(f"🔐 Logged in — token `{st.session_state.access_token[:16]}…`")
+    with col_tenant:
+        if st.session_state.tenant_id:
+            st.success(f"🏢 Tenant: `{st.session_state.tenant_id[:12]}…`")
+        else:
+            st.warning("Chưa chọn Tenant — hãy chọn ở sidebar.")
+else:
+    st.warning("⚠️ Hãy **Login** ở sidebar bên trái trước khi sử dụng.")
+
+# ── Engine cards ──────────────────────────────────────────────
+st.markdown("## 🚀 Chọn Engine")
+
+e1, e2, e3 = st.columns(3)
+
+with e1:
+    st.markdown(
+        """
+        ### 🔍 Engine 1 — RAG
+        **Retrieval‑Augmented Generation**
+        - Upload tài liệu (PDF, DOCX, TXT…)
+        - Tự động chunk & embed
+        - Hỏi đáp AI dựa trên nội dung
+
+        👉 Mở trang **Engine 1 RAG** ở sidebar
+        """
+    )
+
+with e2:
+    st.markdown(
+        """
+        ### ⚙️ Engine 2 — Extraction
+        **Structured Data Extraction**
+        - Tạo template (schema)
+        - Upload PDF → AI bóc tách dữ liệu
+        - Review → Aggregate → Export
+
+        👉 Mở trang **Engine 2 Extraction** ở sidebar
+        """
+    )
+
+with e3:
+    st.markdown(
+        """
+        ### 📄 Document Preview
+        **Quản lý & Xem tài liệu**
+        - Danh sách document theo tenant
+        - Preview inline (PDF / ảnh / text)
+        - Download / Reprocess
+
+        👉 Mở trang **Document Preview** ở sidebar
+        """
+    )
+
+# ── Quick stats ───────────────────────────────────────────────
+if st.session_state.access_token and st.session_state.tenant_id:
+    st.markdown("---")
+    st.markdown("### 📊 Thống kê nhanh")
+
+    if st.button("🔄 Refresh stats", key="home_stats"):
+        ok, stats = get_json("/api/v1/documents/stats/summary", require_tenant=True)
+        if ok and isinstance(stats, dict):
+            # Flatten nested dicts (e.g. {"by_status": {"pending": 1, ...}})
+            flat: dict = {}
+            for k, v in stats.items():
+                if isinstance(v, dict):
+                    for sub_k, sub_v in v.items():
+                        flat[f"{k} {sub_k}"] = sub_v
+                else:
+                    flat[k] = v
+            scols = st.columns(min(len(flat), 5))
+            for i, (k, v) in enumerate(flat.items()):
+                scols[i % len(scols)].metric(k.replace("_", " ").title(), v)
+        elif not ok:
+            st.info("Chưa có dữ liệu thống kê.")
+
+
