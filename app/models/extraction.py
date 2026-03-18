@@ -168,6 +168,20 @@ class ExtractionJob(Base):
         """Return reviewed_data if available, else extracted_data."""
         return self.reviewed_data or self.extracted_data
 
+    @property
+    def file_name(self) -> str | None:
+        """Human-readable source file name from linked document."""
+        document = getattr(self, "document", None)
+        return getattr(document, "file_name", None)
+
+    @property
+    def display_name(self) -> str:
+        """Friendly job label for UI lists."""
+        short_id = str(self.id)[:8] if self.id else ""
+        if self.file_name:
+            return f"{self.file_name} ({short_id})"
+        return f"Job {short_id}"
+
 
 class AggregationReport(Base):
     """Aggregated report from multiple approved extraction jobs."""

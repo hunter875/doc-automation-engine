@@ -45,6 +45,51 @@ def _sanitize_for_json(obj: Any) -> Any:
     return obj
 
 
+def _default_value_for_field(field_def: dict[str, Any]) -> Any:
+    """Return a safe default render value for a schema field."""
+    field_type = (field_def or {}).get("type", "string")
+    if field_type == "array":
+        return []
+    if field_type == "number":
+        return 0
+    if field_type == "boolean":
+        return False
+    if field_type == "object":
+        return {}
+    return ""
+
+
+def _normalize_master_payload(
+    schema_definition: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Force payload into a docxtpl-safe shape based on template schema.
+
+    Rules:
+      - top-level scalar fields always exist
+      - top-level arrays always exist and default to []
+      - values remain flat for static fields
+    """
+    normalized = dict(payload or {})
+    for field_def in schema_definition.get("fields", []):
+        field_name = field_def.get("name")
+        if not field_name:
+            continue
+
+        if field_name not in normalized or normalized[field_name] is None:
+            normalized[field_name] = _default_value_for_field(field_def)
+            continue
+
+        if field_def.get("type") == "array":
+            current = normalized.get(field_name)
+            if current is None:
+                normalized[field_name] = []
+            elif not isinstance(current, list):
+                normalized[field_name] = [current]
+
+    return normalized
+
+
 class AggregationService:
     """Pandas-based aggregation engine."""
 
@@ -214,8 +259,16 @@ class AggregationService:
             rule_outputs = {r["output_field"] for r in rules}
             for k, v in last_row.items():
                 if k not in summary_record and k not in rule_outputs:
-                    if not isinstance(v, (list, dict)):
+                    if not isinstance(v, dict):
                         summary_record[k] = v
+
+        # 7.25. Force a docxtpl-safe master payload shape from schema_definition.
+        # Arrays must always exist as [], and top-level static fields stay flat.
+        summary_record = _normalize_master_payload(template.schema_definition or {}, summary_record)
+        normalized_top_level = _normalize_master_payload(template.schema_definition or {}, aggregated_data)
+        for key, value in normalized_top_level.items():
+            if key not in aggregated_data or aggregated_data.get(key) is None:
+                aggregated_data[key] = value
 
         aggregated_data["records"] = [summary_record] if summary_record else []
 
@@ -305,6 +358,12 @@ class AggregationService:
             .all()
         )
         return items, total
+
+    def delete_report(self, report_id: str, tenant_id: str) -> None:
+        """Delete an aggregation report by ID."""
+        report = self.get_report(report_id, tenant_id)
+        self.db.delete(report)
+        self.db.commit()
 
 
 # ──────────────────────────────────────────────

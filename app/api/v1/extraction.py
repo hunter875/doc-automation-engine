@@ -18,7 +18,9 @@ import io
 import logging
 import re
 import uuid
+import unicodedata
 from typing import Annotated, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -59,6 +61,21 @@ from app.services.aggregation_service import AggregationService, ExportService
 
 logger = logging.getLogger(__name__)
 
+
+def _build_content_disposition(filename: str) -> str:
+    """Build a safe download header with UTF-8 filename support.
+
+    Uses both legacy `filename=` (ASCII fallback) and RFC5987
+    `filename*=` for Unicode names.
+    """
+    raw_name = re.sub(r"[\r\n\"]", "", (filename or "").strip()) or "report"
+
+    ascii_name = unicodedata.normalize("NFKD", raw_name).encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r"[^\w\s\-.]", "", ascii_name).strip() or "report"
+
+    utf8_quoted_name = quote(raw_name)
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_quoted_name}"
+
 router = APIRouter(
     prefix="/extraction",
     tags=["Extraction (Engine 2)"],
@@ -71,17 +88,16 @@ router = APIRouter(
 
 @router.post(
     "/templates/scan-word",
-    summary="Scan Word template for placeholders",
-    description="Upload a .docx file with {{placeholder}} markers. "
-                "Returns auto-inferred schema_definition and aggregation_rules. "
-                "use_llm=true (default) calls Gemini Flash to refine array sub-field types.",
+    summary="Read placeholders from Word template",
+    description="Upload a .docx file and read all Jinja placeholders/loops from it. "
+                "The frontend lets the user decide schema_definition and aggregation_rules manually.",
 )
 async def scan_word_template(
     file: UploadFile = File(...),
     use_llm: bool = True,
     current_user: User = Depends(get_current_user),
 ):
-    """Scan a Word document for {{...}} placeholders and infer schema."""
+    """Scan a Word document for placeholders/loops and return detected holes."""
     from app.services.word_scanner import scan_word_template as do_scan
 
     if not file.filename or not file.filename.lower().endswith((".docx", ".doc")):
@@ -492,6 +508,22 @@ def get_job(
     return service.get_job(job_id, ctx.tenant_id)
 
 
+@router.delete(
+    "/jobs/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete finished job",
+)
+def delete_job(
+    job_id: str,
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+    role: Annotated[None, Depends(require_admin)],
+    db: Session = Depends(get_db),
+):
+    """Delete an extraction job after it reaches a terminal status."""
+    service = ExtractionService(db)
+    service.delete_job(job_id, ctx.tenant_id)
+
+
 @router.post(
     "/jobs/{job_id}/retry",
     response_model=JobResponse,
@@ -637,6 +669,22 @@ def get_report(
     return service.get_report(report_id, ctx.tenant_id)
 
 
+@router.delete(
+    "/aggregate/{report_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete aggregation report",
+)
+def delete_report(
+    report_id: str,
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+    role: Annotated[None, Depends(require_admin)],
+    db: Session = Depends(get_db),
+):
+    """Delete an aggregation report."""
+    service = AggregationService(db)
+    service.delete_report(report_id, ctx.tenant_id)
+
+
 @router.get(
     "/aggregate/{report_id}/export",
     summary="Export report as Excel/CSV/JSON/Word",
@@ -678,7 +726,7 @@ def export_report(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
-                "Content-Disposition": f'attachment; filename="{report.name}.xlsx"'
+                "Content-Disposition": _build_content_disposition(f"{report.name}.xlsx")
             },
         )
     elif format == "csv":
@@ -687,7 +735,7 @@ def export_report(
             buffer,
             media_type="text/csv",
             headers={
-                "Content-Disposition": f'attachment; filename="{report.name}.csv"'
+                "Content-Disposition": _build_content_disposition(f"{report.name}.csv")
             },
         )
     elif format == "word":
@@ -760,15 +808,13 @@ async def export_report_word(
             detail=str(e),
         )
 
-    # Sanitize filename
-    safe_name = re.sub(r"[^\w\s\-.]", "", report.name).strip() or "report"
-    output_filename = f"{safe_name}.docx"
+    output_filename = f"{report.name or 'report'}.docx"
 
     return StreamingResponse(
         io.BytesIO(rendered_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{output_filename}"'
+            "Content-Disposition": _build_content_disposition(output_filename)
         },
     )
 
@@ -845,13 +891,12 @@ def export_report_word_auto(
             detail=str(e),
         )
 
-    safe_name = re.sub(r"[^\w\s\-.]", "", report.name).strip() or "report"
-    output_filename = f"{safe_name}.docx"
+    output_filename = f"{report.name or 'report'}.docx"
 
     return StreamingResponse(
         io.BytesIO(rendered_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{output_filename}"'
+            "Content-Disposition": _build_content_disposition(output_filename)
         },
     )

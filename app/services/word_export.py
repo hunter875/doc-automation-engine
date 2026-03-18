@@ -28,6 +28,109 @@ from docxtpl import DocxTemplate
 logger = logging.getLogger(__name__)
 
 
+# ── Template pre-processing: fix common tag mistakes ──────────
+
+def _fix_jinja_tags_in_docx(template_bytes: bytes) -> bytes:
+    """
+    Pre-process a .docx template to fix Jinja2 tag issues.
+
+    Key fix: {%p if/else/endif/for/endfor %} tags that are INLINE within a paragraph
+    (i.e. mixed with other text) must be converted to {% ... %} — because docxtpl
+    only supports {%p %} when the tag occupies its own standalone paragraph.
+
+    Also fixes: missing spaces in block tags → {%endif%} → {% endif %}
+    """
+    import zipfile, shutil, os, tempfile
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        src_zip = os.path.join(tmpdir, "src.docx")
+        with open(src_zip, "wb") as f:
+            f.write(template_bytes)
+
+        extract_dir = os.path.join(tmpdir, "extracted")
+        with zipfile.ZipFile(src_zip, "r") as z:
+            z.extractall(extract_dir)
+
+        xml_files = []
+        for root, dirs, files in os.walk(extract_dir):
+            for fname in files:
+                if fname.endswith(".xml"):
+                    xml_files.append(os.path.join(root, fname))
+
+        for xml_path in xml_files:
+            try:
+                with open(xml_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            original = content
+
+            # ── Fix 1: Convert inline {%p tag %} → {% tag %}
+            # When {%p ...%} appears alongside other text in the same <w:p>,
+            # it must be treated as a regular inline Jinja tag.
+            # Strategy: find each <w:p>...</w:p> block; if it contains a {%p %}
+            # tag BUT also has other text content, convert {%p to {% (strip the 'p').
+            def fix_paragraph(m):
+                para = m.group(0)
+                # Extract all text content (strip XML tags to get plain text)
+                plain = re.sub(r'<[^>]+>', '', para)
+                # Find all {%p ... %} tags in this paragraph
+                tags_p = re.findall(r'\{%-?\s*p\s+([^%]+?)\s*-?%\}', para)
+                if not tags_p:
+                    return para
+                # Check if the paragraph has ONLY a single {%p %} tag and nothing else meaningful
+                plain_stripped = re.sub(r'\{%-?\s*p\s+[^%]+?\s*-?%\}', '', plain).strip()
+                if plain_stripped:
+                    # Has other text → inline context → convert {%p → {%
+                    para = re.sub(r'\{%-?\s*p\s+', '{% ', para)
+                    para = re.sub(r'\s*-?%\}', ' %}', para)
+                return para
+
+            content = re.sub(r'<w:p[ >].*?</w:p>', fix_paragraph, content, flags=re.DOTALL)
+
+            # ── Fix 2: Normalize ALL {%p ... %} tags → {% ... %}
+            # This avoids parser conflicts when template mixes {%p ... %} and inline {% ... %}
+            # in the same logical block (common in user-authored Word templates).
+            content = re.sub(
+                r'\{%-?\s*p\s+([^%]+?)\s*-?%\}',
+                r'{% \1 %}',
+                content,
+            )
+
+            # ── Fix 3: Convert {%tr for/endfor %} → {% for/endfor %}
+            # docxtpl 0.18+ does not support {%tr %}; use {% %} directly in table rows.
+            content = re.sub(
+                r'\{%-?\s*tr\s+((?:for\b|endfor)[^%]*?)\s*-?%\}',
+                r'{% \1 %}',
+                content,
+            )
+
+            # ── Fix 4: Fix missing spaces in block tags
+            # {%endif%} → {% endif %}, {%endfor%} → {% endfor %}, etc.
+            content = re.sub(r'\{%-?\s*(end(?:if|for|while|macro|call|block|raw))\s*-?%\}',
+                             r'{% \1 %}', content)
+            content = re.sub(r'\{%-?\s*(else)\s*-?%\}', r'{% else %}', content)
+
+            if content != original:
+                with open(xml_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+        out_zip = os.path.join(tmpdir, "fixed.docx")
+        with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as zout:
+            for root, dirs, files in os.walk(extract_dir):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    arcname = os.path.relpath(fpath, extract_dir)
+                    zout.write(fpath, arcname)
+
+        with open(out_zip, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ── Jinja2 Filters for Vietnamese formatting ─────────────────
 
 def _format_number_vn(value: Any) -> str:
@@ -107,7 +210,11 @@ def render_word_template(
         ValueError: If template is invalid or rendering fails
     """
     try:
+        # Pre-process template to fix common Jinja2 tag errors
+        template_bytes = _fix_jinja_tags_in_docx(template_bytes)
         doc = DocxTemplate(io.BytesIO(template_bytes))
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"Invalid Word template: {e}")
 
@@ -133,7 +240,17 @@ def render_word_template(
     try:
         doc.render(flat_context)
     except Exception as e:
+        err_msg = str(e)
         logger.error(f"Word template rendering failed: {e}")
+        # Give more helpful hints for common Jinja2 errors
+        if "unknown tag" in err_msg.lower():
+            tag = re.search(r"'(\w+)'", err_msg)
+            tag_name = tag.group(1) if tag else "unknown"
+            raise ValueError(
+                f"Template rendering error: Tag '{tag_name}' không hợp lệ trong file Word template. "
+                f"Hãy kiểm tra cú pháp Jinja2: dùng {{% if %}}, {{% endif %}}, {{% for %}}, {{% endfor %}}. "
+                f"Lưu ý: Word có thể tự tách tag thành nhiều phần — hãy dùng 'Paste as plain text' khi gõ tag."
+            )
         raise ValueError(f"Template rendering error: {e}")
 
     buffer = io.BytesIO()

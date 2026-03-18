@@ -4,7 +4,7 @@ Handles: schema building, LLM extraction (3 modes), template CRUD, job managemen
 
 Extraction Modes:
   standard — Docling (GPU) → Gemini Flash (text)
-  vision   — Bypass parser → Gemini Pro (native PDF vision)
+    vision   — Bypass parser → Gemini Vision model (native PDF vision)
   fast     — pdfplumber (CPU) → Gemini Flash (text)
 """
 
@@ -345,7 +345,7 @@ class GeminiFlashExtractor:
 
 
 class GeminiProVisionExtractor:
-    """Native PDF vision extraction using Gemini 1.5 Pro.
+    """Native PDF vision extraction using configured Gemini vision model.
 
     Used by: vision mode — uploads raw PDF bytes directly to Gemini,
     bypassing any text parser. Best for scanned/blurry/rotated documents.
@@ -359,7 +359,7 @@ class GeminiProVisionExtractor:
         filename: str,
         json_schema: dict,
     ) -> dict:
-        """Call Gemini Pro with PDF file directly (vision mode).
+        """Call configured Gemini vision model with PDF file directly (vision mode).
 
         Args:
             file_bytes: Raw PDF bytes
@@ -423,7 +423,7 @@ class GeminiProVisionExtractor:
                 ),
             )
         except Exception as e:
-            logger.error(f"[Vision] Gemini Pro extraction failed: {e}")
+            logger.error(f"[Vision] Gemini extraction failed: {e}")
             raise ProcessingError(
                 message=f"Vision extraction failed: {str(e)}",
                 reason="llm_error",
@@ -763,6 +763,22 @@ class ExtractionService:
         self.db.refresh(job)
         return job
 
+    def delete_job(self, job_id: str, tenant_id: str) -> None:
+        """Delete a finished job.
+
+        To avoid breaking in-flight processing, only allow deletion for
+        terminal/review statuses.
+        """
+        job = self.get_job(job_id, tenant_id)
+
+        if job.status in (ExtractionJobStatus.PENDING, ExtractionJobStatus.PROCESSING):
+            raise ProcessingError(
+                message=f"Cannot delete job with status '{job.status}'. Wait until processing finishes."
+            )
+
+        self.db.delete(job)
+        self.db.commit()
+
     # ── Run extraction pipeline ───────────────
 
     def run_extraction(
@@ -773,7 +789,7 @@ class ExtractionService:
 
         Routes to the correct processing path based on extraction_mode:
           standard → Docling (GPU) → Gemini Flash (text)
-          vision   → Bypass parser → Gemini Pro (native PDF vision)
+          vision   → Bypass parser → Gemini Vision model (native PDF vision)
           fast     → pdfplumber (CPU) → Gemini Flash (text)
 
         Called by Celery worker.
@@ -937,11 +953,11 @@ class ExtractionService:
         filename: str,
         json_schema: dict,
     ) -> dict:
-        """Vision path: Upload raw PDF → Gemini Pro (native vision).
+        """Vision path: Upload raw PDF → configured Gemini vision model.
 
         No text parser involved. Best for scanned/blurry documents.
         """
-        logger.info(f"Calling Gemini Pro Vision for extraction ({settings.GEMINI_PRO_MODEL})")
+        logger.info(f"Calling Gemini Vision extraction ({settings.GEMINI_PRO_MODEL})")
         extractor = GeminiProVisionExtractor()
         return extractor.extract(
             file_bytes=file_bytes,

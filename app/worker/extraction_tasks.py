@@ -20,6 +20,39 @@ from app.models.user import User  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def _is_retriable_error(error: Exception) -> bool:
+    """Return True only for transient errors that are worth retrying."""
+    message = str(error).lower()
+
+    non_retriable_markers = [
+        "resource_exhausted",
+        "quota exceeded",
+        "too many requests",
+        " 429 ",
+        "job not found",
+        "extraction job",
+        "template not found",
+        "document not found",
+        "template or document not found",
+        "json_parse_error",
+    ]
+    if any(marker in message for marker in non_retriable_markers):
+        return False
+
+    retriable_markers = [
+        "timeout",
+        "temporarily unavailable",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "network",
+    ]
+    return any(marker in message for marker in retriable_markers)
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -68,6 +101,21 @@ def extract_document_task(self, job_id: str):
 
     except Exception as e:
         logger.error(f"[Engine2] Extraction failed for job {job_id}: {e}")
+
+        # Do not retry deterministic/non-recoverable errors.
+        if not _is_retriable_error(e):
+            logger.warning(f"[Engine2] Non-retriable error for job {job_id}. Skipping retries.")
+            try:
+                job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+                if job and job.status != ExtractionJobStatus.FAILED:
+                    job.status = ExtractionJobStatus.FAILED
+                    job.error_message = str(e)[:500]
+                    job.completed_at = datetime.utcnow()
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
+            except Exception:
+                pass
+            raise
 
         # Try to retry
         try:

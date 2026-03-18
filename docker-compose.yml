@@ -25,7 +25,7 @@ services:
       - MINIO_SECURE=false
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
-      - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-pro}
+      - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_MAX_TOKENS=65536
       - SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-key-change-in-production}
       - DEBUG=true
@@ -64,7 +64,7 @@ services:
       - MINIO_SECURE=false
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
-      - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-pro}
+      - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_MAX_TOKENS=65536
     depends_on:
       postgres:

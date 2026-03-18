@@ -11,11 +11,21 @@ import pandas as pd
 
 from api_client import (
     init_state, render_sidebar, require_login,
-    get_json, post_json, post_form, get_bytes, short_id,
+    get_json, post_json, post_form, get_bytes, short_id, delete_req,
     _save_persist,
 )
 
 st.set_page_config(page_title="Trích xuất dữ liệu", page_icon="⚙️", layout="wide")
+st.markdown("""
+<style>
+    [data-testid="stExpander"] { border: 1px solid #e6e9ef; border-radius: 8px; margin-bottom: 10px; }
+    .stDataFrame { border: 1px solid #e6e9ef; border-radius: 8px; }
+    .template-card {
+        padding: 15px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 10px;
+        background-color: #f9f9f9;
+    }
+</style>
+""", unsafe_allow_html=True)
 init_state()
 render_sidebar()
 require_login()
@@ -29,30 +39,200 @@ STATUS_VI = {
     "aggregated": "📊 Đã tổng hợp",
 }
 
+FIELD_TYPE_OPTIONS = ["string", "number", "boolean", "array"]
+AGGREGATION_OPTIONS = ["", "SUM", "AVG", "MAX", "MIN", "COUNT", "CONCAT", "LAST"]
+METADATA_HINTS = ["ngay_", "thang_", "nam_", "tu_ngay", "den_ngay", "tuan_", "ky_", "bao_cao", "xuat_"]
+
 # ══════════════════════════════════════════════════════════════
-# CACHE: load templates & jobs once per interaction
+# CACHE: load templates & jobs (TTL)
 # ══════════════════════════════════════════════════════════════
 
-def _load_templates():
+def _get_cache_key() -> str:
+    user_obj = st.session_state.get("user", {}) or {}
+    user_id = user_obj.get("id", "") if isinstance(user_obj, dict) else ""
+    tenant_id = st.session_state.get("tenant_id", "")
+    base_url = st.session_state.get("base_url", "")
+    return f"{base_url}|{tenant_id}|{user_id}"
+
+
+def _cache_nonce() -> int:
+    return int(st.session_state.get("e2_cache_nonce", 0))
+
+
+def _invalidate_engine2_cache():
+    st.session_state["e2_cache_nonce"] = _cache_nonce() + 1
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_templates_cached(_cache_key: str, _nonce: int):
     ok, data = get_json("/api/v1/extraction/templates", require_tenant=True)
     if ok:
         items = data if isinstance(data, list) else data.get("items", data.get("templates", []))
         return items
     return []
 
-def _load_jobs():
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_jobs_cached(_cache_key: str, _nonce: int):
     ok, data = get_json("/api/v1/extraction/jobs?limit=100", require_tenant=True)
     if ok:
         items = data if isinstance(data, list) else data.get("items", data.get("jobs", []))
         return items
     return []
 
-def _load_reports():
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_reports_cached(_cache_key: str, _nonce: int):
     ok, data = get_json("/api/v1/extraction/aggregate", require_tenant=True)
     if ok:
         items = data if isinstance(data, list) else data.get("items", data.get("reports", []))
         return items
     return []
+
+
+def _load_templates():
+    return _load_templates_cached(_get_cache_key(), _cache_nonce())
+
+
+def _load_jobs():
+    return _load_jobs_cached(_get_cache_key(), _cache_nonce())
+
+
+def _load_reports():
+    return _load_reports_cached(_get_cache_key(), _cache_nonce())
+
+
+def _default_array_items() -> list[dict]:
+    return [{
+        "Chọn": True,
+        "Tên trường": "value",
+        "Loại": "string",
+        "Bắt buộc": True,
+        "Mô tả": "Phần tử",
+    }]
+
+
+def _default_agg_method(field_type: str, field_name: str) -> str:
+    name_lower = (field_name or "").lower()
+    if any(hint in name_lower for hint in METADATA_HINTS):
+        return ""
+    if field_type == "number":
+        return "SUM"
+    if field_type == "array":
+        return "CONCAT"
+    if field_type in {"string", "boolean"}:
+        return "LAST"
+    return ""
+
+
+def _init_scan_config(scan_result: dict):
+    schema_fields = (scan_result.get("schema_definition") or {}).get("fields", [])
+    variables = {v.get("name"): v for v in scan_result.get("variables", [])}
+    agg_rules = {
+        r.get("output_field"): r
+        for r in (scan_result.get("aggregation_rules") or {}).get("rules", [])
+    }
+
+    field_rows = []
+    array_items = {}
+    for field in schema_fields:
+        name = field.get("name", "")
+        var = variables.get(name, {})
+        field_rows.append({
+            "Chọn": True,
+            "Tên trường": name,
+            "Lỗ gốc": var.get("original_name", name),
+            "Loại": field.get("type", "string"),
+            "Bắt buộc": field.get("required", True),
+            "Tổng hợp": agg_rules.get(name, {}).get("method", _default_agg_method(field.get("type", "string"), name)),
+            "Mô tả": field.get("description", ""),
+        })
+
+        if field.get("type") == "array":
+            item_fields = []
+            items = field.get("items") or {}
+            if isinstance(items, dict):
+                item_fields = items.get("fields", []) or []
+            array_items[name] = [
+                {
+                    "Chọn": True,
+                    "Tên trường": item.get("name", ""),
+                    "Loại": item.get("type", "string"),
+                    "Bắt buộc": item.get("required", True),
+                    "Mô tả": item.get("description", ""),
+                }
+                for item in item_fields
+            ] or _default_array_items()
+
+    st.session_state["e2_scan_config_fields"] = field_rows
+    st.session_state["e2_scan_config_arrays"] = array_items
+
+
+def _build_template_payload(template_name: str, field_rows: list[dict], array_map: dict[str, list[dict]]) -> dict:
+    schema_fields = []
+    agg_rules = []
+
+    for row in field_rows:
+        if not row.get("Chọn"):
+            continue
+        field_name = str(row.get("Tên trường", "")).strip()
+        if not field_name:
+            continue
+        field_type = str(row.get("Loại", "string")).strip() or "string"
+        field = {
+            "name": field_name,
+            "type": field_type,
+            "description": str(row.get("Mô tả", "")).strip(),
+            "required": bool(row.get("Bắt buộc", True)),
+        }
+
+        if field_type == "array":
+            item_rows = array_map.get(field_name, [])
+            item_fields = []
+            for item in item_rows:
+                if not item.get("Chọn"):
+                    continue
+                item_name = str(item.get("Tên trường", "")).strip()
+                if not item_name:
+                    continue
+                item_fields.append({
+                    "name": item_name,
+                    "type": str(item.get("Loại", "string")).strip() or "string",
+                    "description": str(item.get("Mô tả", "")).strip(),
+                    "required": bool(item.get("Bắt buộc", True)),
+                })
+
+            if item_fields:
+                field["items"] = {
+                    "type": "object",
+                    "description": f"Các phần tử của {field_name}",
+                    "fields": item_fields,
+                }
+            else:
+                field["items"] = {
+                    "type": "string",
+                    "description": f"Các phần tử của {field_name}",
+                }
+
+        schema_fields.append(field)
+
+        method = str(row.get("Tổng hợp", "")).strip().upper()
+        if method:
+            agg_rules.append({
+                "output_field": field_name,
+                "source_field": field_name,
+                "method": method,
+                "label": str(row.get("Mô tả", "")).strip() or field_name.replace("_", " ").title(),
+            })
+
+    payload = {
+        "name": template_name.strip(),
+        "schema_definition": {"fields": schema_fields},
+        "aggregation_rules": {"rules": agg_rules},
+    }
+    if st.session_state.get("e2_word_template_s3_key"):
+        payload["word_template_s3_key"] = st.session_state["e2_word_template_s3_key"]
+    return payload
 
 # ══════════════════════════════════════════════════════════════
 st.title("⚙️ Trích xuất dữ liệu")
@@ -120,7 +300,7 @@ with tab1:
     )
 
     if create_method == "📄 Quét từ file Word (.docx)":
-        st.markdown("Upload file Word có chứa `{{tên_trường}}` — hệ thống sẽ tự tạo danh sách trường.")
+        st.markdown("Upload file Word có chứa `{{tên_trường}}` hoặc `{% for ... %}` — hệ thống chỉ đọc **tất cả các lỗ**, còn bạn tự quyết định Schema & Aggregation Rules.")
         docx_file = st.file_uploader("Chọn file .docx", type=["docx"], key="e2_scan_docx")
         if docx_file and st.button("🔍 Quét file Word", key="e2_scan_btn"):
             with st.spinner("Đang quét..."):
@@ -131,49 +311,114 @@ with tab1:
                     require_tenant=True,
                 )
             if ok:
-                st.success(f"✅ Tìm thấy {data.get('field_count', '?')} trường!")
-                st.session_state["e2_scanned_schema"] = json.dumps(data.get("schema_definition", {}), indent=2, ensure_ascii=False)
-                st.session_state["e2_scanned_agg"] = json.dumps(data.get("aggregation_rules", {}), indent=2, ensure_ascii=False)
-                # Save word_template_s3_key from scan result
+                st.success(f"✅ Đọc được {data.get('stats', {}).get('total_holes', data.get('field_count', '?'))} lỗ trong tài liệu!")
+                st.session_state["e2_scan_result"] = data
+                _init_scan_config(data)
                 if data.get("word_template_s3_key"):
                     st.session_state["e2_word_template_s3_key"] = data["word_template_s3_key"]
-                # Clear widget keys so Streamlit re-renders text areas with new value
-                st.session_state.pop("e2_schema_scan", None)
-                st.session_state.pop("e2_agg_scan", None)
                 st.rerun()
             else:
                 st.error(data)
 
         # Show scanned results
-        if st.session_state.get("e2_scanned_schema"):
+        if st.session_state.get("e2_scan_result"):
+            scan_result = st.session_state["e2_scan_result"]
+            stats = scan_result.get("stats", {})
             tpl_name = st.text_input("Tên mẫu", key="e2_tpl_name_scan", placeholder="VD: Hóa đơn VAT")
-            schema_str = st.text_area("Schema (JSON)", value=st.session_state.get("e2_scanned_schema", "{}"), height=200, key="e2_schema_scan")
-            agg_str = st.text_area("Quy tắc tổng hợp (JSON)", value=st.session_state.get("e2_scanned_agg", "{}"), height=150, key="e2_agg_scan")
+
+            st.caption(
+                f"Tìm thấy {stats.get('total_holes', 0)} lỗ, "
+                f"gom thành {stats.get('unique_variables', 0)} biến top-level, "
+                f"{stats.get('array_with_object_schema', 0)} biến mảng từ vòng lặp."
+            )
+
+            all_holes = scan_result.get("all_placeholders", [])
+            if all_holes:
+                with st.expander("🕳️ Danh sách tất cả các lỗ đọc được", expanded=False):
+                    st.dataframe(pd.DataFrame(all_holes), use_container_width=True, hide_index=True)
+
+            field_rows_df = pd.DataFrame(st.session_state.get("e2_scan_config_fields", []))
+            field_rows_df = st.data_editor(
+                field_rows_df,
+                key="e2_field_editor",
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                column_config={
+                    "Chọn": st.column_config.CheckboxColumn(help="Bỏ chọn nếu không muốn đưa field này vào schema"),
+                    "Tên trường": st.column_config.TextColumn(disabled=True),
+                    "Lỗ gốc": st.column_config.TextColumn(disabled=True),
+                    "Loại": st.column_config.SelectboxColumn(options=FIELD_TYPE_OPTIONS, required=True),
+                    "Bắt buộc": st.column_config.CheckboxColumn(),
+                    "Tổng hợp": st.column_config.SelectboxColumn(options=AGGREGATION_OPTIONS, help="Để trống nếu không muốn đưa field này vào aggregation_rules"),
+                    "Mô tả": st.column_config.TextColumn(width="large"),
+                },
+            )
+
+            selected_field_rows = field_rows_df.to_dict(orient="records")
+            st.session_state["e2_scan_config_fields"] = selected_field_rows
+
+            array_map = dict(st.session_state.get("e2_scan_config_arrays", {}))
+            for row in selected_field_rows:
+                if not row.get("Chọn") or row.get("Loại") != "array":
+                    continue
+                field_name = row.get("Tên trường")
+                if field_name not in array_map or not array_map.get(field_name):
+                    array_map[field_name] = _default_array_items()
+                current_items = pd.DataFrame(array_map.get(field_name, _default_array_items()))
+                with st.expander(f"🧩 Cấu trúc phần tử mảng: `{field_name}`", expanded=False):
+                    edited_items = st.data_editor(
+                        current_items,
+                        key=f"e2_array_editor_{field_name}",
+                        use_container_width=True,
+                        hide_index=True,
+                        num_rows="dynamic",
+                        column_config={
+                            "Chọn": st.column_config.CheckboxColumn(),
+                            "Tên trường": st.column_config.TextColumn(required=True),
+                            "Loại": st.column_config.SelectboxColumn(options=["string", "number", "boolean"], required=True),
+                            "Bắt buộc": st.column_config.CheckboxColumn(),
+                            "Mô tả": st.column_config.TextColumn(width="large"),
+                        },
+                    )
+                array_map[field_name] = edited_items.to_dict(orient="records")
+
+            st.session_state["e2_scan_config_arrays"] = array_map
+
+            with st.popover("📋 Xem JSON sẽ gửi lên backend"):
+                preview_payload = _build_template_payload(
+                    tpl_name,
+                    selected_field_rows,
+                    array_map,
+                )
+                st.json(preview_payload)
 
             if st.button("💾 Tạo mẫu", key="e2_create_scan", type="primary"):
                 if not tpl_name.strip():
                     st.error("⚠️ Vui lòng nhập **Tên mẫu** trước khi tạo.")
                     st.stop()
                 try:
-                    payload = {
-                        "name": tpl_name.strip(),
-                        "schema_definition": json.loads(schema_str),
-                        "aggregation_rules": json.loads(agg_str),
-                    }
-                    # Attach word_template_s3_key if available from scan
-                    if st.session_state.get("e2_word_template_s3_key"):
-                        payload["word_template_s3_key"] = st.session_state["e2_word_template_s3_key"]
+                    payload = _build_template_payload(
+                        tpl_name,
+                        selected_field_rows,
+                        array_map,
+                    )
+                    if not payload["schema_definition"]["fields"]:
+                        st.error("⚠️ Phải chọn ít nhất 1 field trong bảng cấu hình.")
+                        st.stop()
                     ok, data = post_json("/api/v1/extraction/templates", payload, require_tenant=True)
                     if ok:
+                        _invalidate_engine2_cache()
                         st.success(f"✅ Đã tạo mẫu **{tpl_name.strip()}**!")
-                        st.session_state.pop("e2_scanned_schema", None)
-                        st.session_state.pop("e2_scanned_agg", None)
+                        st.session_state.pop("e2_scan_result", None)
+                        st.session_state.pop("e2_scan_config_fields", None)
+                        st.session_state.pop("e2_scan_config_arrays", None)
                         st.session_state.pop("e2_word_template_s3_key", None)
                         st.rerun()
                     else:
                         st.error(data)
-                except json.JSONDecodeError as e:
-                    st.error(f"JSON không hợp lệ: {e}")
+                except Exception as e:
+                    st.error(f"Không tạo được mẫu: {e}")
 
     else:
         # Manual creation
@@ -192,6 +437,7 @@ with tab1:
                 }
                 ok, data = post_json("/api/v1/extraction/templates", payload, require_tenant=True)
                 if ok:
+                    _invalidate_engine2_cache()
                     st.success(f"✅ Đã tạo mẫu **{tpl_name.strip()}**!")
                     st.rerun()
                 else:
@@ -232,6 +478,7 @@ with tab2:
                     require_tenant=True,
                 )
             if ok:
+                _invalidate_engine2_cache()
                 jid = data.get("id", data.get("job_id", ""))
                 st.success(f"✅ Đã tạo công việc `{short_id(jid)}` — đang xử lý...")
                 st.balloons()
@@ -250,6 +497,7 @@ with tab2:
                     require_tenant=True,
                 )
             if ok:
+                _invalidate_engine2_cache()
                 bid = data.get("batch_id", "")
                 count = data.get("total_jobs", len(pdfs))
                 st.success(f"✅ Đã tạo {count} công việc (batch `{short_id(bid)}`)")
@@ -274,6 +522,7 @@ with tab2:
                         "mode": st.session_state.engine2_mode,
                     }, require_tenant=True)
                     if ok:
+                        _invalidate_engine2_cache()
                         st.success(f"✅ Đã tạo công việc `{short_id(data.get('id', ''))}`")
                     else:
                         st.error(data)
@@ -287,6 +536,7 @@ with tab2:
     st.markdown("#### 📋 Danh sách công việc")
 
     if st.button("🔄 Tải lại", key="e2_reload_jobs"):
+        _invalidate_engine2_cache()
         st.rerun()
 
     jobs = _load_jobs()
@@ -302,6 +552,42 @@ with tab2:
                 "Tạo lúc": str(j.get("created_at", ""))[:16],
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        # Delete finished jobs (failed/approved/rejected/aggregated)
+        deletable_statuses = {"failed", "approved", "rejected", "aggregated"}
+        deletable_jobs = [j for j in jobs if j.get("status") in deletable_statuses]
+        if deletable_jobs:
+            st.markdown("**🗑️ Xóa công việc đã làm**")
+            delete_options = {
+                f"{short_id(j.get('id', ''))} · {j.get('file_name', j.get('document_id', ''))[:24]} · {STATUS_VI.get(j.get('status', ''), j.get('status', ''))}": j.get("id", "")
+                for j in deletable_jobs
+            }
+            selected_delete_labels = st.multiselect(
+                "Chọn công việc muốn xóa",
+                options=list(delete_options.keys()),
+                key="e2_delete_job_labels",
+            )
+            if st.button("🗑️ Xóa đã chọn", key="e2_delete_jobs_btn"):
+                selected_ids = [delete_options[label] for label in selected_delete_labels]
+                if not selected_ids:
+                    st.warning("Vui lòng chọn ít nhất 1 công việc để xóa.")
+                else:
+                    ok_count = 0
+                    failed_items = []
+                    for job_id in selected_ids:
+                        ok_del, data_del = delete_req(f"/api/v1/extraction/jobs/{job_id}", require_tenant=True)
+                        if ok_del:
+                            ok_count += 1
+                        else:
+                            failed_items.append(f"{short_id(job_id)}: {data_del}")
+
+                    if ok_count:
+                        st.success(f"✅ Đã xóa {ok_count}/{len(selected_ids)} công việc.")
+                    if failed_items:
+                        st.error("\n".join(["❌ Không xóa được:"] + failed_items[:5]))
+                    st.rerun()
+        else:
+            st.caption("Không có công việc đã hoàn tất để xóa.")
 
         # Batch status check
         batch_id = st.session_state.get("engine2_last_batch_id", "")
@@ -352,6 +638,9 @@ with tab3:
 
                     extracted = detail.get("extracted_data") or detail.get("result", {})
                     validation = detail.get("validation_report", {})
+                    edit_key = f"edit_{jid}"
+                    if edit_key not in st.session_state:
+                        st.session_state[edit_key] = json.dumps(extracted, indent=2, ensure_ascii=False)
 
                     if status == "failed":
                         err = detail.get("error_message", detail.get("error", "Không rõ lỗi"))
@@ -404,8 +693,19 @@ with tab3:
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("✅ Duyệt", key=f"approve_{jid}", type="primary", use_container_width=True):
-                            ok_a, data_a = post_json(f"/api/v1/extraction/review/{jid}/approve", {}, require_tenant=True)
+                            try:
+                                reviewed_data = json.loads(st.session_state.get(edit_key, "{}"))
+                            except json.JSONDecodeError:
+                                st.error("JSON chỉnh sửa không hợp lệ. Sửa lại trong popover trước khi duyệt.")
+                                st.stop()
+                            ok_a, data_a = post_json(
+                                f"/api/v1/extraction/review/{jid}/approve",
+                                {"reviewed_data": reviewed_data},
+                                require_tenant=True,
+                            )
                             if ok_a:
+                                _invalidate_engine2_cache()
+                                st.session_state.pop(edit_key, None)
                                 st.success("✅ Đã duyệt!")
                                 st.rerun()
                             else:
@@ -414,6 +714,8 @@ with tab3:
                         if st.button("❌ Từ chối", key=f"reject_{jid}", use_container_width=True):
                             ok_r, data_r = post_json(f"/api/v1/extraction/review/{jid}/reject", {"notes": "Từ chối từ UI"}, require_tenant=True)
                             if ok_r:
+                                _invalidate_engine2_cache()
+                                st.session_state.pop(edit_key, None)
                                 st.warning("Đã từ chối.")
                                 st.rerun()
                             else:
@@ -421,12 +723,14 @@ with tab3:
 
                     # Advanced: edit before approve
                     with st.popover("✏️ Chỉnh sửa trước khi duyệt"):
-                        edited_json = st.text_area("Dữ liệu (JSON)", value=json.dumps(extracted, indent=2, ensure_ascii=False), height=300, key=f"edit_{jid}")
+                        edited_json = st.text_area("Dữ liệu (JSON)", height=300, key=edit_key)
                         if st.button("✅ Duyệt với dữ liệu đã chỉnh", key=f"approve_edit_{jid}"):
                             try:
                                 reviewed_data = json.loads(edited_json)
                                 ok_a, data_a = post_json(f"/api/v1/extraction/review/{jid}/approve", {"reviewed_data": reviewed_data}, require_tenant=True)
                                 if ok_a:
+                                    _invalidate_engine2_cache()
+                                    st.session_state.pop(edit_key, None)
                                     st.success("Đã duyệt với dữ liệu chỉnh sửa!")
                                     st.rerun()
                                 else:
@@ -448,17 +752,24 @@ with tab4:
     st.markdown("Gộp kết quả từ nhiều công việc đã duyệt thành 1 báo cáo, rồi xuất Excel hoặc Word.")
 
     jobs = _load_jobs()
-    approved_jobs = [j for j in jobs if j.get("status") in ("approved", "aggregated")]
+    approved_jobs = [j for j in jobs if j.get("status") == "approved"]
+    aggregated_jobs = [j for j in jobs if j.get("status") == "aggregated"]
 
     # ── Create aggregate ──────────────────────────────────────
     st.markdown("#### 📊 Tạo báo cáo tổng hợp")
 
     if not approved_jobs:
         st.info("Chưa có công việc nào được duyệt. Duyệt ở tab **✅ Duyệt kết quả** trước.")
+        if aggregated_jobs:
+            st.caption(
+                f"Có {len(aggregated_jobs)} công việc đã tổng hợp trước đó; "
+                "chỉ công việc trạng thái 'approved' mới tạo báo cáo mới được."
+            )
     else:
         st.markdown(f"Có **{len(approved_jobs)}** công việc đã duyệt:")
         for j in approved_jobs:
-            st.markdown(f"- `{short_id(j['id'])}` — **{j.get('file_name', '')}**")
+            friendly_name = j.get("file_name") or j.get("display_name") or short_id(j["id"])
+            st.markdown(f"- `{short_id(j['id'])}` — **{friendly_name}**")
 
         templates = _load_templates()
         tpl_names = {t.get("name", short_id(t['id'])): t["id"] for t in templates}
@@ -474,14 +785,22 @@ with tab4:
         report_name = st.text_input("📝 Tên báo cáo", value=default_report_name, key="e2_agg_name")
         report_desc = st.text_input("Mô tả (tùy chọn)", value="", key="e2_agg_desc")
 
-        select_all = st.checkbox("Chọn tất cả công việc đã duyệt", value=True, key="e2_agg_all")
+        job_options = {}
+        for j in approved_jobs:
+            friendly_name = (j.get("file_name") or j.get("display_name") or "").strip()
+            if not friendly_name:
+                friendly_name = f"Tài liệu {short_id(j['document_id'])}"
+            created_at = str(j.get("created_at", ""))[:16]
+            label = f"{friendly_name} — {short_id(j['id'])} — {created_at}"
+            job_options[label] = j["id"]
 
-        if select_all:
-            job_ids_to_agg = [j["id"] for j in approved_jobs]
-        else:
-            job_options = {f"{j.get('file_name', '')} ({short_id(j['id'])})": j["id"] for j in approved_jobs}
-            selected = st.multiselect("Chọn công việc", list(job_options.keys()), key="e2_agg_select")
-            job_ids_to_agg = [job_options[s] for s in selected]
+        selected = st.multiselect(
+            "📌 Chọn công việc để tổng hợp",
+            list(job_options.keys()),
+            key="e2_agg_select",
+            help="Bắt buộc chọn ít nhất 1 công việc. Hệ thống không tự lấy tất cả.",
+        )
+        job_ids_to_agg = [job_options[s] for s in selected]
 
         if st.button("📊 Tạo báo cáo tổng hợp", key="e2_create_agg", type="primary", disabled=not job_ids_to_agg):
             with st.spinner("Đang tổng hợp..."):
@@ -493,6 +812,7 @@ with tab4:
                 }
                 ok, data = post_json("/api/v1/extraction/aggregate", payload, require_tenant=True)
             if ok:
+                _invalidate_engine2_cache()
                 rid = data.get("id", data.get("report_id", ""))
                 st.success(f"✅ Báo cáo `{short_id(rid)}` đã tạo!")
                 st.session_state["engine2_last_report_id"] = rid
@@ -523,6 +843,23 @@ with tab4:
             key="e2_sel_report",
         )
         sel_rid = report_options[sel_report_label]
+
+        c_del1, c_del2 = st.columns([1, 2])
+        with c_del1:
+            confirm_delete_report = st.checkbox("Xác nhận xóa", key="e2_confirm_delete_report")
+        with c_del2:
+            if st.button("🗑️ Xóa báo cáo đã chọn", key="e2_delete_report", type="secondary", use_container_width=True):
+                if not confirm_delete_report:
+                    st.warning("Vui lòng tick **Xác nhận xóa** trước khi xóa báo cáo.")
+                else:
+                    ok_del_r, del_data = delete_req(f"/api/v1/extraction/aggregate/{sel_rid}", require_tenant=True)
+                    if ok_del_r:
+                        st.success("✅ Đã xóa báo cáo.")
+                        st.session_state.pop("engine2_last_report_id", None)
+                        st.rerun()
+                    else:
+                        st.error(del_data)
+                        _invalidate_engine2_cache()
 
         # Load detail for selected report
         ok_detail, detail = get_json(f"/api/v1/extraction/aggregate/{sel_rid}", require_tenant=True)

@@ -202,6 +202,8 @@ class JobResponse(BaseModel):
     tenant_id: uuid.UUID
     template_id: uuid.UUID
     document_id: uuid.UUID
+    file_name: Optional[str] = None
+    display_name: Optional[str] = None
     batch_id: Optional[uuid.UUID]
     extraction_mode: str = "standard"
     status: str
