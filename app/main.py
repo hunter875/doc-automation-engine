@@ -8,7 +8,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import auth, document, extraction, rag, tenant
+from app.api.v1 import auth, document, rag, tenant
+from app.api.v1.extraction_jobs import router as extraction_jobs_router
+from app.api.v1.extraction_reports import router as extraction_reports_router
+from app.api.v1.extraction_templates import router as extraction_templates_router
 from app.core.config import settings
 from app.core.exceptions import RAGException
 from app.core.logging import configure_logging
@@ -156,7 +159,9 @@ async def general_exception_handler(request: Request, exc: Exception):
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(document.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
-app.include_router(extraction.router, prefix="/api/v1")
+app.include_router(extraction_templates_router, prefix="/api/v1/extraction", tags=["Extraction Templates"])
+app.include_router(extraction_jobs_router, prefix="/api/v1/extraction", tags=["Extraction Jobs"])
+app.include_router(extraction_reports_router, prefix="/api/v1/extraction", tags=["Extraction Reports"])
 app.include_router(tenant.router, prefix="/api/v1")
 
 

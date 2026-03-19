@@ -1,4 +1,26 @@
-"""API router for Engine 2: Structured Data Extraction.
+"""Compatibility router for Engine 2 extraction endpoints.
+
+This module keeps the legacy import path (`app.api.v1.extraction`) while the
+real endpoints are implemented in split routers:
+- `extraction_templates`
+- `extraction_jobs`
+- `extraction_reports`
+"""
+
+from fastapi import APIRouter
+
+from app.api.v1.extraction_jobs import router as jobs_router
+from app.api.v1.extraction_reports import router as reports_router
+from app.api.v1.extraction_templates import router as templates_router
+
+router = APIRouter(prefix="/extraction", tags=["Extraction (Engine 2)"])
+router.include_router(templates_router)
+router.include_router(jobs_router)
+router.include_router(reports_router)
+r'''
+Legacy monolithic router content (intentionally disabled).
+
+API router for Engine 2: Structured Data Extraction.
 
 Endpoints:
   Templates:  POST/GET/PATCH/DELETE /extraction/templates
@@ -285,7 +307,7 @@ async def create_job(
     """Upload a PDF and create an extraction job.
 
     Modes:
-      - standard: Docling (GPU) → Gemini Flash (best for tables/layouts)
+            - standard: pdfplumber (CPU) → Gemini Flash (best for text PDFs)
       - vision: Gemini Pro native PDF (best for scanned/blurry docs)
       - fast: pdfplumber (CPU) → Gemini Flash (best for text-only PDFs)
 
@@ -817,6 +839,8 @@ async def export_report_word(
             "Content-Disposition": _build_content_disposition(output_filename)
         },
     )
+
+'''
 
 
 def _export_word(report, ctx, db):

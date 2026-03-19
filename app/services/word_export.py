@@ -19,13 +19,20 @@ Supports:
 import io
 import logging
 import re
-import uuid
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
 
 from docxtpl import DocxTemplate
 
 logger = logging.getLogger(__name__)
+
+MAX_DOCX_MEMBER_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+MAX_DOCX_TOTAL_UNCOMPRESSED_BYTES = 120 * 1024 * 1024
+MAX_DOCX_ENTRIES = 2000
+MAX_DOCX_COMPRESSION_RATIO = 150
+MAX_TEMPLATE_INPUT_BYTES = 50 * 1024 * 1024
 
 
 # ── Template pre-processing: fix common tag mistakes ──────────
@@ -40,95 +47,121 @@ def _fix_jinja_tags_in_docx(template_bytes: bytes) -> bytes:
 
     Also fixes: missing spaces in block tags → {%endif%} → {% endif %}
     """
-    import zipfile, shutil, os, tempfile
+    entries = _safe_read_docx_entries(template_bytes)
 
-    tmpdir = tempfile.mkdtemp()
+    for arcname, data in list(entries.items()):
+        if not arcname.endswith(".xml"):
+            continue
+        entries[arcname] = _fix_jinja_tags_in_xml(data)
+
+    out_buffer = io.BytesIO()
+    with zipfile.ZipFile(out_buffer, "w", zipfile.ZIP_DEFLATED) as zout:
+        for arcname, data in entries.items():
+            zout.writestr(arcname, data)
+    return out_buffer.getvalue()
+
+
+def _safe_read_docx_entries(template_bytes: bytes) -> dict[str, bytes]:
+    """Read docx zip entries with strict anti-zip-bomb limits."""
     try:
-        src_zip = os.path.join(tmpdir, "src.docx")
-        with open(src_zip, "wb") as f:
-            f.write(template_bytes)
+        zin = zipfile.ZipFile(io.BytesIO(template_bytes), "r")
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Invalid Word template: malformed zip archive") from exc
 
-        extract_dir = os.path.join(tmpdir, "extracted")
-        with zipfile.ZipFile(src_zip, "r") as z:
-            z.extractall(extract_dir)
+    with zin:
+        infos = zin.infolist()
+        if len(infos) > MAX_DOCX_ENTRIES:
+            raise ValueError("Invalid Word template: too many zip entries")
 
-        xml_files = []
-        for root, dirs, files in os.walk(extract_dir):
-            for fname in files:
-                if fname.endswith(".xml"):
-                    xml_files.append(os.path.join(root, fname))
+        total_uncompressed = 0
+        entries: dict[str, bytes] = {}
 
-        for xml_path in xml_files:
-            try:
-                with open(xml_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except Exception:
+        for info in infos:
+            if info.is_dir():
                 continue
 
-            original = content
+            if info.file_size > MAX_DOCX_MEMBER_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    "Invalid Word template: zip entry exceeds maximum allowed uncompressed size"
+                )
 
-            # ── Fix 1: Convert inline {%p tag %} → {% tag %}
-            # When {%p ...%} appears alongside other text in the same <w:p>,
-            # it must be treated as a regular inline Jinja tag.
-            # Strategy: find each <w:p>...</w:p> block; if it contains a {%p %}
-            # tag BUT also has other text content, convert {%p to {% (strip the 'p').
-            def fix_paragraph(m):
-                para = m.group(0)
-                # Extract all text content (strip XML tags to get plain text)
-                plain = re.sub(r'<[^>]+>', '', para)
-                # Find all {%p ... %} tags in this paragraph
-                tags_p = re.findall(r'\{%-?\s*p\s+([^%]+?)\s*-?%\}', para)
-                if not tags_p:
-                    return para
-                # Check if the paragraph has ONLY a single {%p %} tag and nothing else meaningful
-                plain_stripped = re.sub(r'\{%-?\s*p\s+[^%]+?\s*-?%\}', '', plain).strip()
-                if plain_stripped:
-                    # Has other text → inline context → convert {%p → {%
-                    para = re.sub(r'\{%-?\s*p\s+', '{% ', para)
-                    para = re.sub(r'\s*-?%\}', ' %}', para)
-                return para
+            total_uncompressed += info.file_size
+            if total_uncompressed > MAX_DOCX_TOTAL_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    "Invalid Word template: total uncompressed size exceeds safe threshold"
+                )
 
-            content = re.sub(r'<w:p[ >].*?</w:p>', fix_paragraph, content, flags=re.DOTALL)
+            compressed_size = max(info.compress_size, 1)
+            compression_ratio = info.file_size / compressed_size
+            if compression_ratio > MAX_DOCX_COMPRESSION_RATIO:
+                raise ValueError("Invalid Word template: suspicious compression ratio detected")
 
-            # ── Fix 2: Normalize ALL {%p ... %} tags → {% ... %}
-            # This avoids parser conflicts when template mixes {%p ... %} and inline {% ... %}
-            # in the same logical block (common in user-authored Word templates).
-            content = re.sub(
-                r'\{%-?\s*p\s+([^%]+?)\s*-?%\}',
-                r'{% \1 %}',
-                content,
-            )
+            entries[info.filename] = zin.read(info.filename)
 
-            # ── Fix 3: Convert {%tr for/endfor %} → {% for/endfor %}
-            # docxtpl 0.18+ does not support {%tr %}; use {% %} directly in table rows.
-            content = re.sub(
-                r'\{%-?\s*tr\s+((?:for\b|endfor)[^%]*?)\s*-?%\}',
-                r'{% \1 %}',
-                content,
-            )
+        return entries
 
-            # ── Fix 4: Fix missing spaces in block tags
-            # {%endif%} → {% endif %}, {%endfor%} → {% endfor %}, etc.
-            content = re.sub(r'\{%-?\s*(end(?:if|for|while|macro|call|block|raw))\s*-?%\}',
-                             r'{% \1 %}', content)
-            content = re.sub(r'\{%-?\s*(else)\s*-?%\}', r'{% else %}', content)
 
-            if content != original:
-                with open(xml_path, "w", encoding="utf-8") as f:
-                    f.write(content)
+def _xml_local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
 
-        out_zip = os.path.join(tmpdir, "fixed.docx")
-        with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as zout:
-            for root, dirs, files in os.walk(extract_dir):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    arcname = os.path.relpath(fpath, extract_dir)
-                    zout.write(fpath, arcname)
 
-        with open(out_zip, "rb") as f:
-            return f.read()
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+def _normalize_jinja_text(text: str) -> str:
+    fixed = text
+
+    fixed = re.sub(
+        r"\{%-?\s*p\s+([^%]+?)\s*-?%\}",
+        r"{% \1 %}",
+        fixed,
+    )
+    fixed = re.sub(
+        r"\{%-?\s*tr\s+((?:for\b|endfor)[^%]*?)\s*-?%\}",
+        r"{% \1 %}",
+        fixed,
+    )
+    fixed = re.sub(
+        r"\{%-?\s*(end(?:if|for|while|macro|call|block|raw)|else)\s*-?%\}",
+        r"{% \1 %}",
+        fixed,
+    )
+    return fixed
+
+
+def _fix_jinja_tags_in_xml(xml_bytes: bytes) -> bytes:
+    """Fix Jinja tags by parsing XML nodes instead of raw-regex on XML text."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return xml_bytes
+
+    changed = False
+
+    for paragraph in root.iter():
+        if _xml_local_name(paragraph.tag) != "p":
+            continue
+
+        text_nodes = [node for node in paragraph.iter() if _xml_local_name(node.tag) == "t"]
+        if not text_nodes:
+            continue
+
+        merged_text = "".join(node.text or "" for node in text_nodes)
+        if not merged_text:
+            continue
+
+        fixed_text = _normalize_jinja_text(merged_text)
+        if fixed_text == merged_text:
+            continue
+
+        text_nodes[0].text = fixed_text
+        for node in text_nodes[1:]:
+            node.text = ""
+        changed = True
+
+    if not changed:
+        return xml_bytes
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
 # ── Jinja2 Filters for Vietnamese formatting ─────────────────
@@ -209,6 +242,9 @@ def render_word_template(
     Raises:
         ValueError: If template is invalid or rendering fails
     """
+    if len(template_bytes or b"") > MAX_TEMPLATE_INPUT_BYTES:
+        raise ValueError("Invalid Word template: file size exceeds maximum allowed limit")
+
     try:
         # Pre-process template to fix common Jinja2 tag errors
         template_bytes = _fix_jinja_tags_in_docx(template_bytes)
@@ -216,11 +252,9 @@ def render_word_template(
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"Invalid Word template: {e}")
+        raise ValueError(f"Invalid Word template: {e}") from e
 
     # Register custom Jinja2 filters
-    jinja_env = doc.get_docx().element  # noqa — we access the env via docxtpl
-    # docxtpl exposes jinja_env on the DocxTemplate object
     if hasattr(doc, "jinja_env"):
         doc.jinja_env.filters["number_vn"] = _format_number_vn
         doc.jinja_env.filters["date_vn"] = _format_date_vn
@@ -250,8 +284,8 @@ def render_word_template(
                 f"Template rendering error: Tag '{tag_name}' không hợp lệ trong file Word template. "
                 f"Hãy kiểm tra cú pháp Jinja2: dùng {{% if %}}, {{% endif %}}, {{% for %}}, {{% endfor %}}. "
                 f"Lưu ý: Word có thể tự tách tag thành nhiều phần — hãy dùng 'Paste as plain text' khi gõ tag."
-            )
-        raise ValueError(f"Template rendering error: {e}")
+            ) from e
+        raise ValueError(f"Template rendering error: {e}") from e
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -274,33 +308,21 @@ def render_aggregation_to_word(
 ) -> bytes:
     """Render an aggregation report into a Word template.
 
-    Builds a CLEAN context from the single summary record only.
-    Internal keys (_source_records, _flat_records, _metadata, metrics) are
-    stripped — the Word template gets exactly the aggregated fields, nothing else.
+    This function is now a pure renderer. The caller should pass a clean
+    context/DTO (already prepared by aggregation layer).
 
     Args:
         template_bytes: Raw .docx template bytes
-        aggregated_data: The aggregated_data dict from AggregationReport
+        aggregated_data: Clean context data for Word rendering
         extra_context: Optional additional variables (report name, user info, etc.)
-        record_index: Ignored — there is always only 1 summary record.
+        record_index: Deprecated. Kept only for backward compatibility.
 
     Returns:
         Rendered .docx as bytes
     """
-    _STRIP_KEYS = {"records", "_source_records", "_flat_records", "_metadata", "metrics"}
-
-    # Start with the single summary record (records[0]) — the "Cục Cao"
-    records = aggregated_data.get("records", [])
-    if records and isinstance(records[0], dict):
-        context = dict(records[0])
-    else:
-        context = {}
-
-    # Also pull top-level aggregated fields that are NOT internal keys
-    # (SUM/CONCAT results stored directly on aggregated_data)
-    for k, v in aggregated_data.items():
-        if k not in _STRIP_KEYS and not k.startswith("_"):
-            context.setdefault(k, v)
+    context: dict[str, Any] = dict(aggregated_data or {})
+    if record_index is not None and "record_index" not in context:
+        context["record_index"] = int(record_index)
 
     if extra_context:
         context.update(extra_context)

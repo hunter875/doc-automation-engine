@@ -47,12 +47,12 @@ with mode_col:
         ["standard", "vision", "fast"],
         index=["standard", "vision", "fast"].index(st.session_state.engine2_mode),
         key="e2_mode_top",
-        help="standard: Docling+Flash | vision: Pro native PDF | fast: pdfplumber+Flash",
+        help="standard: pdfplumber+Flash | vision: Pro native PDF | fast: pdfplumber+Flash",
     )
     st.session_state.engine2_mode = mode
 with info_col:
     mode_info = {
-        "standard": "📊 **Standard** — Docling parser (GPU) + Gemini Flash. Tốt nhất cho bảng biểu / layout phức tạp.",
+        "standard": "📊 **Standard** — pdfplumber (CPU) + Gemini Flash. Tốt nhất cho PDF text thuần.",
         "vision": "👁️ **Vision** — Gemini Pro native PDF. Tốt nhất cho tài liệu scan, ảnh mờ.",
         "fast": "⚡ **Fast** — pdfplumber (CPU) + Gemini Flash. Nhanh nhất cho PDF text thuần.",
     }

@@ -23,6 +23,53 @@ from app.models.extraction import (
 logger = logging.getLogger(__name__)
 
 
+def build_word_export_context(
+    aggregated_data: dict[str, Any],
+    *,
+    record_index: int | None = None,
+    extra_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a clean DTO for Word rendering from aggregation payload.
+
+    Export layer should receive a template-ready context only, without touching
+    internal aggregation keys.
+    """
+    strip_keys = {"_source_records", "_flat_records", "_metadata", "metrics"}
+    payload = aggregated_data or {}
+
+    records = payload.get("records", [])
+    safe_records = records if isinstance(records, list) else []
+
+    context: dict[str, Any] = {
+        "records": safe_records,
+    }
+
+    selected_record: dict[str, Any] = {}
+    selected_index = int(record_index or 0)
+    if safe_records:
+        if 0 <= selected_index < len(safe_records) and isinstance(safe_records[selected_index], dict):
+            selected_record = dict(safe_records[selected_index])
+        elif isinstance(safe_records[0], dict):
+            selected_record = dict(safe_records[0])
+            selected_index = 0
+
+    context["record"] = selected_record
+    context["record_index"] = selected_index
+
+    if selected_record:
+        context.update(selected_record)
+
+    for key, value in payload.items():
+        if key in strip_keys or key.startswith("_") or key == "records":
+            continue
+        context[key] = value
+
+    if extra_context:
+        context.update(extra_context)
+
+    return context
+
+
 def _sanitize_for_json(obj: Any) -> Any:
     """Recursively replace NaN/Inf with None so JSONB INSERT doesn't crash."""
     import math

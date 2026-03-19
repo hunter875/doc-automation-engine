@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     GEMINI_TIMEOUT: int = 15
     GEMINI_MAX_RETRIES: int = 3
 
+    # Ollama (Hybrid extraction)
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_API_KEY: str = "ollama"
+    OLLAMA_MODEL: str = "qwen2.5:7b"
+
     # File Upload
     MAX_FILE_SIZE_MB: int = 10
     ALLOWED_MIME_TYPES: List[str] = [
@@ -136,6 +141,10 @@ class Settings(BaseSettings):
     EXTRACTION_MAX_RETRIES: int = 3
     EXTRACTION_TIMEOUT_MINUTES: int = 30
     EXTRACTION_BATCH_MAX_FILES: int = 20
+
+    # Hybrid extraction fallback
+    HYBRID_MAX_RETRIES: int = 3
+    HYBRID_MANUAL_REVIEW_DIR: str = "Needs_Manual_Review"
 
     # Confidence thresholds (for UI rendering)
     CONFIDENCE_HIGH: float = 0.85

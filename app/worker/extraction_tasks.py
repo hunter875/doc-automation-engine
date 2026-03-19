@@ -62,16 +62,14 @@ def _is_retriable_error(error: Exception) -> bool:
     retry_jitter=True,
 )
 def extract_document_task(self, job_id: str):
-    """Run the AI extraction pipeline for a single job.
+    """Run the Hybrid extraction pipeline for a single job.
 
     Steps:
       1. Load job from DB, set status='processing'
       2. Download PDF from MinIO (via document.s3_key)
-      3. Parse PDF → Markdown (pdfplumber/docling/llamaparse)
-      4. Build JSON Schema from template.schema_definition
-      5. Call LLM with structured output → JSON
-      6. Separate extracted_data / confidence_scores / source_references
-      7. Save to DB, set status='extracted'
+    3. Run HybridExtractionPipeline from in-memory bytes
+    4. Save extracted JSON or manual-review metadata
+    5. Update job status and processing metadata
 
     On failure:
       - Retry with exponential backoff (30s → 60s → 120s)
@@ -82,10 +80,10 @@ def extract_document_task(self, job_id: str):
     db = SessionLocal()
 
     try:
-        from app.services.extraction_service import ExtractionService
+        from app.services.extraction_orchestrator import ExtractionOrchestrator
 
-        service = ExtractionService(db)
-        job = service.run_extraction(job_id)
+        orchestrator = ExtractionOrchestrator(db)
+        job = orchestrator.run(job_id)
 
         logger.info(
             f"[Engine2] Extraction complete for job {job_id}: "

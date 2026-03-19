@@ -1,6 +1,6 @@
 """Document parser abstraction layer for Engine 2.
 
-Pluggable parsers: pdfplumber (default, free) | docling (GPU) | llamaparse (API).
+Pluggable parsers: pdfplumber (default, free) | llamaparse (API).
 """
 
 import io
@@ -226,50 +226,6 @@ class PdfPlumberParser(BaseParser):
         return "\n".join(md_lines)
 
 
-class DoclingParser(BaseParser):
-    """GPU-accelerated parser using Docling for layout analysis.
-
-    Pros: Best for merged cells, complex layouts, OCR.
-    Cons: Requires GPU, heavier dependency.
-    """
-
-    def parse(self, file_bytes: bytes, filename: str) -> ParseResult:
-        try:
-            from docling.document_converter import DocumentConverter
-        except ImportError:
-            raise ImportError(
-                "Docling is not installed. Install with: pip install docling"
-            )
-
-        import tempfile
-        import os
-
-        # Docling needs a file path
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-
-        try:
-            converter = DocumentConverter()
-            result = converter.convert(tmp_path)
-
-            markdown = result.document.export_to_markdown()
-
-            # Build page content (Docling doesn't always give per-page)
-            pages = [
-                PageContent(page_number=1, text=markdown, tables=[])
-            ]
-
-            return ParseResult(
-                markdown=markdown,
-                pages=pages,
-                total_pages=1,  # Docling merges pages
-                metadata={"parser": "docling", "filename": filename},
-            )
-        finally:
-            os.unlink(tmp_path)
-
-
 class LlamaParseParser(BaseParser):
     """Cloud API parser using LlamaParse.
 
@@ -324,7 +280,6 @@ class LlamaParseParser(BaseParser):
 
 _PARSERS = {
     "pdfplumber": PdfPlumberParser,
-    "docling": DoclingParser,
     "llamaparse": LlamaParseParser,
 }
 

@@ -231,7 +231,7 @@ GIAI ĐOẠN 2: TRẬN CHIẾN BÓC PDF VÀ CHỐT KIỂM DỊCH (AI EXTRACTION 
 1. Băm File (PDF Parsing)
 Hệ thống đéo ném nguyên cái file PDF nặng trịch cho con AI đọc.
 
-Lõi Backend dùng thư viện pdfplumber hoặc Docling để "lột da" cái file PDF KV30 BCN 02.03.26.pdf của mày.
+Lõi Backend dùng thư viện pdfplumber để "lột da" cái file PDF KV30 BCN 02.03.26.pdf của mày.
 
 Toàn bộ chữ nghĩa, từ dòng "1. Tình hình cháy: Không" cho đến cái bảng 61 dòng ở trang cuối, đều được băm nát và xếp lại thành một chuỗi văn bản (Markdown) siêu dài nhưng giữ nguyên được tọa độ hàng cột của bảng biểu.
 
