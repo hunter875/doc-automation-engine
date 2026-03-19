@@ -7,6 +7,7 @@ Uses Pandas for computation. AI is NOT involved in this step.
 import io
 import itertools
 import logging
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from typing import Any, Optional
 
@@ -90,6 +91,46 @@ def _sanitize_for_json(obj: Any) -> Any:
     except ImportError:
         pass
     return obj
+
+
+IGNORE_KEYS = {
+    "stt", "id", "index", "ghi_ch", "ghi_chu", "danh_m_c",
+    "danh_muc", "tieu_de", "danh_m_c_ch_ti_u_th_ng_k",
+}
+
+
+def _extract_number_from_garbage(val: Any) -> Decimal:
+    """Extract numeric value from noisy nested structures produced by LLM."""
+    if val is None:
+        return Decimal("0")
+
+    if isinstance(val, bool):
+        return Decimal("1") if val else Decimal("0")
+
+    if isinstance(val, (int, float, Decimal)):
+        return Decimal(str(val))
+
+    if isinstance(val, str):
+        text = val.strip().replace(",", ".")
+        if not text:
+            return Decimal("0")
+        try:
+            return Decimal(text)
+        except InvalidOperation:
+            return Decimal("0")
+
+    if isinstance(val, list):
+        return sum((_extract_number_from_garbage(item) for item in val), Decimal("0"))
+
+    if isinstance(val, dict):
+        dict_sum = Decimal("0")
+        for key, value in val.items():
+            if str(key).lower().strip() in IGNORE_KEYS:
+                continue
+            dict_sum += _extract_number_from_garbage(value)
+        return dict_sum
+
+    return Decimal("0")
 
 
 def _default_value_for_field(field_def: dict[str, Any]) -> Any:
@@ -217,19 +258,18 @@ class AggregationService:
             # Fallback: basic DataFrame if json_normalize fails on complex structures
             df = pd.DataFrame(data_rows)
 
-        # Also build a scalar-only view for numeric aggregations
-        scalar_data = []
-        for row in data_rows:
-            scalar_row = {}
-            for k, v in row.items():
-                if not isinstance(v, (list, dict)):
-                    scalar_row[k] = v
-            scalar_data.append(scalar_row)
-        df_scalar = pd.DataFrame(scalar_data) if scalar_data else pd.DataFrame()
-
-        # Sort if requested
-        if sort_by and sort_by in df_scalar.columns:
-            df_scalar = df_scalar.sort_values(by=sort_by)
+        # Sort if requested (best-effort, robust for mixed payloads)
+        if sort_by:
+            try:
+                data_rows = sorted(
+                    data_rows,
+                    key=lambda row: (
+                        _extract_number_from_garbage((row or {}).get(sort_by))
+                        if isinstance(row, dict) else Decimal("0")
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("Cannot sort by '%s': %s", sort_by, exc)
 
         # 6. Apply aggregation rules
         aggregated_data: dict[str, Any] = {}
@@ -242,7 +282,6 @@ class AggregationService:
 
             try:
                 if method == "CONCAT":
-                    # For array fields: flatten all arrays
                     all_arrays = []
                     for row in data_rows:
                         val = row.get(source_field)
@@ -253,38 +292,48 @@ class AggregationService:
                     aggregated_data[output_field] = all_arrays
 
                 elif method == "LAST":
-                    if source_field in df_scalar.columns and len(df_scalar) > 0:
-                        val = df_scalar[source_field].iloc[-1]
-                        aggregated_data[output_field] = val.item() if hasattr(val, 'item') else val
+                    val = None
+                    for row in reversed(data_rows):
+                        if source_field in row and row[source_field] is not None:
+                            val = row[source_field]
+                            break
+                    aggregated_data[output_field] = val
+
+                elif method in {"SUM", "AVG", "MAX", "MIN", "COUNT"}:
+                    extracted_numbers: list[Decimal] = []
+                    for row in data_rows:
+                        val = row.get(source_field)
+                        if val is None:
+                            continue
+                        if method == "COUNT":
+                            extracted_numbers.append(Decimal("1"))
+                        else:
+                            extracted_numbers.append(_extract_number_from_garbage(val))
+
+                    if not extracted_numbers:
+                        result: Decimal | None = Decimal("0") if method != "AVG" else None
                     else:
-                        aggregated_data[output_field] = None
+                        if method in {"SUM", "COUNT"}:
+                            result = sum(extracted_numbers)
+                        elif method == "AVG":
+                            result = sum(extracted_numbers) / Decimal(len(extracted_numbers))
+                        elif method == "MAX":
+                            result = max(extracted_numbers)
+                        else:
+                            result = min(extracted_numbers)
 
-                elif source_field in df_scalar.columns:
-                    series = pd.to_numeric(df_scalar[source_field], errors="coerce")
-
-                    if method == "SUM":
-                        result = series.sum()
-                    elif method == "AVG":
-                        result = series.mean()
-                    elif method == "MAX":
-                        result = series.max()
-                    elif method == "MIN":
-                        result = series.min()
-                    elif method == "COUNT":
-                        result = series.count()
+                    if result is not None:
+                        if round_digits is not None:
+                            result_value: Any = round(float(result), round_digits)
+                        else:
+                            result_value = int(result) if result == int(result) else float(result)
                     else:
-                        result = None
+                        result_value = None
 
-                    if round_digits is not None and result is not None:
-                        result = round(float(result), round_digits)
-                    elif result is not None:
-                        # Convert numpy types → native Python for JSON serialization
-                        result = float(result) if hasattr(result, '__float__') else result
-
-                    aggregated_data[output_field] = result
+                    aggregated_data[output_field] = result_value
                 else:
                     aggregated_data[output_field] = None
-                    logger.warning(f"Source field '{source_field}' not found in data")
+                    logger.warning(f"Unknown aggregation method '{method}'")
 
             except Exception as e:
                 logger.error(f"Aggregation error for rule '{output_field}': {e}")

@@ -55,15 +55,37 @@ def _get_cache_key() -> str:
     return f"{base_url}|{tenant_id}|{user_id}"
 
 
-def _cache_nonce() -> int:
-    return int(st.session_state.get("e2_cache_nonce", 0))
+def _templates_nonce() -> int:
+    return int(st.session_state.get("e2_templates_nonce", 0))
 
 
-def _invalidate_engine2_cache():
-    st.session_state["e2_cache_nonce"] = _cache_nonce() + 1
+def _jobs_nonce() -> int:
+    return int(st.session_state.get("e2_jobs_nonce", 0))
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+def _reports_nonce() -> int:
+    return int(st.session_state.get("e2_reports_nonce", 0))
+
+
+def _invalidate_templates_cache():
+    st.session_state["e2_templates_nonce"] = _templates_nonce() + 1
+
+
+def _invalidate_jobs_cache():
+    st.session_state["e2_jobs_nonce"] = _jobs_nonce() + 1
+
+
+def _invalidate_reports_cache():
+    st.session_state["e2_reports_nonce"] = _reports_nonce() + 1
+
+
+def _invalidate_all_engine2_caches():
+    _invalidate_templates_cache()
+    _invalidate_jobs_cache()
+    _invalidate_reports_cache()
+
+
+@st.cache_data(ttl=60, max_entries=5, show_spinner=False)
 def _load_templates_cached(_cache_key: str, _nonce: int):
     ok, data = get_json("/api/v1/extraction/templates", require_tenant=True)
     if ok:
@@ -72,7 +94,7 @@ def _load_templates_cached(_cache_key: str, _nonce: int):
     return []
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=60, max_entries=5, show_spinner=False)
 def _load_jobs_cached(_cache_key: str, _nonce: int):
     ok, data = get_json("/api/v1/extraction/jobs?limit=100", require_tenant=True)
     if ok:
@@ -81,7 +103,7 @@ def _load_jobs_cached(_cache_key: str, _nonce: int):
     return []
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=60, max_entries=5, show_spinner=False)
 def _load_reports_cached(_cache_key: str, _nonce: int):
     ok, data = get_json("/api/v1/extraction/aggregate", require_tenant=True)
     if ok:
@@ -91,15 +113,15 @@ def _load_reports_cached(_cache_key: str, _nonce: int):
 
 
 def _load_templates():
-    return _load_templates_cached(_get_cache_key(), _cache_nonce())
+    return _load_templates_cached(_get_cache_key(), _templates_nonce())
 
 
 def _load_jobs():
-    return _load_jobs_cached(_get_cache_key(), _cache_nonce())
+    return _load_jobs_cached(_get_cache_key(), _jobs_nonce())
 
 
 def _load_reports():
-    return _load_reports_cached(_get_cache_key(), _cache_nonce())
+    return _load_reports_cached(_get_cache_key(), _reports_nonce())
 
 
 def _default_array_items() -> list[dict]:
@@ -283,7 +305,7 @@ with tab1:
                             "Bắt buộc": "✅" if f.get("required") else "",
                             "Mô tả": f.get("description", "")[:60],
                         })
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.table(rows)
                 with st.popover("📋 Xem JSON gốc"):
                     st.json(t)
     else:
@@ -408,7 +430,7 @@ with tab1:
                         st.stop()
                     ok, data = post_json("/api/v1/extraction/templates", payload, require_tenant=True)
                     if ok:
-                        _invalidate_engine2_cache()
+                        _invalidate_templates_cache()
                         st.success(f"✅ Đã tạo mẫu **{tpl_name.strip()}**!")
                         st.session_state.pop("e2_scan_result", None)
                         st.session_state.pop("e2_scan_config_fields", None)
@@ -437,7 +459,7 @@ with tab1:
                 }
                 ok, data = post_json("/api/v1/extraction/templates", payload, require_tenant=True)
                 if ok:
-                    _invalidate_engine2_cache()
+                    _invalidate_templates_cache()
                     st.success(f"✅ Đã tạo mẫu **{tpl_name.strip()}**!")
                     st.rerun()
                 else:
@@ -478,7 +500,7 @@ with tab2:
                     require_tenant=True,
                 )
             if ok:
-                _invalidate_engine2_cache()
+                _invalidate_jobs_cache()
                 jid = data.get("id", data.get("job_id", ""))
                 st.success(f"✅ Đã tạo công việc `{short_id(jid)}` — đang xử lý...")
                 st.balloons()
@@ -497,7 +519,7 @@ with tab2:
                     require_tenant=True,
                 )
             if ok:
-                _invalidate_engine2_cache()
+                _invalidate_jobs_cache()
                 bid = data.get("batch_id", "")
                 count = data.get("total_jobs", len(pdfs))
                 st.success(f"✅ Đã tạo {count} công việc (batch `{short_id(bid)}`)")
@@ -522,7 +544,7 @@ with tab2:
                         "mode": st.session_state.engine2_mode,
                     }, require_tenant=True)
                     if ok:
-                        _invalidate_engine2_cache()
+                        _invalidate_jobs_cache()
                         st.success(f"✅ Đã tạo công việc `{short_id(data.get('id', ''))}`")
                     else:
                         st.error(data)
@@ -536,7 +558,7 @@ with tab2:
     st.markdown("#### 📋 Danh sách công việc")
 
     if st.button("🔄 Tải lại", key="e2_reload_jobs"):
-        _invalidate_engine2_cache()
+        _invalidate_jobs_cache()
         st.rerun()
 
     jobs = _load_jobs()
@@ -585,6 +607,7 @@ with tab2:
                         st.success(f"✅ Đã xóa {ok_count}/{len(selected_ids)} công việc.")
                     if failed_items:
                         st.error("\n".join(["❌ Không xóa được:"] + failed_items[:5]))
+                    _invalidate_jobs_cache()
                     st.rerun()
         else:
             st.caption("Không có công việc đã hoàn tất để xóa.")
@@ -623,38 +646,46 @@ with tab3:
     else:
         if reviewable:
             st.markdown(f"#### 📝 Cần duyệt ({len(reviewable)})")
+            options = {}
             for j in reviewable:
                 jid = j.get("id", "")
                 fname = j.get("file_name", short_id(jid))
-                status = j.get("status", "")
-                status_vi = STATUS_VI.get(status, status)
+                status_vi = STATUS_VI.get(j.get("status", ""), j.get("status", ""))
+                options[f"{status_vi}  {fname} — {short_id(jid)}"] = jid
 
-                with st.expander(f"{status_vi}  **{fname}** — `{short_id(jid)}`", expanded=len(reviewable) <= 3):
-                    # Load full job details
-                    ok, detail = get_json(f"/api/v1/extraction/jobs/{jid}", require_tenant=True)
-                    if not ok:
-                        st.error(f"Không tải được chi tiết: {detail}")
-                        continue
+            sel_review_label = st.selectbox(
+                "📝 Chọn công việc cần duyệt",
+                list(options.keys()),
+                key="e2_review_sel",
+            )
+            sel_jid = options[sel_review_label]
+            selected_job = next((j for j in reviewable if j.get("id") == sel_jid), {})
+            status = selected_job.get("status", "")
 
-                    extracted = detail.get("extracted_data") or detail.get("result", {})
-                    validation = detail.get("validation_report", {})
-                    edit_key = f"edit_{jid}"
-                    if edit_key not in st.session_state:
-                        st.session_state[edit_key] = json.dumps(extracted, indent=2, ensure_ascii=False)
+            ok, detail = get_json(f"/api/v1/extraction/jobs/{sel_jid}", require_tenant=True)
+            if not ok:
+                st.error(f"Không tải được chi tiết: {detail}")
+            else:
+                extracted = detail.get("extracted_data") or detail.get("result", {})
+                validation = detail.get("validation_report", {})
+                edit_key = f"edit_{sel_jid}"
 
-                    if status == "failed":
-                        err = detail.get("error_message", detail.get("error", "Không rõ lỗi"))
-                        st.error(f"Lỗi: {err}")
-                        if st.button(f"🔄 Thử lại", key=f"retry_{jid}"):
-                            ok_r, _ = post_json(f"/api/v1/extraction/jobs/{jid}/retry", {}, require_tenant=True)
-                            if ok_r:
-                                st.success("Đã gửi lại xử lý!")
-                                st.rerun()
-                            else:
-                                st.error("Không thể thử lại")
-                        continue
+                if edit_key not in st.session_state or st.session_state.get("e2_last_review_jid") != sel_jid:
+                    st.session_state[edit_key] = json.dumps(extracted, indent=2, ensure_ascii=False)
+                    st.session_state["e2_last_review_jid"] = sel_jid
 
-                    # Validation summary
+                if status == "failed":
+                    err = detail.get("error_message", detail.get("error", "Không rõ lỗi"))
+                    st.error(f"Lỗi: {err}")
+                    if st.button("🔄 Thử lại", key=f"retry_{sel_jid}"):
+                        ok_r, _ = post_json(f"/api/v1/extraction/jobs/{sel_jid}/retry", {}, require_tenant=True)
+                        if ok_r:
+                            _invalidate_jobs_cache()
+                            st.success("Đã gửi lại xử lý!")
+                            st.rerun()
+                        else:
+                            st.error("Không thể thử lại")
+                else:
                     if validation:
                         comp = validation.get("completeness_pct", 0)
                         missing = validation.get("missing_fields", [])
@@ -668,12 +699,11 @@ with tab3:
                             else:
                                 st.success("Đầy đủ!")
 
-                    # Show extracted data as table
-                    if extracted:
+                    if isinstance(extracted, dict) and extracted:
                         st.markdown("**Dữ liệu trích xuất:**")
                         flat_rows = []
                         for k, v in extracted.items():
-                            if k.startswith("_"):
+                            if str(k).startswith("_"):
                                 continue
                             if isinstance(v, dict):
                                 val = v.get("value", v)
@@ -687,49 +717,55 @@ with tab3:
                                 "Độ tin cậy": f"{conf}" if conf else "",
                             })
                         if flat_rows:
-                            st.dataframe(pd.DataFrame(flat_rows), use_container_width=True, hide_index=True)
+                            st.table(flat_rows)
 
-                    # Approve / Reject
                     c1, c2 = st.columns(2)
                     with c1:
-                        if st.button("✅ Duyệt", key=f"approve_{jid}", type="primary", use_container_width=True):
+                        if st.button("✅ Duyệt", key=f"approve_{sel_jid}", type="primary", use_container_width=True):
                             try:
                                 reviewed_data = json.loads(st.session_state.get(edit_key, "{}"))
                             except json.JSONDecodeError:
                                 st.error("JSON chỉnh sửa không hợp lệ. Sửa lại trong popover trước khi duyệt.")
                                 st.stop()
                             ok_a, data_a = post_json(
-                                f"/api/v1/extraction/review/{jid}/approve",
+                                f"/api/v1/extraction/review/{sel_jid}/approve",
                                 {"reviewed_data": reviewed_data},
                                 require_tenant=True,
                             )
                             if ok_a:
-                                _invalidate_engine2_cache()
+                                _invalidate_jobs_cache()
                                 st.session_state.pop(edit_key, None)
                                 st.success("✅ Đã duyệt!")
                                 st.rerun()
                             else:
                                 st.error(data_a)
                     with c2:
-                        if st.button("❌ Từ chối", key=f"reject_{jid}", use_container_width=True):
-                            ok_r, data_r = post_json(f"/api/v1/extraction/review/{jid}/reject", {"notes": "Từ chối từ UI"}, require_tenant=True)
+                        if st.button("❌ Từ chối", key=f"reject_{sel_jid}", use_container_width=True):
+                            ok_r, data_r = post_json(
+                                f"/api/v1/extraction/review/{sel_jid}/reject",
+                                {"notes": "Từ chối từ UI"},
+                                require_tenant=True,
+                            )
                             if ok_r:
-                                _invalidate_engine2_cache()
+                                _invalidate_jobs_cache()
                                 st.session_state.pop(edit_key, None)
                                 st.warning("Đã từ chối.")
                                 st.rerun()
                             else:
                                 st.error(data_r)
 
-                    # Advanced: edit before approve
                     with st.popover("✏️ Chỉnh sửa trước khi duyệt"):
                         edited_json = st.text_area("Dữ liệu (JSON)", height=300, key=edit_key)
-                        if st.button("✅ Duyệt với dữ liệu đã chỉnh", key=f"approve_edit_{jid}"):
+                        if st.button("✅ Duyệt với dữ liệu đã chỉnh", key=f"approve_edit_{sel_jid}"):
                             try:
                                 reviewed_data = json.loads(edited_json)
-                                ok_a, data_a = post_json(f"/api/v1/extraction/review/{jid}/approve", {"reviewed_data": reviewed_data}, require_tenant=True)
+                                ok_a, data_a = post_json(
+                                    f"/api/v1/extraction/review/{sel_jid}/approve",
+                                    {"reviewed_data": reviewed_data},
+                                    require_tenant=True,
+                                )
                                 if ok_a:
-                                    _invalidate_engine2_cache()
+                                    _invalidate_jobs_cache()
                                     st.session_state.pop(edit_key, None)
                                     st.success("Đã duyệt với dữ liệu chỉnh sửa!")
                                     st.rerun()
@@ -812,7 +848,8 @@ with tab4:
                 }
                 ok, data = post_json("/api/v1/extraction/aggregate", payload, require_tenant=True)
             if ok:
-                _invalidate_engine2_cache()
+                _invalidate_jobs_cache()
+                _invalidate_reports_cache()
                 rid = data.get("id", data.get("report_id", ""))
                 st.success(f"✅ Báo cáo `{short_id(rid)}` đã tạo!")
                 st.session_state["engine2_last_report_id"] = rid
@@ -854,12 +891,13 @@ with tab4:
                 else:
                     ok_del_r, del_data = delete_req(f"/api/v1/extraction/aggregate/{sel_rid}", require_tenant=True)
                     if ok_del_r:
+                        _invalidate_reports_cache()
                         st.success("✅ Đã xóa báo cáo.")
                         st.session_state.pop("engine2_last_report_id", None)
                         st.rerun()
                     else:
                         st.error(del_data)
-                        _invalidate_engine2_cache()
+                        _invalidate_reports_cache()
 
         # Load detail for selected report
         ok_detail, detail = get_json(f"/api/v1/extraction/aggregate/{sel_rid}", require_tenant=True)

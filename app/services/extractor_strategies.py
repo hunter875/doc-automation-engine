@@ -119,6 +119,7 @@ class GeminiExtractor(BaseExtractor):
         response_model: type[BaseModel],
         model: str,
         temperature: float,
+        pdf_bytes: bytes | None = None,
     ) -> BaseModel:
         from google import genai
         from google.genai import types
@@ -130,6 +131,72 @@ class GeminiExtractor(BaseExtractor):
         response = client.models.generate_content(
             model=model,
             contents=[user_content],
+            config=types.GenerateContentConfig(
+                system_instruction=system_content,
+                temperature=temperature,
+                response_mime_type="application/json",
+            ),
+        )
+
+        text = (response.text or "{}").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines)
+
+        return response_model.model_validate(json.loads(text))
+
+
+class GeminiVisionExtractor(BaseExtractor):
+    """Gemini Vision extractor for direct PDF processing.
+    
+    Handles PDF bytes directly without text extraction,
+    using Gemini's native PDF/image understanding.
+    """
+
+    def __init__(self, *, api_key: str) -> None:
+        self.api_key = api_key
+
+    def extract(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel],
+        model: str,
+        temperature: float,
+        pdf_bytes: bytes | None = None,
+    ) -> BaseModel:
+        """Extract from messages OR from PDF bytes if provided."""
+        from google import genai
+        from google.genai import types
+        import base64
+
+        client = genai.Client(api_key=self.api_key)
+        
+        # Extract system message
+        system_content = "\n\n".join(m["content"] for m in messages if m.get("role") == "system")
+        user_content = "\n\n".join(m["content"] for m in messages if m.get("role") == "user")
+        
+        # Build content parts
+        content_parts = []
+        
+        # Add PDF if provided
+        if pdf_bytes:
+            pdf_base64 = base64.standard_b64encode(pdf_bytes).decode('utf-8')
+            content_parts.append({
+                "mime_type": "application/pdf",
+                "data": pdf_base64,
+            })
+        
+        # Add text prompt
+        if user_content:
+            content_parts.append(user_content)
+        
+        response = client.models.generate_content(
+            model=model,
+            contents=content_parts,
             config=types.GenerateContentConfig(
                 system_instruction=system_content,
                 temperature=temperature,

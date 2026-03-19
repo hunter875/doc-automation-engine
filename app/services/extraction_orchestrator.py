@@ -37,15 +37,34 @@ class ExtractionOrchestrator:
         self.pipeline_factory = pipeline_factory or self._build_default_pipeline
 
     def _build_default_pipeline(self) -> HybridExtractionPipeline:
-        extractor = OllamaInstructorExtractor(
-            base_url=settings.OLLAMA_BASE_URL,
-            api_key=settings.OLLAMA_API_KEY,
-        )
+        """Build extraction pipeline using configured backend."""
+        # Get extraction mode from job if available, otherwise use config
+        extraction_mode = getattr(self, 'extraction_mode', 'standard')
+        
+        if settings.EXTRACTION_BACKEND.lower() == "gemini":
+            from app.services.extractor_strategies import GeminiExtractor, GeminiVisionExtractor
+            
+            # Use vision extractor for vision mode, standard for others
+            if extraction_mode == "vision":
+                extractor = GeminiVisionExtractor(api_key=settings.GEMINI_API_KEY)
+            else:
+                extractor = GeminiExtractor(api_key=settings.GEMINI_API_KEY)
+            
+            model = settings.GEMINI_CHAT_MODEL or settings.GEMINI_FLASH_MODEL
+        else:
+            # Default to Ollama
+            extractor = OllamaInstructorExtractor(
+                base_url=settings.OLLAMA_BASE_URL,
+                api_key=settings.OLLAMA_API_KEY,
+            )
+            model = settings.OLLAMA_MODEL
+        
         return HybridExtractionPipeline(
-            model=settings.OLLAMA_MODEL,
+            model=model,
             temperature=0.0,
             extractor=extractor,
             rule_engine=self.rule_engine,
+            extraction_mode=extraction_mode,
         )
 
     def run(self, job_id: str):
@@ -66,6 +85,7 @@ class ExtractionOrchestrator:
             file_bytes = response["Body"].read()
 
             started_at = datetime.utcnow()
+            self.extraction_mode = job.extraction_mode or "standard"
             pipeline = self.pipeline_factory()
             result = pipeline.run_from_bytes(file_bytes, document.file_name)
             elapsed_ms = int((datetime.utcnow() - started_at).total_seconds() * 1000)
@@ -73,7 +93,7 @@ class ExtractionOrchestrator:
             saved_job = self.job_manager.persist_pipeline_result(
                 job=job,
                 result=result,
-                llm_model=settings.OLLAMA_MODEL,
+                llm_model=settings.GEMINI_CHAT_MODEL if settings.EXTRACTION_BACKEND.lower() == "gemini" else settings.OLLAMA_MODEL,
                 processing_time_ms=elapsed_ms,
             )
 

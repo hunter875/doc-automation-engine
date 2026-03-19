@@ -142,6 +142,9 @@ class Settings(BaseSettings):
     EXTRACTION_TIMEOUT_MINUTES: int = 30
     EXTRACTION_BATCH_MAX_FILES: int = 20
 
+    # Extraction backend selection: 'ollama' or 'gemini'
+    EXTRACTION_BACKEND: str = "gemini"
+
     # Hybrid extraction fallback
     HYBRID_MAX_RETRIES: int = 3
     HYBRID_MANUAL_REVIEW_DIR: str = "Needs_Manual_Review"

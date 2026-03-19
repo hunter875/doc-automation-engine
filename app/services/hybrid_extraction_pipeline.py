@@ -112,6 +112,8 @@ class HybridExtractionPipeline:
         extractor: BaseExtractor | None = None,
         response_model: type[BaseModel] = HybridExtractionOutput,
         rule_engine: RuleEngine | None = None,
+        extraction_mode: str = "standard",
+        pdf_bytes: bytes | None = None,
     ) -> None:
         self.model = model or settings.OLLAMA_MODEL
         self.temperature = temperature
@@ -121,6 +123,8 @@ class HybridExtractionPipeline:
         self._commit_func = commit_func
         self.response_model = response_model
         self.rule_engine = rule_engine
+        self.extraction_mode = extraction_mode
+        self.pdf_bytes = pdf_bytes
         self.extractor = extractor or OllamaInstructorExtractor(
             base_url=settings.OLLAMA_BASE_URL,
             api_key=settings.OLLAMA_API_KEY,
@@ -221,12 +225,23 @@ class HybridExtractionPipeline:
                 return self.response_model.model_validate(raw_output)
 
             messages = self._build_inference_messages(prompt)
-            return self.extractor.extract(
-                messages=messages,
-                response_model=self.response_model,
-                model=self.model,
-                temperature=self.temperature,
-            )
+            
+            # For vision mode with PDF bytes, pass them to the extractor
+            if self.extraction_mode == "vision" and self.pdf_bytes:
+                return self.extractor.extract(
+                    messages=messages,
+                    response_model=self.response_model,
+                    model=self.model,
+                    temperature=self.temperature,
+                    pdf_bytes=self.pdf_bytes,
+                )
+            else:
+                return self.extractor.extract(
+                    messages=messages,
+                    response_model=self.response_model,
+                    model=self.model,
+                    temperature=self.temperature,
+                )
         except Exception as exc:
             raise StageError("inference", f"LLM inference failed: {exc}") from exc
 
@@ -247,6 +262,21 @@ class HybridExtractionPipeline:
         if self.rule_engine is None:
             return []
         return self.rule_engine.validate(validated_payload)
+
+    @staticmethod
+    def _is_quota_or_rate_limit_error(message: str) -> bool:
+        text = (message or "").lower()
+        markers = [
+            "resource_exhausted",
+            "quota exceeded",
+            "rate limit",
+            "too many requests",
+            " 429 ",
+            "code': 429",
+            "code\": 429",
+            "generativelanguage.googleapis.com/generate_content_free_tier",
+        ]
+        return any(marker in text for marker in markers)
 
     def run(self, pdf_path: str | Path) -> PipelineResult:
         """Execute full 4-stage kill-chain with retry and manual-review fallback."""
@@ -298,6 +328,14 @@ class HybridExtractionPipeline:
                 prior_errors = self._build_retry_feedback(validation_errors, output)
                 logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
             except StageError as exc:
+                if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(
+                        status="failed",
+                        attempts=attempt,
+                        errors=[stage_error],
+                    )
                 prior_errors = self._build_retry_feedback([f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"], last_invalid_output)
                 logger.warning("Hybrid extraction stage error on attempt %s: %s", attempt, exc)
 
@@ -316,6 +354,11 @@ class HybridExtractionPipeline:
 
     def run_from_bytes(self, pdf_bytes: bytes, filename: str) -> PipelineResult:
         """Execute pipeline directly from in-memory bytes (S3/upload)."""
+        # For vision mode, skip text extraction stages and go directly to inference
+        if self.extraction_mode == "vision":
+            return self._run_vision_mode(pdf_bytes, filename)
+        
+        # Standard/fast mode: extract text using pdfplumber
         try:
             ingested = self.stage1_ingest(pdf_bytes)
             self._assert_non_empty_text_stream(ingested.text_stream or "")
@@ -347,6 +390,14 @@ class HybridExtractionPipeline:
                 prior_errors = self._build_retry_feedback(validation_errors, output)
                 logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
             except StageError as exc:
+                if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(
+                        status="failed",
+                        attempts=attempt,
+                        errors=[stage_error],
+                    )
                 prior_errors = self._build_retry_feedback([f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"], last_invalid_output)
                 logger.warning("Hybrid extraction stage error on attempt %s: %s", attempt, exc)
 
@@ -422,13 +473,22 @@ class HybridExtractionPipeline:
 
         return lines
 
-    def _build_prompt(self, normalized: NormalizedDocument, validation_errors: list[str] | None) -> str:
+    def _build_prompt(self, normalized: NormalizedDocument | None, validation_errors: list[str] | None) -> str:
         fix_hint = ""
         if validation_errors:
             fix_hint = (
                 "\nValidation errors from previous attempt: "
                 + ", ".join(validation_errors)
                 + "\nPlease fix these violations in this attempt."
+            )
+
+        # Vision mode: no text extraction, just basic prompt
+        if normalized is None:
+            return (
+                "Analyze this PDF document and extract incident data to valid JSON with exact schema keys. "
+                "Return only JSON. "
+                "Date format should follow dd/mm/yyyy where applicable."
+                f"{fix_hint}"
             )
 
         return (
@@ -559,11 +619,74 @@ class HybridExtractionPipeline:
             elif error in {"ERR_REPORT_DATE_FORMAT", "ERR_FROM_DATE_FORMAT", "ERR_TO_DATE_FORMAT"}:
                 feedback.append("Ngày tháng phải theo định dạng dd/mm/yyyy. Hãy sửa lại toàn bộ trường ngày.")
             elif error.startswith("ERR_STAGE_"):
-                feedback.append(f"Lỗi hệ thống/validation: {error}. Hãy đọc lại payload và gen lại JSON đúng schema.")
+                error_lower = error.lower()
+                if (
+                    "resource_exhausted" in error_lower
+                    or "quota exceeded" in error_lower
+                    or "rate limit" in error_lower
+                    or " 429 " in error_lower
+                    or "code': 429" in error_lower
+                    or "code\": 429" in error_lower
+                ):
+                    feedback.append(
+                        "Gemini quota/rate-limit đã vượt ngưỡng (429 RESOURCE_EXHAUSTED). "
+                        "Dừng retry tự động; hãy đổi model/API key hoặc chờ reset quota rồi chạy lại."
+                    )
+                else:
+                    feedback.append(f"Lỗi hệ thống/validation: {error}. Hãy đọc lại payload và gen lại JSON đúng schema.")
             else:
                 feedback.append(f"Validation error: {error}. Hãy sửa và gen lại.")
 
         return feedback
+
+    def _run_vision_mode(self, pdf_bytes: bytes, filename: str) -> PipelineResult:
+        """Vision mode: send PDF directly to Gemini without text extraction."""
+        prior_errors: list[str] = []
+        last_invalid_output: BaseModel | None = None
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                # In vision mode, we pass PDF bytes directly without text extraction
+                output = self.stage3_infer(None, prior_errors or None)
+                last_invalid_output = output
+                validation_errors = self.stage4_validate(output)
+
+                if not validation_errors:
+                    self._commit_to_database(output)
+                    return PipelineResult(
+                        status="ok",
+                        attempts=attempt,
+                        output=output,
+                    )
+
+                prior_errors = self._build_retry_feedback(validation_errors, output)
+                logger.warning("Vision extraction validation failed on attempt %s: %s", attempt, validation_errors)
+            except StageError as exc:
+                if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Vision extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(
+                        status="failed",
+                        attempts=attempt,
+                        errors=[stage_error],
+                    )
+                prior_errors = self._build_retry_feedback([f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"], last_invalid_output)
+                logger.warning("Vision extraction stage error on attempt %s: %s", attempt, exc)
+
+        # All retries exhausted
+        manual_path, metadata_path = self._write_manual_review_artifacts(
+            pdf_bytes=pdf_bytes,
+            filename=filename,
+            invalid_output=last_invalid_output,
+            errors=prior_errors,
+        )
+        return PipelineResult(
+            status="needs_manual_review",
+            attempts=self.max_retries,
+            errors=prior_errors,
+            manual_review_path=str(manual_path),
+            manual_review_metadata_path=str(metadata_path) if metadata_path else None,
+        )
 
     def _commit_to_database(self, output: BaseModel) -> None:
         if self._commit_func is None:
@@ -573,3 +696,4 @@ class HybridExtractionPipeline:
             logger.info("Hybrid extraction committed to database successfully")
         except Exception as exc:
             raise StageError("commit", f"DB commit failed: {exc}") from exc
+

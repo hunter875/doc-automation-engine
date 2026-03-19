@@ -20,10 +20,10 @@ import io
 import logging
 import re
 import zipfile
-import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
 
+from decimal import Decimal, InvalidOperation
 from docxtpl import DocxTemplate
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,59 @@ MAX_DOCX_TOTAL_UNCOMPRESSED_BYTES = 120 * 1024 * 1024
 MAX_DOCX_ENTRIES = 2000
 MAX_DOCX_COMPRESSION_RATIO = 150
 MAX_TEMPLATE_INPUT_BYTES = 50 * 1024 * 1024
+
+
+class RenderFriendlyList(list):
+    """List wrapper: iterable for Jinja loops, but readable when rendered as scalar.
+
+    - If items are dicts with `k_t_qu`, string value = SUM(k_t_qu)
+    - If items are scalar, string value = joined with ", "
+    - Fallback to default list string
+    """
+
+    def __str__(self) -> str:
+        if not self:
+            return ""
+
+        if all(isinstance(item, dict) for item in self):
+            has_k_t_qu = any("k_t_qu" in item for item in self)
+            if has_k_t_qu:
+                total = Decimal("0")
+                used_numeric = False
+                for item in self:
+                    raw = item.get("k_t_qu")
+                    if raw is None:
+                        continue
+                    text = str(raw).strip().replace(",", ".")
+                    if text == "":
+                        continue
+                    try:
+                        total += Decimal(text)
+                        used_numeric = True
+                    except (InvalidOperation, ValueError):
+                        continue
+
+                if used_numeric:
+                    if total == total.to_integral_value():
+                        return str(int(total))
+                    return format(total.normalize(), "f")
+
+        if all(not isinstance(item, (dict, list, tuple, set)) for item in self):
+            return ", ".join(str(item) for item in self)
+
+        return super().__str__()
+
+
+def _to_render_friendly(value: Any) -> Any:
+    """Recursively wrap lists so scalar placeholders don't print raw Python JSON."""
+    if isinstance(value, dict):
+        return {key: _to_render_friendly(item) for key, item in value.items()}
+    if isinstance(value, list):
+        wrapped = RenderFriendlyList(_to_render_friendly(item) for item in value)
+        return wrapped
+    if isinstance(value, tuple):
+        return tuple(_to_render_friendly(item) for item in value)
+    return value
 
 
 # ── Template pre-processing: fix common tag mistakes ──────────
@@ -129,39 +182,21 @@ def _normalize_jinja_text(text: str) -> str:
 
 
 def _fix_jinja_tags_in_xml(xml_bytes: bytes) -> bytes:
-    """Fix Jinja tags by parsing XML nodes instead of raw-regex on XML text."""
+    """Fix common Jinja tag patterns while preserving original XML namespaces.
+
+    Important: avoid parse/serialize roundtrip (ElementTree/LXML) because WordprocessingML
+    namespace prefixes (especially `w`) can be rewritten or dropped, which breaks `docxtpl`.
+    """
     try:
-        root = ET.fromstring(xml_bytes)
-    except ET.ParseError:
+        xml_text = xml_bytes.decode("utf-8")
+    except UnicodeDecodeError:
         return xml_bytes
 
-    changed = False
-
-    for paragraph in root.iter():
-        if _xml_local_name(paragraph.tag) != "p":
-            continue
-
-        text_nodes = [node for node in paragraph.iter() if _xml_local_name(node.tag) == "t"]
-        if not text_nodes:
-            continue
-
-        merged_text = "".join(node.text or "" for node in text_nodes)
-        if not merged_text:
-            continue
-
-        fixed_text = _normalize_jinja_text(merged_text)
-        if fixed_text == merged_text:
-            continue
-
-        text_nodes[0].text = fixed_text
-        for node in text_nodes[1:]:
-            node.text = ""
-        changed = True
-
-    if not changed:
+    fixed_text = _normalize_jinja_text(xml_text)
+    if fixed_text == xml_text:
         return xml_bytes
 
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    return fixed_text.encode("utf-8")
 
 
 # ── Jinja2 Filters for Vietnamese formatting ─────────────────
@@ -271,8 +306,10 @@ def render_word_template(
     flat_context["now"] = datetime.utcnow().strftime("%d/%m/%Y %H:%M")
     flat_context["today"] = datetime.utcnow().strftime("%d/%m/%Y")
 
+    render_context = _to_render_friendly(flat_context)
+
     try:
-        doc.render(flat_context)
+        doc.render(render_context)
     except Exception as e:
         err_msg = str(e)
         logger.error(f"Word template rendering failed: {e}")

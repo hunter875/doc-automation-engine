@@ -168,7 +168,16 @@ async def export_report_word(
     role: None = Depends(require_viewer),
     db: Session = Depends(get_db),
 ):
-    from app.services.word_export import render_word_template
+    try:
+        from app.services.word_export import render_word_template
+    except ModuleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Word export dependency is missing (`docxtpl`). "
+                "Please rebuild/redeploy API image with updated requirements."
+            ),
+        ) from exc
 
     if not file.filename or not file.filename.lower().endswith((".docx", ".doc")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chỉ hỗ trợ file .docx")
@@ -218,7 +227,16 @@ def export_report_word_auto(
     db: Session = Depends(get_db),
 ):
     from app.services.doc_service import s3_client
-    from app.services.word_export import render_word_template
+    try:
+        from app.services.word_export import render_word_template
+    except ModuleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Word export dependency is missing (`docxtpl`). "
+                "Please rebuild/redeploy API image with updated requirements."
+            ),
+        ) from exc
 
     report = AggregationService(db).get_report(report_id, ctx.tenant_id)
     template = TemplateManager(db).get_template(str(report.template_id), ctx.tenant_id)
