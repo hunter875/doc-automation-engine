@@ -125,12 +125,12 @@ class Settings(BaseSettings):
 
     # ── Engine 2: Extraction ──────────────────────────────
     # Gemini models for extraction (free API)
-    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash"    # standard + fast + vision modes
+    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash"    # standard + vision + block modes
     GEMINI_PRO_MODEL: str = "gemini-2.5-flash"       # vision mode (alias → flash)
     EXTRACTION_MAX_TOKENS: int = 65536
     EXTRACTION_TEMPERATURE: float = 0.0
 
-    # Default extraction mode: standard | vision | fast
+    # Default extraction mode: standard | vision | block
     DEFAULT_EXTRACTION_MODE: str = "standard"
 
     # Legacy / optional

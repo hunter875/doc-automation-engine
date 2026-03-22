@@ -52,3 +52,65 @@ class HybridExtractionOutput(BaseModel):
     tong_xe_hu_hong: int = Field(default=0, ge=0, strict=True)
     danh_sach_cnch: list[CNCHItem] = Field(default_factory=list)
     danh_sach_phuong_tien_hu_hong: list[str] = Field(default_factory=list)
+
+
+class LLMVanXuoiOutput(BaseModel):
+    """Mini schema for prose-only extraction in Stage 3."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ngay_bao_cao: str | None = Field(
+        default=None,
+        description="Ngày báo cáo (dd/mm/yyyy) nếu có trong văn bản",
+    )
+    tu_ngay: str | None = Field(
+        default=None,
+        description="Mốc thời gian bắt đầu kỳ báo cáo (dd/mm/yyyy)",
+    )
+    den_ngay: str | None = Field(
+        default=None,
+        description="Mốc thời gian kết thúc kỳ báo cáo (dd/mm/yyyy)",
+    )
+    tong_quan_su_co: str | None = Field(
+        default=None,
+        description="Tóm tắt diễn biến sự cố trong phần văn xuôi",
+    )
+    danh_sach_cnch: list[CNCHItem] | None = Field(
+        default=None,
+        description="Danh sách vụ CNCH trích xuất từ phần văn xuôi",
+    )
+    danh_sach_phuong_tien_hu_hong: list[str] | None = Field(
+        default=None,
+        description="Danh sách phương tiện hư hỏng nêu trong phần văn xuôi",
+    )
+
+
+class BlockHeader(BaseModel):
+    """Header block extracted from report prologue."""
+
+    so_bao_cao: str = Field(default="", description="Số của báo cáo, ví dụ: 180/BC-KV30")
+    ngay_bao_cao: str = Field(default="", description="Ngày lập báo cáo, format dd/mm/yyyy")
+
+
+class BlockPhanI(BaseModel):
+    """Narrative block for section I."""
+
+    tinh_hinh_chay_no: str = Field(default="", description="Tóm tắt tình hình cháy nổ")
+    so_vu_cnch: int = Field(default=0, ge=0, strict=True, description="Tổng số vụ cứu nạn cứu hộ")
+
+
+class BlockBangThongKe(BaseModel):
+    """Statistic table block extracted from report."""
+
+    tong_so_vu_chay: int = Field(default=0, ge=0, strict=True)
+    so_nguoi_chet: int = Field(default=0, ge=0, strict=True)
+    tai_san_thiet_hai: int = Field(default=0, ge=0, strict=True)
+    tong_so_vu_cnch: int = Field(default=0, ge=0, strict=True)
+
+
+class BlockExtractionOutput(BaseModel):
+    """Merged output from all block-specific extractors."""
+
+    header: BlockHeader = Field(default_factory=BlockHeader)
+    phan_I: BlockPhanI = Field(default_factory=BlockPhanI)
+    bang_thong_ke: BlockBangThongKe = Field(default_factory=BlockBangThongKe)
