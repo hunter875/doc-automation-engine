@@ -565,11 +565,10 @@ with tab2:
     if jobs:
         rows = []
         for j in jobs:
-            mode = j.get("extraction_mode") or j.get("mode") or "standard"
             rows.append({
                 "ID": short_id(j.get("id", "")),
                 "File": j.get("file_name", j.get("document_id", ""))[:35],
-                "Chế độ": "⚡" if mode == "fast" else "📄" if mode == "standard" else "🔎",
+                "Mẫu": short_id(j.get("template_id", "")),
                 "Trạng thái": STATUS_VI.get(j.get("status", ""), j.get("status", "")),
                 "Chế độ": "⚡" if j.get("mode") == "fast" else "📄" if j.get("mode") == "standard" else "🔎",
                 "Tạo lúc": str(j.get("created_at", ""))[:16],
@@ -667,19 +666,15 @@ with tab3:
             if not ok:
                 st.error(f"Không tải được chi tiết: {detail}")
             else:
-                live_status = detail.get("status", status)
                 extracted = detail.get("extracted_data") or detail.get("result", {})
                 validation = detail.get("validation_report", {})
                 edit_key = f"edit_{sel_jid}"
-
-                if live_status != status:
-                    st.info(f"Trạng thái đã cập nhật: {STATUS_VI.get(live_status, live_status)}")
 
                 if edit_key not in st.session_state or st.session_state.get("e2_last_review_jid") != sel_jid:
                     st.session_state[edit_key] = json.dumps(extracted, indent=2, ensure_ascii=False)
                     st.session_state["e2_last_review_jid"] = sel_jid
 
-                if live_status == "failed":
+                if status == "failed":
                     err = detail.get("error_message", detail.get("error", "Không rõ lỗi"))
                     st.error(f"Lỗi: {err}")
                     if st.button("🔄 Thử lại", key=f"retry_{sel_jid}"):
@@ -726,13 +721,7 @@ with tab3:
 
                     c1, c2 = st.columns(2)
                     with c1:
-                        if st.button(
-                            "✅ Duyệt",
-                            key=f"approve_{sel_jid}",
-                            type="primary",
-                            use_container_width=True,
-                            disabled=live_status != "extracted",
-                        ):
+                        if st.button("✅ Duyệt", key=f"approve_{sel_jid}", type="primary", use_container_width=True):
                             try:
                                 reviewed_data = json.loads(st.session_state.get(edit_key, "{}"))
                             except json.JSONDecodeError:
@@ -751,12 +740,7 @@ with tab3:
                             else:
                                 st.error(data_a)
                     with c2:
-                        if st.button(
-                            "❌ Từ chối",
-                            key=f"reject_{sel_jid}",
-                            use_container_width=True,
-                            disabled=live_status != "extracted",
-                        ):
+                        if st.button("❌ Từ chối", key=f"reject_{sel_jid}", use_container_width=True):
                             ok_r, data_r = post_json(
                                 f"/api/v1/extraction/review/{sel_jid}/reject",
                                 {"notes": "Từ chối từ UI"},
@@ -772,11 +756,7 @@ with tab3:
 
                     with st.popover("✏️ Chỉnh sửa trước khi duyệt"):
                         edited_json = st.text_area("Dữ liệu (JSON)", height=300, key=edit_key)
-                        if st.button(
-                            "✅ Duyệt với dữ liệu đã chỉnh",
-                            key=f"approve_edit_{sel_jid}",
-                            disabled=live_status != "extracted",
-                        ):
+                        if st.button("✅ Duyệt với dữ liệu đã chỉnh", key=f"approve_edit_{sel_jid}"):
                             try:
                                 reviewed_data = json.loads(edited_json)
                                 ok_a, data_a = post_json(
@@ -822,6 +802,11 @@ with tab4:
                 "chỉ công việc trạng thái 'approved' mới tạo báo cáo mới được."
             )
     else:
+        st.markdown(f"Có **{len(approved_jobs)}** công việc đã duyệt:")
+        for j in approved_jobs:
+            friendly_name = j.get("file_name") or j.get("display_name") or short_id(j["id"])
+            st.markdown(f"- `{short_id(j['id'])}` — **{friendly_name}**")
+
         templates = _load_templates()
         tpl_names = {t.get("name", short_id(t['id'])): t["id"] for t in templates}
 
@@ -831,26 +816,13 @@ with tab4:
         else:
             sel_agg_tpl_id = ""
 
-        approved_jobs_for_template = [
-            j for j in approved_jobs
-            if str(j.get("template_id", "")) == str(sel_agg_tpl_id)
-        ]
-
-        st.markdown(f"Có **{len(approved_jobs_for_template)}** công việc đã duyệt cho mẫu đã chọn:")
-        for j in approved_jobs_for_template:
-            friendly_name = j.get("file_name") or j.get("display_name") or short_id(j["id"])
-            st.markdown(f"- `{short_id(j['id'])}` — **{friendly_name}**")
-
-        if not approved_jobs_for_template:
-            st.warning("Không có job 'approved' nào thuộc mẫu đang chọn. Hãy đổi mẫu hoặc duyệt thêm job đúng mẫu.")
-
         from datetime import datetime as _dt
         default_report_name = f"Báo cáo tổng hợp {_dt.now().strftime('%d/%m/%Y')}"
         report_name = st.text_input("📝 Tên báo cáo", value=default_report_name, key="e2_agg_name")
         report_desc = st.text_input("Mô tả (tùy chọn)", value="", key="e2_agg_desc")
 
         job_options = {}
-        for j in approved_jobs_for_template:
+        for j in approved_jobs:
             friendly_name = (j.get("file_name") or j.get("display_name") or "").strip()
             if not friendly_name:
                 friendly_name = f"Tài liệu {short_id(j['document_id'])}"
@@ -865,15 +837,8 @@ with tab4:
             help="Bắt buộc chọn ít nhất 1 công việc. Hệ thống không tự lấy tất cả.",
         )
         job_ids_to_agg = [job_options[s] for s in selected]
-        approved_job_ids = {j["id"] for j in approved_jobs_for_template if j.get("id")}
 
         if st.button("📊 Tạo báo cáo tổng hợp", key="e2_create_agg", type="primary", disabled=not job_ids_to_agg):
-            invalid_ids = [jid for jid in job_ids_to_agg if jid not in approved_job_ids]
-            if invalid_ids:
-                _invalidate_jobs_cache()
-                st.error("Một số công việc đã đổi trạng thái, không còn 'approved'. Vui lòng tải lại danh sách và chọn lại.")
-                st.stop()
-
             with st.spinner("Đang tổng hợp..."):
                 payload = {
                     "template_id": sel_agg_tpl_id,
@@ -891,11 +856,7 @@ with tab4:
                 _save_persist("engine2_last_report_id", rid)
                 st.balloons()
             else:
-                if "No approved jobs found" in str(data):
-                    _invalidate_jobs_cache()
-                    st.error("Không còn công việc nào ở trạng thái 'approved' cho lựa chọn hiện tại. Hãy duyệt lại hoặc chọn job khác.")
-                else:
-                    st.error(data)
+                st.error(data)
 
     # ── Reports: single selector ──────────────────────────────
     st.markdown("---")

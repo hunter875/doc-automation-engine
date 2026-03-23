@@ -1,7 +1,7 @@
-"""Hybrid extraction pipeline: PyMuPDF + Python normalization + LLM.
+"""Hybrid extraction pipeline: pdfplumber + Python normalization + LLM.
 
 4 stages (kill-chain style):
-1) Ingest: split text/table streams using PyMuPDF.
+1) Ingest: split text/table streams using pdfplumber.
 2) Normalize: clean text and flatten tables to key-value lines.
 3) Inference: constrained JSON extraction with instructor + Ollama.
 4) Validate & Retry: cross-check logic, retry up to max attempts,
@@ -132,65 +132,35 @@ class HybridExtractionPipeline:
 
     # Stage 1
     def stage1_ingest(self, pdf_bytes: bytes) -> IngestedDocument:
-        """Extract text and tables as two independent streams using PyMuPDF."""
+        """Extract text and tables as two independent streams using pdfplumber."""
         try:
-            import fitz  # PyMuPDF
+            import pdfplumber
         except ImportError as exc:
-            raise StageError("ingest", "PyMuPDF is not installed") from exc
+            raise StageError("ingest", "pdfplumber is not installed") from exc
 
         pages: list[IngestedPage] = []
         text_stream_parts: list[str] = []
         table_stream: list[list[list[str]]] = []
 
         try:
-            pdf = fitz.open(stream=io.BytesIO(pdf_bytes), filetype="pdf")
-            try:
-                for index, page in enumerate(pdf, start=1):
-                    # Extract text using PyMuPDF
-                    text_stream = page.get_text(
-                        "text"
-                    ) or ""  # Use "text" layout mode for better formatting
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                for index, page in enumerate(pdf.pages, start=1):
+                    text_stream = page.extract_text() or ""
+                    raw_tables = page.extract_tables() or []
                     text_stream_parts.append(text_stream)
 
-                    # Extract tables using PyMuPDF table detection
                     normalized_tables: list[list[list[str]]] = []
-                    try:
-                        raw_tables = page.find_tables()
-                        if raw_tables:
-                            for table in raw_tables:
-                                if not table.cells:
-                                    continue
-                                # Convert table cells to list format
-                                rows: list[list[str]] = []
-                                max_row = (
-                                    max(
-                                        (cell[0] for cell in table.cells),
-                                        default=-1,
-                                    )
-                                    + 1
-                                )
-                                for row_idx in range(max_row):
-                                    row_cells = [
-                                        self._clean_cell(
-                                            table.cells[cell_idx][1]
-                                            if cell_idx < len(table.cells)
-                                            else ""
-                                        )
-                                        for cell_idx in range(len(table.cells))
-                                        if table.cells[cell_idx][0] == row_idx
-                                    ]
-                                    if any(cell for cell in row_cells):
-                                        rows.append(row_cells)
-                                if rows and len(rows) > 1:  # Only add multi-row tables
-                                    normalized_tables.append(rows)
-                                    table_stream.append(rows)
-                    except Exception as table_exc:
-                        # Log table extraction failure but continue with text
-                        import logging
-
-                        logging.debug(
-                            f"Table extraction failed on page {index}: {table_exc}"
-                        )
+                    for table in raw_tables:
+                        if not table:
+                            continue
+                        rows: list[list[str]] = []
+                        for row in table:
+                            clean_cells = [self._clean_cell(cell) for cell in (row or [])]
+                            if any(cell for cell in clean_cells):
+                                rows.append(clean_cells)
+                        if rows:
+                            normalized_tables.append(rows)
+                            table_stream.append(rows)
 
                     pages.append(
                         IngestedPage(
@@ -199,12 +169,8 @@ class HybridExtractionPipeline:
                             tables=normalized_tables,
                         )
                     )
-            finally:
-                pdf.close()
         except Exception as exc:
-            raise StageError(
-                "ingest", f"PyMuPDF extraction failed: {exc}"
-            ) from exc
+            raise StageError("ingest", f"pdfplumber failed: {exc}") from exc
 
         full_text_stream = "\n".join(text_stream_parts)
         self._assert_non_empty_text_stream(full_text_stream)
@@ -392,7 +358,7 @@ class HybridExtractionPipeline:
         if self.extraction_mode == "vision":
             return self._run_vision_mode(pdf_bytes, filename)
         
-        # Standard/fast mode: extract text using PyMuPDF
+        # Standard/fast mode: extract text using pdfplumber
         try:
             ingested = self.stage1_ingest(pdf_bytes)
             self._assert_non_empty_text_stream(ingested.text_stream or "")

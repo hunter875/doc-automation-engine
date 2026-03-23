@@ -30,8 +30,6 @@ services:
       - SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-key-change-in-production}
       - DEBUG=true
       - OLLAMA_BASE_URL=http://host.docker.internal:11434 # Kết nối ra máy host
-      - OLLAMA_MODEL=qwen2.5:3b
-      - EXTRACTION_BACKEND=ollama
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -72,8 +70,6 @@ services:
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_MAX_TOKENS=65536
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - OLLAMA_MODEL=qwen2.5:3b
-      - EXTRACTION_BACKEND=ollama
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

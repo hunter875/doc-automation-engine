@@ -65,7 +65,7 @@ def test_orchestrator_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result is saved_job
     manager.get_job_for_processing.assert_called_once_with("job-1")
-    manager.set_processing.assert_called_once_with(job, parser_used=\"PyMuPDF\")
+    manager.set_processing.assert_called_once_with(job, parser_used="pdfplumber")
     manager.persist_pipeline_result.assert_called_once()
     assert pipeline.calls == [(b"pdf-bytes", "abc.pdf")]
 
@@ -81,7 +81,7 @@ def test_orchestrator_run_document_not_found_marks_failed() -> None:
     with pytest.raises(ProcessingError, match="Document not found"):
         orchestrator.run("job-2")
 
-    manager.set_processing.assert_called_once_with(job, parser_used="PyMuPDF")
+    manager.set_processing.assert_called_once_with(job, parser_used="pdfplumber")
     manager.mark_failed_exception.assert_called_once()
 
 
@@ -111,5 +111,5 @@ def test_orchestrator_run_pipeline_error_marks_failed(monkeypatch: pytest.Monkey
     with pytest.raises(RuntimeError, match="pipeline failed"):
         orchestrator.run("job-3")
 
-    manager.set_processing.assert_called_once_with(job, parser_used="PyMuPDF")
+    manager.set_processing.assert_called_once_with(job, parser_used="pdfplumber")
     manager.mark_failed_exception.assert_called_once()
