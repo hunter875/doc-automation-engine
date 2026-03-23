@@ -107,7 +107,7 @@ class ExtractionJob(Base):
     # Batch grouping
     batch_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
-    # Extraction mode: standard (pdfplumber+Flash), vision (Pro native PDF), fast (pdfplumber+Flash)
+    # Extraction mode: standard (PyMuPDF+Ollama), vision (Pro native PDF), fast (PyMuPDF+Ollama)
     extraction_mode = Column(String(20), default="standard", nullable=False)
 
     # State machine: pending → processing → extracted → approved

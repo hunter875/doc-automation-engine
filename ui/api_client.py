@@ -4,12 +4,28 @@ Redesigned for non-technical users — hides UUIDs, tokens, raw JSON.
 """
 
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 import httpx
 import streamlit as st
 
-DEFAULT_BASE_URL = "http://localhost:8000"
+
+def _resolve_default_base_url() -> str:
+    # Allow explicit override from environment first.
+    from_env = os.getenv("DOC_API_BASE_URL") or os.getenv("API_BASE_URL")
+    if from_env:
+        return from_env.rstrip("/")
+
+    # When Streamlit runs inside Docker, localhost points to itself.
+    if Path("/.dockerenv").exists():
+        return "http://rag-api:8000"
+
+    return "http://localhost:8000"
+
+
+DEFAULT_BASE_URL = _resolve_default_base_url()
 
 _PERSIST_KEYS = [
     "access_token",

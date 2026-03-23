@@ -90,11 +90,13 @@ if ok3:
         }
         rows = []
         for j in jobs[:10]:
+            mode = j.get("extraction_mode") or j.get("mode") or "standard"
+            mode_label = "⚡ Nhanh" if mode == "fast" else "📄 Chuẩn" if mode == "standard" else "🔎 Chi tiết"
             rows.append({
                 "ID": short_id(j.get("id", "")),
                 "Tên file": j.get("file_name", j.get("document_id", ""))[:40],
                 "Trạng thái": STATUS_VI.get(j.get("status", ""), j.get("status", "")),
-                "Chế độ": "⚡ Nhanh" if j.get("mode") == "fast" else "🔎 Chi tiết",
+                "Chế độ": mode_label,
                 "Tạo lúc": str(j.get("created_at", ""))[:16],
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)

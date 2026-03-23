@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     # Ollama (Hybrid extraction)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = "ollama"
-    OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_MODEL: str = "qwen2.5:3b"
 
     # File Upload
     MAX_FILE_SIZE_MB: int = 10
@@ -143,7 +143,7 @@ class Settings(BaseSettings):
     EXTRACTION_BATCH_MAX_FILES: int = 20
 
     # Extraction backend selection: 'ollama' or 'gemini'
-    EXTRACTION_BACKEND: str = "gemini"
+    EXTRACTION_BACKEND: str = "ollama"
 
     # Hybrid extraction fallback
     HYBRID_MAX_RETRIES: int = 3

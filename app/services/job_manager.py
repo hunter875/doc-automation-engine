@@ -207,6 +207,10 @@ class JobManager:
     ) -> ExtractionJob:
         job = self.get_job(job_id, tenant_id)
 
+        if job.status == ExtractionJobStatus.APPROVED:
+            # Idempotent behavior for duplicate approve requests from UI retries/double-clicks.
+            return job
+
         if job.status != ExtractionJobStatus.EXTRACTED:
             raise ProcessingError(
                 message=f"Cannot approve job with status '{job.status}'. Must be 'extracted'."

@@ -233,7 +233,43 @@ class AggregationService:
         )
 
         if not jobs:
-            raise ProcessingError(message="No approved jobs found for the given IDs")
+            # Provide actionable diagnostics when selected IDs are not currently approved
+            candidates = (
+                self.db.query(ExtractionJob)
+                .filter(
+                    ExtractionJob.id.in_(job_ids),
+                    ExtractionJob.tenant_id == tenant_id,
+                    ExtractionJob.template_id == template_id,
+                )
+                .all()
+            )
+            if candidates:
+                statuses = sorted({str(j.status) for j in candidates})
+                raise ProcessingError(
+                    message=(
+                        "No approved jobs found for the given IDs. "
+                        f"Current statuses: {', '.join(statuses)}"
+                    )
+                )
+
+            any_template_jobs = (
+                self.db.query(ExtractionJob)
+                .filter(
+                    ExtractionJob.id.in_(job_ids),
+                    ExtractionJob.tenant_id == tenant_id,
+                )
+                .all()
+            )
+            if any_template_jobs:
+                template_ids = sorted({str(j.template_id) for j in any_template_jobs})
+                raise ProcessingError(
+                    message=(
+                        "No approved jobs found for the given IDs under selected template. "
+                        f"Selected template_id={template_id}, job template_ids={template_ids}"
+                    )
+                )
+
+            raise ProcessingError(message="No jobs found for the given IDs")
 
         # 3. Collect data (prefer reviewed_data over extracted_data)
         data_rows = []
