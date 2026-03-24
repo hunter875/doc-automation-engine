@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.exceptions import ProcessingError
 from app.models.document import Document
 from app.services.doc_service import s3_client
+from app.services.block_extraction_pipeline import BlockExtractionPipeline
 from app.services.extractor_strategies import OllamaInstructorExtractor
 from app.services.hybrid_extraction_pipeline import HybridExtractionPipeline
 from app.services.job_manager import JobManager
@@ -58,6 +59,12 @@ class ExtractionOrchestrator:
                 api_key=settings.OLLAMA_API_KEY,
             )
             model = settings.OLLAMA_MODEL
+
+        if extraction_mode == "block":
+            return BlockExtractionPipeline(
+                model=model,
+                temperature=0.0,
+            )
         
         return HybridExtractionPipeline(
             model=model,

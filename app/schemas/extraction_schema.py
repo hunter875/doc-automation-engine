@@ -170,14 +170,14 @@ class TemplateListResponse(BaseModel):
 # ──────────────────────────────────────────────
 
 # Extraction modes
-EXTRACTION_MODES = {"standard", "vision", "fast"}
+EXTRACTION_MODES = {"standard", "vision", "block"}
 
 
 class JobCreate(BaseModel):
     """Request: create a single extraction job."""
 
     template_id: uuid.UUID
-    mode: str = Field("standard", pattern=r"^(standard|vision|fast)$")
+    mode: str = Field("standard", pattern=r"^(standard|vision|block)$")
 
 
 class JobFromDocumentCreate(BaseModel):
@@ -185,14 +185,14 @@ class JobFromDocumentCreate(BaseModel):
 
     document_id: uuid.UUID
     template_id: uuid.UUID
-    mode: str = Field("standard", pattern=r"^(standard|vision|fast)$")
+    mode: str = Field("standard", pattern=r"^(standard|vision|block)$")
 
 
 class BatchJobCreate(BaseModel):
     """Request: batch job creation (template_id from form field)."""
 
     template_id: uuid.UUID
-    mode: str = Field("standard", pattern=r"^(standard|vision|fast)$")
+    mode: str = Field("standard", pattern=r"^(standard|vision|block)$")
 
 
 class JobResponse(BaseModel):

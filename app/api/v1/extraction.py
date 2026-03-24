@@ -307,14 +307,14 @@ async def create_job(
     """Upload a PDF and create an extraction job.
 
     Modes:
-            - standard: pdfplumber (CPU) → Gemini Flash (best for text PDFs)
+        - standard: pdfplumber (CPU) → Gemini Flash (best for text PDFs)
       - vision: Gemini Pro native PDF (best for scanned/blurry docs)
-      - fast: pdfplumber (CPU) → Gemini Flash (best for text-only PDFs)
+        - block: split-by-block extraction pipeline (layout-aware + schema per block)
 
     Returns 202 Accepted with job_id for polling.
     """
-    if mode not in ("standard", "vision", "fast"):
-        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or fast")
+    if mode not in ("standard", "vision", "block"):
+        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
 
     from app.services.doc_service import DocumentService
 
@@ -366,10 +366,10 @@ async def create_batch_jobs(
 ):
     """Upload multiple PDFs and create extraction jobs for each.
 
-    Max 20 files per batch. Supports modes: standard, vision, fast.
+    Max 20 files per batch. Supports modes: standard, vision, block.
     """
-    if mode not in ("standard", "vision", "fast"):
-        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or fast")
+    if mode not in ("standard", "vision", "block"):
+        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
 
     from app.services.doc_service import DocumentService
 

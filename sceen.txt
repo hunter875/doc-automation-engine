@@ -1,0 +1,194 @@
+1. Bố cục tổng thể (Layout)
+Màn hình này nên thiết kế theo dạng Wizard (Từng bước) hoặc Split-view (Trái thả file, Phải cấu hình) để người dùng không bị ngợp.
+
+Header: Tiêu đề "Tạo Template Bóc Tách Mới". Các trường thông tin cơ bản: Tên Template (Input text), Mô tả (Textarea).
+
+Main Content: Chia làm 2 chặng rõ ràng: (1) Quét file Word và (2) Tinh chỉnh Schema.
+
+2. Chặng 1: Khu vực "Nuốt" File (Word Scanner)
+Tương tác trực tiếp với API POST /templates/scan-word.
+
+Vùng Dropzone: Một khu vực kéo thả to đùng ở giữa màn hình. Dòng chữ bự: "Kéo thả file Word (.docx) mẫu vào đây".
+
+Validation tại Client: Cặn kẽ chặn ngay từ UI. Check đuôi .docx, check dung lượng max 50MB (để khớp với rule anti zip-bomb ở backend).
+
+Trạng thái Loading: Khi user thả file, hiện một cái skeleton loading hoặc spinner xịn xò với dòng chữ "Hệ thống đang nội soi các biến Jinja2 và cấu trúc bảng...". Lúc này UI đang đợi hàm regex và (optional) con LLM trả về kết quả scan.
+
+3. Chặng 2: Bàn Rây Schema (Khu vực Ăn tiền)
+Sau khi API nhả về cục JSON chứa variables và schema_definition, UI phải render nó ra một cái bảng dạng Tree-Grid (Bảng phân cấp).
+
+Các cột trong Tree-Grid:
+
+Tên Biến (Tự động điền): Ví dụ so_vu, ngay_bao_cao, danh_sach_su_co. Cột này read-only hoặc chỉ cho sửa tên nhẹ. Nếu biến nằm trong bảng Word, nó sẽ hiển thị dạng tree thụt lề (ví dụ: danh_sach_su_co là cha, loai_su_co, so_nguoi là con).
+
+Kiểu Dữ Liệu (Dropdown): Gợi ý sẵn từ kết quả AI. Các option: Text, Number, Date, Boolean, Array.
+
+UX Thông minh: Nếu biến tên là so_vu, tự động auto-select là Number.
+
+Luật Tổng Hợp - Aggregation Rule (Dropdown): Đây là phần map với aggregation_rules.
+
+Liên kết động: Nếu cột "Kiểu Dữ Liệu" là Number, cột này chỉ hiện SUM, AVG, MAX, MIN. Nếu là Array, chỉ hiện CONCAT. Nếu là Text, hiện LAST. (Bám sát chuẩn rule của Step 3).
+
+Prompt Hướng Dẫn (Input text - Optional): Cho phép admin ghi chú thêm cách bóc tách cho con AI (Ollama). Ví dụ: "Ép định dạng ngày về chuẩn dd/mm/yyyy".
+
+4. Hành vi Tương tác & Phím tắt (UX Behaviors)
+Cảnh báo Trùng Lặp: Nếu user vô tình cấu hình 2 biến trùng tên nhau, ô đó phải chớp đỏ ngay lập tức báo lỗi Duplicate (tuân thủ rule "requires unique names" của backend).
+
+Toggle Use_LLM: Có một nút gạt (switch) nhỏ ghi "Dùng AI để đoán kiểu dữ liệu". Nếu gạt tắt, thì gửi cờ use_llm=false lúc scan, UI sẽ ép mặc định tất cả là String để chạy cho lẹ.
+
+Nút Bấm Cuối Lùng: Nút "Lưu Khuôn (Save Template)" ở góc phải dưới cùng. Bấm vào, front-end tự động gói ghém toàn bộ dữ liệu trên bảng thành JSON schema chuẩn chỉnh, bắn POST /templates.
+
+
+
+
+1. Bố cục tổng thể (Layout)
+Màn hình này chia làm 2 trạng thái (States) rõ rệt: Trước khi Upload và Đang xử lý Batch.
+
+Phía trên cùng: Một Dropdown to bự để chọn Khuôn (Template) đã tạo ở Màn hình 1. Ví dụ: Chọn Template: "Báo cáo PCCC Ngày". Phải chọn cái này thì hệ thống mới biết lấy template_id nào để gắp vào request.
+
+Option phụ: Một Dropdown nhỏ chọn mode (standard, fast, vision). Mặc định chốt cứng là standard theo config.
+
+2. Trạng thái 1: Khu Vực Thả Mồi (Upload Zone)
+Vùng Dropzone khổng lồ: Chiếm 60% diện tích màn hình. Có biểu tượng đám mây hoặc khay giấy. Text to: "Kéo thả tối đa 20 file PDF vào đây".
+
+Validation cực gắt tại Client: * Nếu user cố tình kéo 21 file vào, viền Dropzone chớp đỏ, hiện Toast message chửi ngay: "Quá tải! Hệ thống chỉ nhận tối đa 20 file mỗi mẻ". (Khớp với rule EXTRACTION_BATCH_MAX_FILES).
+
+Chỉ nhận đuôi .pdf. Thả file rác vào là dội ra ngay.
+
+Nút Action: Sau khi thả đủ file, nó hiện list preview nhẹ tên file, kèm một nút bấm xanh lá cây chà bá: "Bơm Dữ Liệu". Bấm cái này là frontend bắn POST /jobs/batch.
+
+3. Trạng thái 2: Trung Tâm Theo Dõi (Batch Progress Dashboard)
+Ngay sau khi API trả về cái batch_id và danh sách 7 cái job_id, Dropzone biến mất. Màn hình chuyển sang giao diện Tracking. Lúc này frontend sẽ set interval (tầm 2-3s/lần) gọi API GET /jobs/batch/{batch_id}/status để lấy data vẽ UI.
+
+Thanh Tiến Độ (Progress Bar) siêu bự: Nằm vắt ngang màn hình. Dữ liệu lấy từ progress_percent. Chạy từ 0% đến 100%. Nhìn thanh này nhích từng chút một mang lại cảm giác an tâm cực kỳ cho user.
+
+Kanban Thống Kê Nhanh (Mini-cards): 4 cái thẻ trạng thái nằm ngay dưới thanh tiến độ:
+
+🗂️ Tổng số file: 7
+
+⚙️ Đang xử lý (Processing): 2
+
+✅ Bóc thành công (Extracted): 4
+
+❌ Lỗi (Failed): 1
+
+Bảng Chi Tiết Job (Job Data Grid): Liệt kê chi tiết 7 file đang chạy.
+
+Cột 1: Tên file (Ví dụ: ngay1.pdf).
+
+Cột 2: Trạng thái (Dùng Badge màu: Vàng = Pending, Xanh dương = Processing, Xanh lá = Extracted, Đỏ = Failed).
+
+Cột 3: Thời gian xử lý (processing_time_ms chia ra giây). Chạy xong mới hiện.
+
+Cột 4: Thao tác (Actions). Cột này là "cứu cánh" của user.
+
+4. Xử lý Lỗi & Tương tác "Chữa cháy" (Error Handling UX)
+Hệ thống AI gọi LLM (Ollama) có lúc sẽ xịt do timeout hoặc file quá dị. UI phải hỗ trợ user xử lý nhanh gọn lẹ.
+
+Nút Retry Thần Thánh: Nếu có một job bị rớt đài (Status = Failed) sau 3 lần retry mặc định của Celery, cột Thao tác của dòng đó sẽ hiện ra một nút icon 🔄 Retry. User bấm vào, frontend gọi POST /jobs/{job_id}/retry. Dòng đó lập tức chuyển lại thành Pending màu vàng.
+
+Log Lỗi Trực Quan: Rê chuột (Hover) vào cái Badge màu Đỏ (Failed), nó sẽ hiện một cái Tooltip nhỏ trích xuất từ cột error_message trong DB (ví dụ: "Ollama timeout sau 30p"). Không cần bấm vào xem chi tiết, nhìn là hiểu tại sao chết.
+
+Điều hướng luồng tiếp theo: Ngay khi thanh Progress Bar đạt 100% (nghĩa là tất cả các job đã Extracted hoặc Failed), hiện ra một nút to đùng nhấp nháy: "Đi tới Bàn Mổ Dữ Liệu (Review)" để hối thúc user chuyển sang Bước 2 (Màn hình 3).
+
+
+
+
+
+
+
+1. Bố cục tổng thể: Split-Screen Tối Thượng (Chia đôi màn hình)
+Không có popup, không có tab chuyển qua lại. Giao diện chẻ dọc màn hình làm 2 nửa hoàn hảo:
+
+Nửa Trái (60%): Trình xem tài liệu (PDF Viewer)
+
+Hiển thị nguyên bản file PDF (hoặc ảnh chụp).
+
+Hỗ trợ zoom in/out, pan (kéo thả) cực mượt.
+
+Overlay Bounding Box: Vẽ các ô vuông (highlight) mờ đè lên tài liệu, chỉ rõ AI đã bóc chữ ở vị trí tọa độ nào (lấy data từ source_references trong DB).
+
+Nửa Phải (40%): Form Dữ Liệu Sống (Extracted Data Form)
+
+Sinh động (Dynamic Form) dựa theo cái schema_definition ông đã setup ở màn hình 1.
+
+Hiển thị data đã qua lớp DataValidator (ép kiểu chuẩn chỉnh).
+
+2. Trải nghiệm Tương tác: "Cross-linking" & "Nhiệt kế Dữ liệu"
+Đây là 2 tính năng ăn tiền nhất để tăng tốc độ làm việc.
+
+Cross-linking (Liên kết chéo): * Khi con trỏ chuột (hoặc Tab) nháy vào ô ngay_bao_cao ở nửa bên phải, PDF bên trái lập tức tự động cuộn (auto-scroll) và zoom tới đúng cái dòng ngày tháng, chớp nháy highlight màu vàng. Reviewer chỉ cần liếc mắt sang trái là đối chiếu được ngay gốc - ngọn.
+
+Color-coding (Nhiệt kế màu sắc): Lấy data từ confidence_scores và _validation_report để tô màu các ô input bên phải:
+
+🟢 Xanh lá (Confidence > 0.85 & Không ép kiểu): Dữ liệu chuẩn, lướt qua.
+
+🟡 Vàng (Ép kiểu / Cảnh báo): Ví dụ AI bóc ra "Hai vụ" nhưng Validation Layer ép thành số 2. Ô này sẽ màu vàng. Khi hover chuột vào sẽ hiện Tooltip: "Đã tự động chuyển 'Hai vụ' thành 2". Reviewer phải liếc mắt check lại chỗ này.
+
+🔴 Đỏ (Thiếu data / Lỗi Logic): Dính Rule Engine (như tổng số người không khớp danh sách). Bắt buộc phải sửa tay.
+
+3. Công thái học: Bàn phím là chân ái (Keyboard-First)
+Reviewer chuyên nghiệp họ ghét dùng chuột. Giao diện phải map 100% phím tắt:
+
+Tab / Shift + Tab: Nhảy qua lại giữa các trường dữ liệu.
+
+Alt + W: Bật/Tắt tính năng Auto-scroll bên màn hình PDF.
+
+Ctrl + Enter: Chốt hạ! Gọi API POST /review/{job_id}/approve kèm payload reviewed_data (nếu có sửa tay) và tự động load cái Job tiếp theo trong Batch.
+
+Ctrl + Shift + R: Bấm để Reject (Từ chối). Gọi API POST /review/{job_id}/reject. Lúc này UI sẽ pop-up nhẹ một ô text bắt buộc nhập notes (lý do reject) rồi mới cho đi tiếp.
+
+4. Xử lý UI cho Dữ Liệu Bảng (Array-of-Objects)
+Cái này Engine 2 của ông có hỗ trợ bóc tách danh sách (ví dụ: danh_sach_su_co có N dòng). Trên form bên phải, không thể hiển thị mảng JSON thô thiển được.
+
+Mini-Spreadsheet: Khu vực này sẽ render thành một cái bảng Excel thu nhỏ ngay trong Form.
+
+Có nút dấu + nhỏ để reviewer có thể tự bóc thêm tay (nếu AI sót dòng) hoặc icon 🗑️ thùng rác để xóa dòng bị AI nhận diện nhầm/ảo giác (hallucination).
+
+
+
+
+
+
+
+1. Bố cục tổng thể (Layout)
+Màn hình này thiết kế theo dạng Master-Detail (Danh sách & Chi tiết), chia làm 3 phân khu chính chạy từ trên xuống dưới hoặc từ trái qua phải:
+
+Khu 1: Phễu Lọc Dữ Liệu (Data Selector Table).
+
+Khu 2: Nồi Lẩu Tổng Hợp (Aggregation Preview).
+
+Khu 3: Bệ Phóng Word (Export Action).
+
+2. Khu 1: Phễu Lọc Dữ Liệu (Chọn Job để gom)
+Nơi hiển thị tất cả các Job đã đạt trạng thái Approved (bóc tách thành công và đã được con người duyệt).
+
+Data Grid (Bảng dữ liệu): Có các cột như Tên file gốc, Ngày tạo, Tên Template (ví dụ: "Báo cáo PCCC Ngày").
+
+Bộ lọc (Filters) siêu tốc: Cho phép lọc nhanh theo khoảng thời gian (Date range) hoặc Batch ID. Ví dụ: Lọc nhanh 7 ngày của tuần trước.
+
+Multi-select (Tích chọn hàng loạt): UI cung cấp một cột checkbox bự. User tick chọn 7 dòng báo cáo ngày. Giao diện hiện ngay một Floating Bar (Thanh công cụ nổi) dưới đáy màn hình báo: "Đã chọn 7 báo cáo. [Tạo Báo Cáo Tổng Hợp]".
+
+Gọi API: Bấm nút tạo, UI bắn POST /aggregate để chốt đơn thành một Report.
+
+3. Khu 2: Nồi Lẩu Map-Reduce (Aggregation Preview)
+Sau khi Backend chạy xong bước 3 (dùng Pandas ép phẳng và cộng dồn), UI phải show cho user thấy con AI nó vừa làm ảo thuật gì. Tuyệt đối không show cục JSON thô.
+
+Thẻ Thống Kê Nhanh (Summary Cards): Hiển thị ngay những con số quan trọng nhất dựa trên Aggregation Rules.
+
+Ví dụ: Thẻ 1: "Tổng số vụ: 45 (SUM)", Thẻ 2: "Nhiệt độ TB: 32.5 (AVG)". Nhìn vào là user xác nhận được ngầm ngay logic tính toán có đúng không.
+
+Bảng Dữ Liệu Phẳng (Flat Data Grid): Lấy data từ biến _flat_records. Nếu gom danh sách sự cố của 7 ngày bằng rule CONCAT, UI sẽ render một cái bảng dài hiển thị toàn bộ sự cố nối tiếp nhau.
+
+UX Cứu cánh: Ở bước này, nếu user phát hiện "Ô kìa, sao tổng số vụ lại lên tới 400?", họ có thể nhấp vào con số đó. UI sẽ mở một cái Drawer (ngăn kéo) nhỏ trượt ra, liệt kê lại 7 file gốc để biết file nào đang chứa số liệu sai mà quay lại Màn hình 3 sửa.
+
+4. Khu 3: Bệ Phóng Word (Bơm Khuôn)
+Đây là màn ảo thuật cuối cùng (Tương tác với POST /aggregate/{report_id}/export-word).
+
+Khu vực Upload Template Cuối: Một ô Dropzone nhỏ xin xắn. User thả cái file bao_cao_tuan_template.docx (chứa các biến như {{tong_so_vu}}, {{today}}) vào đây.
+
+Nút Call-to-Action (CTA) "Bơm Khuôn & Tải Về": Một nút to, màu xanh Primary nổi bần bật.
+
+Trải nghiệm Chờ (Loading State): Khi bấm nút, hệ thống gọi thư viện docxtpl render. Do có rule anti zip-bomb và quét file, bước này có thể mất vài giây. UI phải vô hiệu hóa (disable) nút bấm, hiện icon con xoay (spinner) và text "Đang bơm dữ liệu vào khuôn Word..." để user không click đúp nát server.
+
+Pháo hoa (Thành công): File .docx tự động tải xuống. Trình duyệt pop-up thông báo thành công. Mọi thứ vuông vức, viền bảng Word nét căng, đúng font chữ, đúng format ngày tháng ({{val | date_vn}}).

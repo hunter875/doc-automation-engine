@@ -47,7 +47,7 @@ def _sample_ingested() -> IngestedDocument:
     )
 
 
-def test_normalization_cleans_noise_and_flattens_table() -> None:
+def test_normalization_cleans_noise_without_table_flattening() -> None:
     pipeline = HybridExtractionPipeline(inference_func=lambda *_: HybridExtractionOutput())
     normalized = pipeline.stage2_normalize(_sample_ingested())
 
@@ -62,13 +62,10 @@ def test_normalization_cleans_noise_and_flattens_table() -> None:
     assert "Dòng này bị ngắt vẫn phải nối" in normalized.cleaned_text
     assert "Diễn biến chính;\nDòng này giữ nguyên" in normalized.cleaned_text
 
-    assert "Chỉ tiêu: 3. Tổng số vụ tai nạn, sự cố - Kết quả: 01" in normalized.flattened_table_lines
-    assert "Chỉ tiêu: Số người bị nạn - Kết quả: 02" in normalized.flattened_table_lines
-
     assert normalized.clean_payload.startswith(
         "Dưới đây là thông tin báo cáo PCCC đã được chuẩn hóa. Tuyệt đối không tự suy diễn số liệu."
     )
-    assert "Chỉ tiêu: 3. Tổng số vụ tai nạn, sự cố - Kết quả: 01" in normalized.clean_payload
+    assert "Chỉ tiêu: 3. Tổng số vụ tai nạn, sự cố - Kết quả: 01" not in normalized.clean_payload
 
 
 def test_retry_then_success(tmp_path: Path) -> None:

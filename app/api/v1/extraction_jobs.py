@@ -40,8 +40,8 @@ async def create_job(
     role: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if mode not in ("standard", "vision", "fast"):
-        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or fast")
+    if mode not in ("standard", "vision", "block"):
+        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
 
     from app.services.doc_service import DocumentService
     from app.worker.extraction_tasks import extract_document_task
@@ -81,8 +81,8 @@ async def create_batch_jobs(
     role: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if mode not in ("standard", "vision", "fast"):
-        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or fast")
+    if mode not in ("standard", "vision", "block"):
+        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
 
     max_files = settings.EXTRACTION_BATCH_MAX_FILES
     if len(files) > max_files:

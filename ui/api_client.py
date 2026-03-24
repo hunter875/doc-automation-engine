@@ -76,7 +76,7 @@ def init_state() -> None:
         "tenant_list": [],
         "user_email": "",
         "user_name": "",
-        "engine2_mode": "fast",
+        "engine2_mode": "standard",
         "engine2_templates": [],
         "engine2_last_batch_id": "",
         "engine2_last_report_id": "",

@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from app.core.config import settings
 from app.services.extractor_strategies import BaseExtractor, OllamaInstructorExtractor
 from app.services.rule_engine import RuleEngine
-from app.schemas.hybrid_extraction_schema import HybridExtractionOutput
+from app.schemas.hybrid_extraction_schema import HybridExtractionOutput, LLMVanXuoiOutput
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +61,10 @@ class NormalizedDocument:
     """Normalized text chunks prepared for LLM."""
 
     cleaned_text: str
-    flattened_table_lines: list[str]
 
     @property
     def clean_payload(self) -> str:
         anchor = "Dưới đây là thông tin báo cáo PCCC đã được chuẩn hóa. Tuyệt đối không tự suy diễn số liệu."
-        table_part = "\n".join(self.flattened_table_lines).strip()
-        if table_part:
-            return f"{anchor}\n\n{self.cleaned_text}\n\n{table_part}".strip()
         return f"{anchor}\n\n{self.cleaned_text}".strip()
 
     @property
@@ -183,25 +179,15 @@ class HybridExtractionPipeline:
 
     # Stage 2
     def stage2_normalize(self, ingested: IngestedDocument) -> NormalizedDocument:
-        """Clean narrative text and flatten table arrays into key-value lines."""
+        """Clean narrative text for LLM prompt construction."""
         try:
             all_text = (ingested.text_stream or "").strip()
             if not all_text:
                 all_text = "\n".join(page.text for page in ingested.pages if page.text).strip()
             cleaned_text = self._cleanup_text(all_text)
 
-            flattened_lines: list[str] = []
-            tables = ingested.table_stream or []
-            if not tables:
-                for page in ingested.pages:
-                    tables.extend(page.tables)
-
-            for table in tables:
-                flattened_lines.extend(self._flatten_table(table))
-
             return NormalizedDocument(
                 cleaned_text=cleaned_text,
-                flattened_table_lines=flattened_lines,
             )
         except Exception as exc:
             raise StageError("normalize", f"normalization failed: {exc}") from exc
@@ -209,20 +195,30 @@ class HybridExtractionPipeline:
     # Stage 3
     def stage3_infer(
         self,
-        normalized: NormalizedDocument,
+        normalized: NormalizedDocument | None,
         validation_errors: list[str] | None = None,
+        hint_data: dict[str, Any] | None = None,
     ) -> BaseModel:
         """Run constrained decoding via injected extraction strategy."""
-        prompt = self._build_prompt(normalized, validation_errors)
+        prompt = self._build_prompt(normalized, validation_errors, hint_data)
+        if self.extraction_mode == "vision" or hint_data is None:
+            inference_schema: type[BaseModel] = self.response_model
+        elif self.extraction_mode == "standard" and hint_data is not None:
+            inference_schema = LLMVanXuoiOutput
+        else:
+            inference_schema = self.response_model
 
         try:
             if self._inference_func:
-                raw_output = self._inference_func(prompt, validation_errors)
-                if isinstance(raw_output, self.response_model):
+                try:
+                    raw_output = self._inference_func(prompt, validation_errors, hint_data)
+                except TypeError:
+                    raw_output = self._inference_func(prompt, validation_errors)
+                if isinstance(raw_output, inference_schema):
                     return raw_output
                 if isinstance(raw_output, BaseModel):
-                    return self.response_model.model_validate(raw_output.model_dump())
-                return self.response_model.model_validate(raw_output)
+                    return inference_schema.model_validate(raw_output.model_dump())
+                return inference_schema.model_validate(raw_output)
 
             messages = self._build_inference_messages(prompt)
             
@@ -230,7 +226,7 @@ class HybridExtractionPipeline:
             if self.extraction_mode == "vision" and self.pdf_bytes:
                 return self.extractor.extract(
                     messages=messages,
-                    response_model=self.response_model,
+                    response_model=inference_schema,
                     model=self.model,
                     temperature=self.temperature,
                     pdf_bytes=self.pdf_bytes,
@@ -238,12 +234,30 @@ class HybridExtractionPipeline:
             else:
                 return self.extractor.extract(
                     messages=messages,
-                    response_model=self.response_model,
+                    response_model=inference_schema,
                     model=self.model,
                     temperature=self.temperature,
                 )
         except Exception as exc:
             raise StageError("inference", f"LLM inference failed: {exc}") from exc
+
+    def _invoke_stage3_infer(
+        self,
+        normalized: NormalizedDocument | None,
+        validation_errors: list[str] | None,
+        hint_data: dict[str, Any] | None = None,
+    ) -> BaseModel:
+        """Call stage3 with backward compatibility for overrides lacking hint_data."""
+        try:
+            return self.stage3_infer(
+                normalized,
+                validation_errors,
+                hint_data=hint_data,
+            )
+        except TypeError as exc:
+            if "hint_data" not in str(exc):
+                raise
+            return self.stage3_infer(normalized, validation_errors)
 
     # Stage 4
     def stage4_validate(self, output: BaseModel) -> list[str]:
@@ -310,22 +324,30 @@ class HybridExtractionPipeline:
 
         prior_errors: list[str] = []
         last_invalid_output: BaseModel | None = None
+        table_dict = self._extract_table_by_rules(ingested.table_stream)
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                output = self.stage3_infer(normalized, prior_errors or None)
-                last_invalid_output = output
-                validation_errors = self.stage4_validate(output)
+                llm_output = self._invoke_stage3_infer(
+                    normalized,
+                    prior_errors or None,
+                    hint_data=table_dict,
+                )
+                llm_dict = llm_output.model_dump(exclude_none=True) if isinstance(llm_output, BaseModel) else {}
+                final_dict = {**table_dict, **llm_dict}
+                final_output = self.response_model.model_validate(final_dict)
+                last_invalid_output = final_output
+                validation_errors = self.stage4_validate(final_output)
 
                 if not validation_errors:
-                    self._commit_to_database(output)
+                    self._commit_to_database(final_output)
                     return PipelineResult(
                         status="ok",
                         attempts=attempt,
-                        output=output,
+                        output=final_output,
                     )
 
-                prior_errors = self._build_retry_feedback(validation_errors, output)
+                prior_errors = self._build_retry_feedback(validation_errors, final_output)
                 logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
             except StageError as exc:
                 if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
@@ -358,7 +380,7 @@ class HybridExtractionPipeline:
         if self.extraction_mode == "vision":
             return self._run_vision_mode(pdf_bytes, filename)
         
-        # Standard/fast mode: extract text using pdfplumber
+        # Standard mode: extract text using pdfplumber
         try:
             ingested = self.stage1_ingest(pdf_bytes)
             self._assert_non_empty_text_stream(ingested.text_stream or "")
@@ -372,22 +394,30 @@ class HybridExtractionPipeline:
 
         prior_errors: list[str] = []
         last_invalid_output: BaseModel | None = None
+        table_dict = self._extract_table_by_rules(ingested.table_stream)
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                output = self.stage3_infer(normalized, prior_errors or None)
-                last_invalid_output = output
-                validation_errors = self.stage4_validate(output)
+                llm_output = self._invoke_stage3_infer(
+                    normalized,
+                    prior_errors or None,
+                    hint_data=table_dict,
+                )
+                llm_dict = llm_output.model_dump(exclude_none=True) if isinstance(llm_output, BaseModel) else {}
+                final_dict = {**table_dict, **llm_dict}
+                final_output = self.response_model.model_validate(final_dict)
+                last_invalid_output = final_output
+                validation_errors = self.stage4_validate(final_output)
 
                 if not validation_errors:
-                    self._commit_to_database(output)
+                    self._commit_to_database(final_output)
                     return PipelineResult(
                         status="ok",
                         attempts=attempt,
-                        output=output,
+                        output=final_output,
                     )
 
-                prior_errors = self._build_retry_feedback(validation_errors, output)
+                prior_errors = self._build_retry_feedback(validation_errors, final_output)
                 logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
             except StageError as exc:
                 if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
@@ -449,31 +479,73 @@ class HybridExtractionPipeline:
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
-    def _flatten_table(self, table: list[list[str]]) -> list[str]:
-        lines: list[str] = []
-        for row in table:
-            cleaned_row = [self._clean_cell(cell) for cell in (row or [])]
-            cells = [cell for cell in cleaned_row if cell]
-            if len(cells) < 3:
-                continue
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        if value is None:
+            return default
+        text = str(value).strip().replace(",", "")
+        if not text:
+            return default
+        match = re.search(r"-?\d+", text)
+        if not match:
+            return default
+        try:
+            return int(match.group(0))
+        except ValueError:
+            return default
 
-            metric = cleaned_row[1] if len(cleaned_row) > 1 else ""
-            value = cleaned_row[2] if len(cleaned_row) > 2 else ""
+    def _extract_table_by_rules(self, table_stream: list[list[list[str]]]) -> dict[str, Any]:
+        """Deterministic extraction for strongly-structured table metrics."""
+        result: dict[str, Any] = {}
 
-            if not value and len(cleaned_row) > 3:
-                value = cleaned_row[3]
+        known_fields = set(self.response_model.model_fields.keys())
+        stt_to_schema_field = {
+            "14": "stt_14_tong_cnch",
+        }
+        metric_keyword_to_field = {
+            "tong_xe_hu_hong": ["xe hư hỏng", "xe hu hong"],
+        }
 
-            metric_lower = (metric or "").strip().lower()
-            if not metric or not value:
-                continue
-            if metric_lower in {"danh mục", "nội dung", "noi dung", "chỉ tiêu", "chi tieu"}:
-                continue
+        for field_name in set(stt_to_schema_field.values()) | set(metric_keyword_to_field.keys()):
+            if field_name in known_fields:
+                result[field_name] = 0
 
-            lines.append(f"Chỉ tiêu: {metric} - Kết quả: {value}")
+        tables = table_stream or []
+        for table in tables:
+            for row in table:
+                cleaned_row = [self._clean_cell(cell) for cell in (row or [])]
+                cells = [cell for cell in cleaned_row if cell]
+                if len(cells) < 3:
+                    continue
 
-        return lines
+                stt_value = cleaned_row[0] if len(cleaned_row) > 0 else ""
+                metric = cleaned_row[1] if len(cleaned_row) > 1 else ""
+                value = cleaned_row[2] if len(cleaned_row) > 2 else ""
+                if not value and len(cleaned_row) > 3:
+                    value = cleaned_row[3]
 
-    def _build_prompt(self, normalized: NormalizedDocument | None, validation_errors: list[str] | None) -> str:
+                metric_lower = metric.lower()
+                stt_digits = re.search(r"\d+", stt_value or "")
+                stt_norm = stt_digits.group(0) if stt_digits else ""
+
+                mapped_field = stt_to_schema_field.get(stt_norm)
+                if mapped_field and mapped_field in known_fields:
+                    result[mapped_field] = self._safe_int(value)
+
+                for field_name, keywords in metric_keyword_to_field.items():
+                    if field_name not in known_fields:
+                        continue
+                    if any(keyword in metric_lower for keyword in keywords):
+                        result[field_name] = self._safe_int(value)
+
+        return result
+
+    def _build_prompt(
+        self,
+        normalized: NormalizedDocument | None,
+        validation_errors: list[str] | None,
+        hint_data: dict[str, Any] | None = None,
+    ) -> str:
         fix_hint = ""
         if validation_errors:
             fix_hint = (
@@ -482,21 +554,30 @@ class HybridExtractionPipeline:
                 + "\nPlease fix these violations in this attempt."
             )
 
+        hint_text = ""
+        if hint_data:
+            expected_incidents = self._safe_int(hint_data.get("stt_14_tong_cnch"), 0)
+            hint_text = (
+                "\nLƯU Ý: "
+                f"Theo số liệu bảng, có {expected_incidents} vụ tai nạn/sự cố. "
+                "Hãy trích xuất chi tiết cho khớp."
+            )
+
         # Vision mode: no text extraction, just basic prompt
         if normalized is None:
             return (
                 "Analyze this PDF document and extract incident data to valid JSON with exact schema keys. "
                 "Return only JSON. "
                 "Date format should follow dd/mm/yyyy where applicable."
-                f"{fix_hint}"
+                f"{hint_text}{fix_hint}"
             )
 
         return (
             "Extract incident data to valid JSON with exact schema keys. "
             "Return only JSON. "
             "Date format should follow dd/mm/yyyy where applicable."
-            f"{fix_hint}\n\n"
-            f"Document:\n{normalized.merged_prompt_context}"
+            f"{hint_text}{fix_hint}\n\n"
+            f"Document:\n{normalized.cleaned_text}"
         )
 
     def _infer_with_instructor(self, prompt: str) -> BaseModel:
@@ -647,7 +728,7 @@ class HybridExtractionPipeline:
         for attempt in range(1, self.max_retries + 1):
             try:
                 # In vision mode, we pass PDF bytes directly without text extraction
-                output = self.stage3_infer(None, prior_errors or None)
+                output = self._invoke_stage3_infer(None, prior_errors or None)
                 last_invalid_output = output
                 validation_errors = self.stage4_validate(output)
 
