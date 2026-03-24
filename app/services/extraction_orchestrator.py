@@ -41,6 +41,12 @@ class ExtractionOrchestrator:
         """Build extraction pipeline using configured backend."""
         # Get extraction mode from job if available, otherwise use config
         extraction_mode = getattr(self, 'extraction_mode', 'standard')
+
+        if extraction_mode == "block":
+            return BlockExtractionPipeline(
+                model=settings.OLLAMA_MODEL,
+                temperature=0.0,
+            )
         
         if settings.EXTRACTION_BACKEND.lower() == "gemini":
             from app.services.extractor_strategies import GeminiExtractor, GeminiVisionExtractor
@@ -57,14 +63,9 @@ class ExtractionOrchestrator:
             extractor = OllamaInstructorExtractor(
                 base_url=settings.OLLAMA_BASE_URL,
                 api_key=settings.OLLAMA_API_KEY,
+                timeout_seconds=settings.OLLAMA_TIMEOUT_SECONDS,
             )
             model = settings.OLLAMA_MODEL
-
-        if extraction_mode == "block":
-            return BlockExtractionPipeline(
-                model=model,
-                temperature=0.0,
-            )
         
         return HybridExtractionPipeline(
             model=model,
@@ -97,10 +98,17 @@ class ExtractionOrchestrator:
             result = pipeline.run_from_bytes(file_bytes, document.file_name)
             elapsed_ms = int((datetime.utcnow() - started_at).total_seconds() * 1000)
 
+            if self.extraction_mode == "block":
+                llm_model = settings.OLLAMA_MODEL
+            elif settings.EXTRACTION_BACKEND.lower() == "gemini":
+                llm_model = settings.GEMINI_CHAT_MODEL
+            else:
+                llm_model = settings.OLLAMA_MODEL
+
             saved_job = self.job_manager.persist_pipeline_result(
                 job=job,
                 result=result,
-                llm_model=settings.GEMINI_CHAT_MODEL if settings.EXTRACTION_BACKEND.lower() == "gemini" else settings.OLLAMA_MODEL,
+                llm_model=llm_model,
                 processing_time_ms=elapsed_ms,
             )
 

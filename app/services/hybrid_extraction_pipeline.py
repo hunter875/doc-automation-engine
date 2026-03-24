@@ -124,6 +124,7 @@ class HybridExtractionPipeline:
         self.extractor = extractor or OllamaInstructorExtractor(
             base_url=settings.OLLAMA_BASE_URL,
             api_key=settings.OLLAMA_API_KEY,
+            timeout_seconds=settings.OLLAMA_TIMEOUT_SECONDS,
         )
 
     # Stage 1
@@ -292,6 +293,17 @@ class HybridExtractionPipeline:
         ]
         return any(marker in text for marker in markers)
 
+    @staticmethod
+    def _is_inference_timeout_error(message: str) -> bool:
+        text = (message or "").lower()
+        markers = [
+            "request timed out",
+            "read timed out",
+            "timed out",
+            "timeout",
+        ]
+        return any(marker in text for marker in markers)
+
     def run(self, pdf_path: str | Path) -> PipelineResult:
         """Execute full 4-stage kill-chain with retry and manual-review fallback."""
         source_path = Path(pdf_path)
@@ -353,6 +365,14 @@ class HybridExtractionPipeline:
                 if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
                     stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
                     logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(
+                        status="failed",
+                        attempts=attempt,
+                        errors=[stage_error],
+                    )
+                if exc.stage == "inference" and self._is_inference_timeout_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Hybrid extraction aborted (inference-timeout) at attempt %s: %s", attempt, stage_error)
                     return PipelineResult(
                         status="failed",
                         attempts=attempt,
@@ -423,6 +443,14 @@ class HybridExtractionPipeline:
                 if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
                     stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
                     logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(
+                        status="failed",
+                        attempts=attempt,
+                        errors=[stage_error],
+                    )
+                if exc.stage == "inference" and self._is_inference_timeout_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Hybrid extraction aborted (inference-timeout) at attempt %s: %s", attempt, stage_error)
                     return PipelineResult(
                         status="failed",
                         attempts=attempt,
@@ -746,6 +774,14 @@ class HybridExtractionPipeline:
                 if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
                     stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
                     logger.error("Vision extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(
+                        status="failed",
+                        attempts=attempt,
+                        errors=[stage_error],
+                    )
+                if exc.stage == "inference" and self._is_inference_timeout_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Vision extraction aborted (inference-timeout) at attempt %s: %s", attempt, stage_error)
                     return PipelineResult(
                         status="failed",
                         attempts=attempt,

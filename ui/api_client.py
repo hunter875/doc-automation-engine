@@ -87,6 +87,11 @@ def init_state() -> None:
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = persisted.get(k, v)
+
+    # Keep UI mode set aligned with current 2-mode UX.
+    if st.session_state.get("engine2_mode") not in {"standard", "block"}:
+        st.session_state["engine2_mode"] = "block"
+
     for k in _PERSIST_KEYS:
         _save_persist(k, st.session_state[k])
 

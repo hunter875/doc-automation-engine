@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _DATE_DDMMYYYY = "%d/%m/%Y"
@@ -24,13 +26,22 @@ class CNCHItem(BaseModel):
             return self
 
         value = self.thoi_gian.strip()
+
+        # Normalize common Vietnamese short time format from LLM, e.g. "07h30" -> "07:30".
+        hm_match = re.match(r"^(\d{1,2})\s*[hH]\s*(\d{2})$", value)
+        if hm_match:
+            hh = hm_match.group(1).zfill(2)
+            mm = hm_match.group(2)
+            value = f"{hh}:{mm}"
+            self.thoi_gian = value
+
         patterns = [
             r"^\d{2}/\d{2}/\d{4}$",
             r"^\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}$",
             r"^\d{2}:\d{2}\s+\d{2}/\d{2}/\d{4}$",
+            r"^\d{2}:\d{2}$",
             r"^\d{1,2}\s*giờ\s*\d{1,2}\s*phút\s*ngày\s*\d{2}/\d{2}/\d{4}$",
         ]
-        import re
 
         if not any(re.match(pattern, value, flags=re.IGNORECASE) for pattern in patterns):
             raise ValueError(

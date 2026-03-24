@@ -234,9 +234,12 @@ st.title("⚙️ Luồng Bóc tách Dữ liệu Tự động")
 st.caption("Thiết lập khuôn mẫu → Đẩy tài liệu vào AI → Rà soát sửa lỗi → Tổng hợp và tải báo cáo.")
 
 # ── Mode selector (compact) ──────────────────────────────────
-mode_map = {"📄 Chuẩn (Standard)": "standard", "🔎 Chi tiết (Vision)": "vision", "🧩 Chia block (Block)": "block"}
+mode_map = {"📄 Chuẩn (Standard)": "standard", "🧩 Chia block (Block)": "block"}
 mode_labels = list(mode_map.keys())
-current_mode_label = next((k for k, v in mode_map.items() if v == st.session_state.get("engine2_mode", "standard")), mode_labels[0])
+current_mode_value = st.session_state.get("engine2_mode", "standard")
+if current_mode_value not in {"standard", "block"}:
+    current_mode_value = "block"
+current_mode_label = next((k for k, v in mode_map.items() if v == current_mode_value), mode_labels[0])
 sel_mode = st.radio("Chế độ xử lý thuật toán", mode_labels, index=mode_labels.index(current_mode_label), horizontal=True)
 st.session_state.engine2_mode = mode_map[sel_mode]
 
@@ -526,7 +529,7 @@ with tab2:
             rows.append({
                 "Tên file": j.get("file_name", "Tài liệu hệ thống")[:40],
                 "Tiến độ": STATUS_VI.get(j.get("status", ""), j.get("status", "")),
-                "Thuật toán": "📄 Chuẩn" if j.get("mode") == "standard" else "🔎 Kỹ" if j.get("mode") == "vision" else "🧩 Block",
+                "Thuật toán": "📄 Chuẩn" if j.get("mode") == "standard" else "🧩 Block",
                 "Thời gian nạp": str(j.get("created_at", ""))[:16].replace("T", " "),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)

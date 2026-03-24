@@ -27,9 +27,10 @@ class BaseExtractor(ABC):
 class OllamaInstructorExtractor(BaseExtractor):
     """Ollama extractor using instructor constrained decoding."""
 
-    def __init__(self, *, base_url: str, api_key: str) -> None:
+    def __init__(self, *, base_url: str, api_key: str, timeout_seconds: float = 180.0) -> None:
         self.base_url = base_url
         self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
 
     def extract(
         self,
@@ -47,7 +48,12 @@ class OllamaInstructorExtractor(BaseExtractor):
             base_url = f"{base_url}/v1"
 
         client = instructor.from_openai(
-            OpenAI(base_url=base_url, api_key=self.api_key),
+            OpenAI(
+                base_url=base_url,
+                api_key=self.api_key,
+                timeout=self.timeout_seconds,
+                max_retries=0,
+            ),
             mode=instructor.Mode.JSON,
         )
 
