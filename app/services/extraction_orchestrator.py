@@ -68,8 +68,21 @@ class ExtractionOrchestrator:
                 raw_preview_chars=settings.OLLAMA_RAW_PREVIEW_CHARS,
             )
             model = settings.OLLAMA_MODEL
+<<<<<<< HEAD
+
+        if extraction_mode == "block":
+            return BlockExtractionPipeline(
+                job_id=pipeline_job_id,
+                progress_callback=pipeline_progress_callback,
+                model=model,
+                temperature=0.0,
+            )
+=======
+>>>>>>> b74164e47451cf3756ce49076eb2ce743d09f496
         
         return HybridExtractionPipeline(
+            job_id=pipeline_job_id,
+            progress_callback=pipeline_progress_callback,
             model=model,
             temperature=0.0,
             extractor=extractor,
@@ -77,8 +90,10 @@ class ExtractionOrchestrator:
             extraction_mode=extraction_mode,
         )
 
-    def run(self, job_id: str):
+    def run(self, job_id: str, progress_callback: Callable[[str, str], None] | None = None):
         """Execute extraction for one job_id and persist final status/result."""
+        self.current_job_id = str(job_id)
+        self.progress_callback = progress_callback
         job = self.job_manager.get_job_for_processing(job_id)
         self.job_manager.set_processing(job, parser_used="pdfplumber")
 

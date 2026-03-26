@@ -118,6 +118,7 @@ class ExtractionJob(Base):
     extracted_data = Column(JSONB, nullable=True)
     confidence_scores = Column(JSONB, nullable=True)
     source_references = Column(JSONB, nullable=True)
+    debug_traces = Column(JSONB, default=list)
 
     # Human review
     reviewed_data = Column(JSONB, nullable=True)

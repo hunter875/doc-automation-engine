@@ -71,7 +71,12 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
+<<<<<<< HEAD
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+=======
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+>>>>>>> b74164e47451cf3756ce49076eb2ce743d09f496
       - EXTRACTION_MAX_TOKENS=65536
       - OLLAMA_BASE_URL=http://192.168.0.9:11434
     extra_hosts:
