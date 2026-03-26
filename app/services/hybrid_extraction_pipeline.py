@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import shutil
+from uuid import uuid4
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -22,6 +23,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, ValidationError
 
 from app.core.config import settings
+from app.core.tracing import trace_step
 from app.services.extractor_strategies import BaseExtractor, OllamaInstructorExtractor
 from app.services.rule_engine import RuleEngine
 from app.schemas.hybrid_extraction_schema import HybridExtractionOutput, LLMVanXuoiOutput
@@ -99,11 +101,13 @@ class HybridExtractionPipeline:
     def __init__(
         self,
         *,
+        job_id: str | None = None,
+        progress_callback: Callable[[str, str], Any] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_retries: int | None = None,
         manual_review_dir: str | Path | None = None,
-        inference_func: Callable[[str, list[str] | None], BaseModel] | None = None,
+        inference_func: Callable[..., BaseModel] | None = None,
         commit_func: Callable[[BaseModel], Any] | None = None,
         extractor: BaseExtractor | None = None,
         response_model: type[BaseModel] = HybridExtractionOutput,
@@ -111,6 +115,10 @@ class HybridExtractionPipeline:
         extraction_mode: str = "standard",
         pdf_bytes: bytes | None = None,
     ) -> None:
+        self.job_id = job_id
+        self.trace_id = str(uuid4())
+        self.retry_count = 0
+        self.progress_callback = progress_callback
         self.model = model or settings.OLLAMA_MODEL
         self.temperature = temperature
         self.max_retries = max_retries if max_retries is not None else settings.HYBRID_MAX_RETRIES
@@ -126,9 +134,19 @@ class HybridExtractionPipeline:
             api_key=settings.OLLAMA_API_KEY,
         )
 
+    def emit(self, step_name: str) -> None:
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(step_name, self.trace_id)
+        except Exception:
+            logger.warning("progress_callback failed for step '%s'", step_name, exc_info=True)
+
     # Stage 1
+    @trace_step("stage1_ingest")
     def stage1_ingest(self, pdf_bytes: bytes) -> IngestedDocument:
         """Extract text and tables as two independent streams using pdfplumber."""
+        self.emit("stage1_ingest")
         try:
             import pdfplumber
         except ImportError as exc:
@@ -178,8 +196,10 @@ class HybridExtractionPipeline:
         )
 
     # Stage 2
+    @trace_step("stage2_normalize")
     def stage2_normalize(self, ingested: IngestedDocument) -> NormalizedDocument:
         """Clean narrative text for LLM prompt construction."""
+        self.emit("stage2_normalize")
         try:
             all_text = (ingested.text_stream or "").strip()
             if not all_text:
@@ -193,13 +213,15 @@ class HybridExtractionPipeline:
             raise StageError("normalize", f"normalization failed: {exc}") from exc
 
     # Stage 3
-    def stage3_infer(
+    @trace_step("stage3_inference")
+    def stage3_inference(
         self,
         normalized: NormalizedDocument | None,
         validation_errors: list[str] | None = None,
         hint_data: dict[str, Any] | None = None,
     ) -> BaseModel:
         """Run constrained decoding via injected extraction strategy."""
+        self.emit("stage3_inference")
         prompt = self._build_prompt(normalized, validation_errors, hint_data)
         if self.extraction_mode == "vision" or hint_data is None:
             inference_schema: type[BaseModel] = self.response_model
@@ -241,6 +263,15 @@ class HybridExtractionPipeline:
         except Exception as exc:
             raise StageError("inference", f"LLM inference failed: {exc}") from exc
 
+    def stage3_infer(
+        self,
+        normalized: NormalizedDocument | None,
+        validation_errors: list[str] | None = None,
+        hint_data: dict[str, Any] | None = None,
+    ) -> BaseModel:
+        """Backward-compatible alias for stage3_inference."""
+        return self.stage3_inference(normalized, validation_errors, hint_data)
+
     def _invoke_stage3_infer(
         self,
         normalized: NormalizedDocument | None,
@@ -260,7 +291,8 @@ class HybridExtractionPipeline:
             return self.stage3_infer(normalized, validation_errors)
 
     # Stage 4
-    def stage4_validate(self, output: BaseModel) -> list[str]:
+    @trace_step("stage4_validation")
+    def stage4_validation(self, output: BaseModel) -> list[str]:
         """Validate schema shape and optional injected domain rules.
 
         Returns:
@@ -276,6 +308,10 @@ class HybridExtractionPipeline:
         if self.rule_engine is None:
             return []
         return self.rule_engine.validate(validated_payload)
+
+    def stage4_validate(self, output: BaseModel) -> list[str]:
+        """Backward-compatible alias for stage4_validation."""
+        return self.stage4_validation(output)
 
     @staticmethod
     def _is_quota_or_rate_limit_error(message: str) -> bool:
@@ -328,6 +364,7 @@ class HybridExtractionPipeline:
 
         for attempt in range(1, self.max_retries + 1):
             try:
+                self.retry_count = attempt - 1
                 llm_output = self._invoke_stage3_infer(
                     normalized,
                     prior_errors or None,
@@ -337,7 +374,7 @@ class HybridExtractionPipeline:
                 final_dict = {**table_dict, **llm_dict}
                 final_output = self.response_model.model_validate(final_dict)
                 last_invalid_output = final_output
-                validation_errors = self.stage4_validate(final_output)
+                validation_errors = self.stage4_validation(final_output)
 
                 if not validation_errors:
                     self._commit_to_database(final_output)
@@ -398,6 +435,7 @@ class HybridExtractionPipeline:
 
         for attempt in range(1, self.max_retries + 1):
             try:
+                self.retry_count = attempt - 1
                 llm_output = self._invoke_stage3_infer(
                     normalized,
                     prior_errors or None,
@@ -407,7 +445,7 @@ class HybridExtractionPipeline:
                 final_dict = {**table_dict, **llm_dict}
                 final_output = self.response_model.model_validate(final_dict)
                 last_invalid_output = final_output
-                validation_errors = self.stage4_validate(final_output)
+                validation_errors = self.stage4_validation(final_output)
 
                 if not validation_errors:
                     self._commit_to_database(final_output)
@@ -577,7 +615,7 @@ class HybridExtractionPipeline:
             "Return only JSON. "
             "Date format should follow dd/mm/yyyy where applicable."
             f"{hint_text}{fix_hint}\n\n"
-            f"Document:\n{normalized.cleaned_text}"
+            f"Document:\n{normalized.merged_prompt_context}"
         )
 
     def _infer_with_instructor(self, prompt: str) -> BaseModel:
@@ -727,10 +765,11 @@ class HybridExtractionPipeline:
 
         for attempt in range(1, self.max_retries + 1):
             try:
+                self.retry_count = attempt - 1
                 # In vision mode, we pass PDF bytes directly without text extraction
                 output = self._invoke_stage3_infer(None, prior_errors or None)
                 last_invalid_output = output
-                validation_errors = self.stage4_validate(output)
+                validation_errors = self.stage4_validation(output)
 
                 if not validation_errors:
                     self._commit_to_database(output)

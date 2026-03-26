@@ -9,8 +9,10 @@ from celery.exceptions import MaxRetriesExceededError
 # Ensure celery_app is initialized so shared_task binds to correct broker
 from app.worker.celery_app import celery_app  # noqa: F401
 from app.core.config import settings
+from app.core.logger import classify_error, log_debug_step
 from app.db.postgres import SessionLocal
 from app.models.extraction import ExtractionJob, ExtractionJobStatus
+from app.services.debug_trace_service import append_debug_trace
 
 # Import models so SQLAlchemy mapper is fully configured
 from app.models.document import Document  # noqa: F401
@@ -82,8 +84,25 @@ def extract_document_task(self, job_id: str):
     try:
         from app.services.extraction_orchestrator import ExtractionOrchestrator
 
+        def emit_progress(step_name: str, trace_id: str) -> None:
+            """Push real-time progress to Celery state and lightweight DB traces."""
+            self.update_state(
+                state="PROCESSING",
+                meta={
+                    "step": step_name,
+                    "job_id": str(job_id),
+                    "trace_id": str(trace_id),
+                },
+            )
+
+            job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+            if job is None:
+                return
+            append_debug_trace(job, step=step_name, status="success", error_type=None)
+            db.commit()
+
         orchestrator = ExtractionOrchestrator(db)
-        job = orchestrator.run(job_id)
+        job = orchestrator.run(job_id, progress_callback=emit_progress)
 
         logger.info(
             f"[Engine2] Extraction complete for job {job_id}: "
@@ -99,6 +118,29 @@ def extract_document_task(self, job_id: str):
 
     except Exception as e:
         logger.error(f"[Engine2] Extraction failed for job {job_id}: {e}")
+        error_type = classify_error(e) or "LOGIC_ERROR"
+
+        try:
+            failed_job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+            if failed_job is not None:
+                append_debug_trace(
+                    failed_job,
+                    step="extract_document_task",
+                    status="failed",
+                    error_type=error_type,
+                )
+                db.commit()
+        except Exception:
+            db.rollback()
+
+        log_debug_step(
+            job_id=str(job_id),
+            step="extract_document_task",
+            status="failed",
+            error=e,
+            retry_count=int(getattr(self.request, "retries", 0) or 0),
+            trace_id=getattr(self.request, "id", None),
+        )
 
         # Do not retry deterministic/non-recoverable errors.
         if not _is_retriable_error(e):
@@ -117,6 +159,20 @@ def extract_document_task(self, job_id: str):
 
         # Try to retry
         try:
+            current_retries = int(getattr(self.request, "retries", 0) or 0)
+            retry_job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+            if retry_job is not None:
+                retry_job.retry_count = current_retries + 1
+                db.commit()
+
+            log_debug_step(
+                job_id=str(job_id),
+                step="extract_document_task_retry",
+                status="failed",
+                error=e,
+                retry_count=current_retries + 1,
+                trace_id=getattr(self.request, "id", None),
+            )
             self.retry(exc=e)
         except MaxRetriesExceededError:
             # Mark as failed after all retries exhausted

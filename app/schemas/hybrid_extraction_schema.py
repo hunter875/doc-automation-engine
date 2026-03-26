@@ -86,31 +86,42 @@ class LLMVanXuoiOutput(BaseModel):
 
 
 class BlockHeader(BaseModel):
-    """Header block extracted from report prologue."""
+    model_config = ConfigDict(extra="forbid")
 
-    so_bao_cao: str = Field(default="", description="Số của báo cáo, ví dụ: 180/BC-KV30")
-    ngay_bao_cao: str = Field(default="", description="Ngày lập báo cáo, format dd/mm/yyyy")
+    so_bao_cao: str = Field(default="")
+    ngay_bao_cao: str = Field(default="")
+    thoi_gian_tu_den: str = Field(default="")
+    don_vi_bao_cao: str = Field(default="")
 
 
-class BlockPhanI(BaseModel):
-    """Narrative block for section I."""
+class BlockNghiepVu(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    tinh_hinh_chay_no: str = Field(default="", description="Tóm tắt tình hình cháy nổ")
-    so_vu_cnch: int = Field(default=0, ge=0, strict=True, description="Tổng số vụ cứu nạn cứu hộ")
+    tong_so_vu_chay: int = Field(default=0)
+    tong_so_vu_no: int = Field(default=0)
+    tong_so_vu_cnch: int = Field(default=0)
+    chi_tiet_cnch: str = Field(default="")
+    quan_so_truc: int = Field(default=0)
+
+
+class ChiTieu(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stt: str = Field(description="Số thứ tự, ví dụ: 2, 14, 31, 55")
+    noi_dung: str = Field(description="Tên chỉ tiêu thống kê")
+    ket_qua: int = Field(default=0)
 
 
 class BlockBangThongKe(BaseModel):
-    """Statistic table block extracted from report."""
+    model_config = ConfigDict(extra="forbid")
 
-    tong_so_vu_chay: int = Field(default=0, ge=0, strict=True)
-    so_nguoi_chet: int = Field(default=0, ge=0, strict=True)
-    tai_san_thiet_hai: int = Field(default=0, ge=0, strict=True)
-    tong_so_vu_cnch: int = Field(default=0, ge=0, strict=True)
+    danh_sach_chi_tieu: list[ChiTieu] = Field(
+        default_factory=list,
+        description="Danh sách vét cạn tất cả các dòng có chứa số liệu thống kê trong bảng",
+    )
 
 
 class BlockExtractionOutput(BaseModel):
-    """Merged output from all block-specific extractors."""
-
-    header: BlockHeader = Field(default_factory=BlockHeader)
-    phan_I: BlockPhanI = Field(default_factory=BlockPhanI)
-    bang_thong_ke: BlockBangThongKe = Field(default_factory=BlockBangThongKe)
+    header: BlockHeader
+    phan_I_va_II_chi_tiet_nghiep_vu: BlockNghiepVu
+    bang_thong_ke: list[ChiTieu]

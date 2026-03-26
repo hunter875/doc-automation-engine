@@ -143,7 +143,7 @@ class Settings(BaseSettings):
     EXTRACTION_BATCH_MAX_FILES: int = 20
 
     # Extraction backend selection: 'ollama' or 'gemini'
-    EXTRACTION_BACKEND: str = "gemini"
+    EXTRACTION_BACKEND: str = "ollama"
 
     # Hybrid extraction fallback
     HYBRID_MAX_RETRIES: int = 3

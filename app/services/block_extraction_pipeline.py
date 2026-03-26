@@ -5,15 +5,18 @@ from __future__ import annotations
 import io
 import logging
 import re
+from uuid import uuid4
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.tracing import trace_step
 from app.schemas.hybrid_extraction_schema import (
     BlockBangThongKe,
     BlockExtractionOutput,
     BlockHeader,
-    BlockPhanI,
+    BlockNghiepVu,
 )
 from app.services.extractor_strategies import OllamaInstructorExtractor
 from app.services.hybrid_extraction_pipeline import PipelineResult
@@ -24,7 +27,17 @@ logger = logging.getLogger(__name__)
 class BlockExtractionPipeline:
     """Split-by-block extraction using `layout=True` OCR text layout."""
 
-    def __init__(self, model: str | None = None, temperature: float = 0.0) -> None:
+    def __init__(
+        self,
+        job_id: str | None = None,
+        progress_callback: Callable[[str, str], Any] | None = None,
+        model: str | None = None,
+        temperature: float = 0.0,
+    ) -> None:
+        self.job_id = job_id
+        self.trace_id = str(uuid4())
+        self.retry_count = 0
+        self.progress_callback = progress_callback
         self.model = model or settings.OLLAMA_MODEL
         self.temperature = temperature
         self.extractor = OllamaInstructorExtractor(
@@ -32,7 +45,17 @@ class BlockExtractionPipeline:
             api_key=settings.OLLAMA_API_KEY,
         )
 
+    def emit(self, step_name: str) -> None:
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(step_name, self.trace_id)
+        except Exception:
+            logger.warning("progress_callback failed for step '%s'", step_name, exc_info=True)
+
+    @trace_step("block_split_into_blocks")
     def _split_into_blocks(self, pdf_bytes: bytes) -> dict[str, str]:
+        self.emit("block_split_into_blocks")
         try:
             import pdfplumber
         except ImportError as exc:
@@ -45,8 +68,9 @@ class BlockExtractionPipeline:
                 full_text.append(text)
 
         content = "\n".join(full_text)
-        blocks = {"header": "", "phan_I": "", "bang_thong_ke": ""}
+        blocks = {"header": "", "phan_nghiep_vu": "", "bang_thong_ke": ""}
 
+        # 1. Cắt Header
         header_match = re.search(
             r"(.*?)(?=I\.\s*TÌNH\s*HÌNH\s*CHÁY,?\s*NỔ)",
             content,
@@ -55,14 +79,16 @@ class BlockExtractionPipeline:
         if header_match:
             blocks["header"] = header_match.group(1).strip()
 
-        phan1_match = re.search(
-            r"(I\.\s*TÌNH\s*HÌNH\s*CHÁY.*?)(?=II\.|BIỂU\s*MẪU\s*THỐNG\s*KÊ)",
+        # 2. Cắt Phần I & II (Cú lai tạp: Kéo thẳng đến tận BIỂU MẪU THỐNG KÊ)
+        phan_nghiep_vu_match = re.search(
+            r"(I\.\s*TÌNH\s*HÌNH\s*CHÁY.*?)(?=BIỂU\s*MẪU\s*THỐNG\s*KÊ)",
             content,
             flags=re.DOTALL | re.IGNORECASE,
         )
-        if phan1_match:
-            blocks["phan_I"] = phan1_match.group(1).strip()
+        if phan_nghiep_vu_match:
+            blocks["phan_nghiep_vu"] = phan_nghiep_vu_match.group(1).strip()
 
+        # 3. Cắt Bảng Thống Kê
         bang_match = re.search(
             r"(BIỂU\s*MẪU\s*THỐNG\s*KÊ.*)",
             content,
@@ -74,7 +100,9 @@ class BlockExtractionPipeline:
 
         return blocks
 
+    @trace_step("block_extract_block")
     def _extract_block(self, block_text: str, schema: type[BaseModel], block_name: str) -> BaseModel:
+        self.emit(f"block_extract_{block_name}")
         if not block_text:
             return schema()
 
@@ -84,10 +112,10 @@ class BlockExtractionPipeline:
                 "content": (
                     "Mày là chuyên gia bóc tách dữ liệu PCCC. "
                     f"Trích xuất chính xác theo schema JSON cho phần {block_name}. "
-                    "Nếu thiếu dữ liệu thì trả giá trị mặc định theo schema."
+                    "Tuyệt đối không suy đoán. Nếu thiếu dữ liệu thì trả giá trị mặc định theo schema."
                 ),
             },
-            {"role": "user", "content": block_text},
+            {"role": "user", "content": f"Dữ liệu {block_name}:\n{block_text}"},
         ]
 
         return self.extractor.extract(
@@ -103,13 +131,16 @@ class BlockExtractionPipeline:
             blocks = self._split_into_blocks(pdf_bytes)
 
             header_data = self._extract_block(blocks["header"], BlockHeader, "Header")
-            phan_i_data = self._extract_block(blocks["phan_I"], BlockPhanI, "Phần I")
-            bang_data = self._extract_block(blocks["bang_thong_ke"], BlockBangThongKe, "Bảng thống kê")
+            phan_nghiep_vu_data = self._extract_block(blocks["phan_nghiep_vu"], BlockNghiepVu, "Phần Nghiệp Vụ")
 
+            # Vét cạn qua mảng động
+            bang_data_wrapper = self._extract_block(blocks["bang_thong_ke"], BlockBangThongKe, "Bảng thống kê")
+
+            # Cú chốt: Đập phẳng cái mảng danh_sach_chi_tieu ra ngoài
             final_output = BlockExtractionOutput(
                 header=header_data,
-                phan_I=phan_i_data,
-                bang_thong_ke=bang_data,
+                phan_I_va_II_chi_tiet_nghiep_vu=phan_nghiep_vu_data,
+                bang_thong_ke=bang_data_wrapper.danh_sach_chi_tieu,
             )
 
             return PipelineResult(status="ok", attempts=1, output=final_output)

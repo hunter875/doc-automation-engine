@@ -41,6 +41,8 @@ class ExtractionOrchestrator:
         """Build extraction pipeline using configured backend."""
         # Get extraction mode from job if available, otherwise use config
         extraction_mode = getattr(self, 'extraction_mode', 'standard')
+        pipeline_job_id = getattr(self, 'current_job_id', None)
+        pipeline_progress_callback = getattr(self, 'progress_callback', None)
         
         if settings.EXTRACTION_BACKEND.lower() == "gemini":
             from app.services.extractor_strategies import GeminiExtractor, GeminiVisionExtractor
@@ -62,11 +64,15 @@ class ExtractionOrchestrator:
 
         if extraction_mode == "block":
             return BlockExtractionPipeline(
+                job_id=pipeline_job_id,
+                progress_callback=pipeline_progress_callback,
                 model=model,
                 temperature=0.0,
             )
         
         return HybridExtractionPipeline(
+            job_id=pipeline_job_id,
+            progress_callback=pipeline_progress_callback,
             model=model,
             temperature=0.0,
             extractor=extractor,
@@ -74,8 +80,10 @@ class ExtractionOrchestrator:
             extraction_mode=extraction_mode,
         )
 
-    def run(self, job_id: str):
+    def run(self, job_id: str, progress_callback: Callable[[str, str], None] | None = None):
         """Execute extraction for one job_id and persist final status/result."""
+        self.current_job_id = str(job_id)
+        self.progress_callback = progress_callback
         job = self.job_manager.get_job_for_processing(job_id)
         self.job_manager.set_processing(job, parser_used="pdfplumber")
 
