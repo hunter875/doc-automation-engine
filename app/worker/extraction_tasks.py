@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
+from billiard.exceptions import SoftTimeLimitExceeded
 
 # Ensure celery_app is initialized so shared_task binds to correct broker
 from app.worker.celery_app import celery_app  # noqa: F401
@@ -31,12 +32,17 @@ def _is_retriable_error(error: Exception) -> bool:
         "quota exceeded",
         "too many requests",
         " 429 ",
+        "validation error for",
+        "err_schema_validation",
+        "thoi_gian không đúng định dạng",
+        "value error",
         "job not found",
         "extraction job",
         "template not found",
         "document not found",
         "template or document not found",
         "json_parse_error",
+        "soft time limit exceeded",
     ]
     if any(marker in message for marker in non_retriable_markers):
         return False
@@ -62,6 +68,8 @@ def _is_retriable_error(error: Exception) -> bool:
     retry_backoff=True,
     retry_backoff_max=300,
     retry_jitter=True,
+    soft_time_limit=300,
+    time_limit=360,
 )
 def extract_document_task(self, job_id: str):
     """Run the Hybrid extraction pipeline for a single job.
@@ -115,6 +123,20 @@ def extract_document_task(self, job_id: str):
             "tokens_used": job.llm_tokens_used,
             "processing_time_ms": job.processing_time_ms,
         }
+
+    except SoftTimeLimitExceeded as e:
+        logger.error(f"[Engine2] Extraction timeout for job {job_id}: {e}")
+        try:
+            job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+            if job and job.status != ExtractionJobStatus.FAILED:
+                job.status = ExtractionJobStatus.FAILED
+                job.error_message = "Task timed out (soft_time_limit=300s)"
+                job.completed_at = datetime.utcnow()
+                job.updated_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            pass
+        raise
 
     except Exception as e:
         logger.error(f"[Engine2] Extraction failed for job {job_id}: {e}")

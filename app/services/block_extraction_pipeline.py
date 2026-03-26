@@ -43,6 +43,7 @@ class BlockExtractionPipeline:
         self.extractor = OllamaInstructorExtractor(
             base_url=settings.OLLAMA_BASE_URL,
             api_key=settings.OLLAMA_API_KEY,
+            timeout_seconds=settings.OLLAMA_TIMEOUT_SECONDS,
         )
 
     def emit(self, step_name: str) -> None:

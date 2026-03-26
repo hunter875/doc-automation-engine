@@ -94,7 +94,7 @@ if ok3:
                 "ID": short_id(j.get("id", "")),
                 "Tên file": j.get("file_name", j.get("document_id", ""))[:40],
                 "Trạng thái": STATUS_VI.get(j.get("status", ""), j.get("status", "")),
-                "Chế độ": "📄 Chuẩn" if j.get("mode") == "standard" else "🔎 Chi tiết" if j.get("mode") == "vision" else "🧩 Block",
+                "Chế độ": "📄 Chuẩn" if j.get("mode") == "standard" else "🧩 Block",
                 "Tạo lúc": str(j.get("created_at", ""))[:16],
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)

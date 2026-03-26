@@ -180,6 +180,15 @@ def _coerce_to_date(value: Any) -> tuple[str | None, str | None]:
     if not raw:
         return None, None
 
+    # Time-only normalization for LLM outputs like "07h30", "7H30", or "7:30".
+    time_match = re.match(r"^(\d{1,2})\s*[hH:]\s*(\d{2})$", raw)
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            formatted_time = f"{hour:02d}:{minute:02d}"
+            return formatted_time, f'"{raw}" → "{formatted_time}" (Time format)'
+
     # 1. Try regex patterns
     for pattern, fmt in _DATE_PATTERNS:
         m = pattern.match(raw)

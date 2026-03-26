@@ -98,7 +98,8 @@ class Settings(BaseSettings):
     # Ollama (Hybrid extraction)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = "ollama"
-    OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_MODEL: str = "qwen3:8b"
+    OLLAMA_TIMEOUT_SECONDS: float = 180.0
 
     # File Upload
     MAX_FILE_SIZE_MB: int = 10
