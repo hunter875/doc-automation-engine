@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     OLLAMA_API_KEY: str = "ollama"
     OLLAMA_MODEL: str = "qwen3:8b"
     OLLAMA_TIMEOUT_SECONDS: float = 180.0
+    OLLAMA_LOG_RAW_PRE_VALIDATE: bool = True
+    OLLAMA_RAW_PREVIEW_CHARS: int = 1200
 
     # File Upload
     MAX_FILE_SIZE_MB: int = 10

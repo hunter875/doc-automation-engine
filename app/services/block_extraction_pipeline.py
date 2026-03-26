@@ -31,6 +31,8 @@ class BlockExtractionPipeline:
             base_url=settings.OLLAMA_BASE_URL,
             api_key=settings.OLLAMA_API_KEY,
             timeout_seconds=settings.OLLAMA_TIMEOUT_SECONDS,
+            log_raw_pre_validate=settings.OLLAMA_LOG_RAW_PRE_VALIDATE,
+            raw_preview_chars=settings.OLLAMA_RAW_PREVIEW_CHARS,
         )
 
     def _split_into_blocks(self, pdf_bytes: bytes) -> dict[str, str]:

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class BaseExtractor(ABC):
@@ -27,10 +30,20 @@ class BaseExtractor(ABC):
 class OllamaInstructorExtractor(BaseExtractor):
     """Ollama extractor using instructor constrained decoding."""
 
-    def __init__(self, *, base_url: str, api_key: str, timeout_seconds: float = 180.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout_seconds: float = 180.0,
+        log_raw_pre_validate: bool = False,
+        raw_preview_chars: int = 1200,
+    ) -> None:
         self.base_url = base_url
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self.log_raw_pre_validate = log_raw_pre_validate
+        self.raw_preview_chars = raw_preview_chars
 
     def extract(
         self,
@@ -57,13 +70,24 @@ class OllamaInstructorExtractor(BaseExtractor):
             mode=instructor.Mode.JSON,
         )
 
-        result = client.chat.completions.create(
+        result, completion = client.chat.completions.create_with_completion(
             model=model,
             temperature=temperature,
             response_model=response_model,
             max_retries=0,
             messages=messages,
         )
+
+        if self.log_raw_pre_validate and completion and completion.choices:
+            raw_content = (completion.choices[0].message.content or "").strip()
+            if raw_content:
+                preview = raw_content[: self.raw_preview_chars]
+                logger.info(
+                    "[OLLAMA_RAW_PRE_VALIDATE] model=%s chars=%s preview=%s",
+                    model,
+                    len(raw_content),
+                    preview,
+                )
 
         if isinstance(result, response_model):
             return result
