@@ -68,21 +68,10 @@ class ExtractionOrchestrator:
                 raw_preview_chars=settings.OLLAMA_RAW_PREVIEW_CHARS,
             )
             model = settings.OLLAMA_MODEL
-<<<<<<< HEAD
-
-        if extraction_mode == "block":
-            return BlockExtractionPipeline(
-                job_id=pipeline_job_id,
-                progress_callback=pipeline_progress_callback,
-                model=model,
-                temperature=0.0,
-            )
-=======
->>>>>>> b74164e47451cf3756ce49076eb2ce743d09f496
         
         return HybridExtractionPipeline(
-            job_id=pipeline_job_id,
-            progress_callback=pipeline_progress_callback,
+            job_id=getattr(self, "current_job_id", None),
+            progress_callback=getattr(self, "progress_callback", None),
             model=model,
             temperature=0.0,
             extractor=extractor,

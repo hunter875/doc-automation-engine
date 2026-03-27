@@ -27,13 +27,13 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
       - EXTRACTION_MAX_TOKENS=65536
       - SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-key-change-in-production}
       - DEBUG=true
-      - OLLAMA_BASE_URL=http://192.168.0.9:11434 # Kết nối ra máy host bằng IP
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     extra_hosts:
-      - "host.docker.internal:192.168.0.9"
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,16 +71,11 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
-<<<<<<< HEAD
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-=======
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
->>>>>>> b74164e47451cf3756ce49076eb2ce743d09f496
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - EXTRACTION_MAX_TOKENS=65536
-      - OLLAMA_BASE_URL=http://192.168.0.9:11434
     extra_hosts:
-      - "host.docker.internal:192.168.0.9"
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

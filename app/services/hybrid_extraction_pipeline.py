@@ -19,8 +19,9 @@ from uuid import uuid4
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+import unicodedata
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, create_model
 
 from app.core.config import settings
 from app.core.tracing import trace_step
@@ -39,6 +40,18 @@ _NOISE_PATTERNS = [
     re.compile(r"^KT\.\s*ĐỘI TRƯỞNG", flags=re.IGNORECASE),
     re.compile(r"^PHÓ\s*ĐỘI\s*TRƯỞNG", flags=re.IGNORECASE),
 ]
+
+_FIELD_KEYWORDS: dict[str, list[str]] = {
+    "so_bao_cao": ["Số:", "Số báo cáo", "BÁO CÁO"],
+    "ngay_bao_cao": ["Ngày", "Báo cáo ngày"],
+    "tu_ngay": ["Từ ngày"],
+    "den_ngay": ["Đến ngày"],
+    "tong_quan_su_co": ["TÌNH HÌNH CHÁY", "SỰ CỐ", "TAI NẠN"],
+    "stt_14_tong_cnch": ["14", "Tổng CNCH"],
+    "tong_xe_hu_hong": ["xe hư hỏng", "xe hu hong"],
+    "danh_sach_cnch": ["CNCH", "CỨU NẠN", "TAI NẠN"],
+    "danh_sach_phuong_tien_hu_hong": ["phương tiện", "xe hư hỏng"],
+}
 
 @dataclass
 class IngestedPage:
@@ -215,6 +228,257 @@ class HybridExtractionPipeline:
         except Exception as exc:
             raise StageError("normalize", f"normalization failed: {exc}") from exc
 
+    @staticmethod
+    def _normalize_for_search(text: str) -> str:
+        text = (text or "").upper()
+        text = unicodedata.normalize("NFD", text)
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @trace_step("phase0_document_mapping")
+    def phase0_document_mapping(self, ingested: IngestedDocument) -> dict[str, str]:
+        self.emit("phase0_document_mapping")
+        lines = [line.strip() for line in (ingested.text_stream or "").splitlines() if line.strip()]
+        if not lines:
+            return {"header": "", "nghiep_vu": "", "bang_thong_ke": "", "full_text": ""}
+
+        anchor_i = "I. TINH HINH CHAY"
+        anchor_table = "BIEU MAU THONG KE"
+        idx_i: int | None = None
+        idx_table: int | None = None
+
+        for idx, line in enumerate(lines):
+            norm = self._normalize_for_search(line)
+            if idx_i is None and anchor_i in norm:
+                idx_i = idx
+            if idx_table is None and anchor_table in norm:
+                idx_table = idx
+
+        if idx_i is None:
+            idx_i = min(30, len(lines))
+        if idx_table is None or idx_table < idx_i:
+            idx_table = len(lines)
+
+        return {
+            "header": "\n".join(lines[:idx_i]).strip(),
+            "nghiep_vu": "\n".join(lines[idx_i:idx_table]).strip(),
+            "bang_thong_ke": "\n".join(lines[idx_table:]).strip(),
+            "full_text": "\n".join(lines).strip(),
+        }
+
+    @trace_step("phase1_context_window_builder")
+    def phase1_context_window_builder(self, doc_map: dict[str, str], window_size: int = 10) -> dict[str, str]:
+        self.emit("phase1_context_window_builder")
+        lines = [line.strip() for line in (doc_map.get("full_text") or "").splitlines() if line.strip()]
+        if not lines:
+            return {}
+
+        normalized_lines = [self._normalize_for_search(line) for line in lines]
+        windows: dict[str, str] = {}
+
+        for field_name in self.response_model.model_fields.keys():
+            keywords = _FIELD_KEYWORDS.get(field_name, [field_name])
+            norm_keywords = [self._normalize_for_search(k) for k in keywords]
+
+            hit_idx: int | None = None
+            for idx, norm_line in enumerate(normalized_lines):
+                if any(keyword in norm_line for keyword in norm_keywords):
+                    hit_idx = idx
+                    break
+
+            if hit_idx is None:
+                start, end = 0, min(len(lines), 2 * window_size + 1)
+            else:
+                start = max(0, hit_idx - window_size)
+                end = min(len(lines), hit_idx + window_size + 1)
+
+            windows[field_name] = "\n".join(lines[start:end]).strip()
+
+        return windows
+
+    def _default_for_field(self, field_name: str) -> Any:
+        annotation = self.response_model.model_fields[field_name].annotation
+        ann_text = str(annotation)
+        if "list" in ann_text.lower():
+            return []
+        if "int" in ann_text.lower():
+            return 0
+        return ""
+
+    def _extract_single_field(
+        self,
+        field_name: str,
+        context_window: str,
+        validation_errors: list[str] | None = None,
+    ) -> Any:
+        annotation = self.response_model.model_fields[field_name].annotation
+        default_value = self._default_for_field(field_name)
+        mini_model = create_model(
+            f"FieldModel_{field_name}",
+            **{field_name: (annotation, default_value)},
+        )
+
+        fix_hint = ""
+        if validation_errors:
+            fix_hint = "\nPrevious validation issues: " + " | ".join(validation_errors)
+
+        prompt = (
+            f"Extract ONLY this field: {field_name}.\n"
+            "Search ONLY inside provided context.\n"
+            "Return strict JSON with this single field and no extra keys."
+            f"{fix_hint}\n\n"
+            f"Context:\n{context_window}"
+        )
+
+        messages = [
+            {"role": "system", "content": "You are a precise field extraction engine."},
+            {"role": "user", "content": prompt},
+        ]
+
+        result = self.extractor.extract(
+            messages=messages,
+            response_model=mini_model,
+            model=self.model,
+            temperature=0.0,
+        )
+        return getattr(result, field_name, default_value)
+
+    @trace_step("phase2_field_level_extraction")
+    def phase2_field_level_extraction(
+        self,
+        windows: dict[str, str],
+        validation_errors: list[str] | None = None,
+        target_fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self.emit("phase2_field_level_extraction")
+        extracted: dict[str, Any] = {}
+        fields = target_fields or list(self.response_model.model_fields.keys())
+
+        for field_name in fields:
+            try:
+                context_window = windows.get(field_name, "")
+                extracted[field_name] = self._extract_single_field(field_name, context_window, validation_errors)
+            except Exception as exc:
+                raise StageError("inference", f"LLM inference failed while extracting {field_name}: {exc}") from exc
+
+        return extracted
+
+    @trace_step("phase3_deterministic_correction")
+    def phase3_deterministic_correction(
+        self,
+        payload: dict[str, Any],
+        table_dict: dict[str, Any],
+        windows: dict[str, str],
+    ) -> dict[str, Any]:
+        self.emit("phase3_deterministic_correction")
+        merged = {**payload}
+
+        # Parser > LLM for deterministic table metrics.
+        merged.update(table_dict)
+
+        # Date regex override when available.
+        report_window = windows.get("ngay_bao_cao", "")
+        report_date = re.search(r"\b\d{2}/\d{2}/\d{4}\b", report_window)
+        if report_date:
+            merged["ngay_bao_cao"] = report_date.group(0)
+
+        date_window = self._normalize_for_search(windows.get("tu_ngay", "") + "\n" + windows.get("den_ngay", ""))
+        range_match = re.search(r"TU NGAY\s*(\d{2}/\d{2}/\d{4}).*DEN NGAY\s*(\d{2}/\d{2}/\d{4})", date_window)
+        if range_match:
+            merged["tu_ngay"] = range_match.group(1)
+            merged["den_ngay"] = range_match.group(2)
+
+        if "stt_14_tong_cnch" in merged:
+            merged["stt_14_tong_cnch"] = self._safe_int(merged.get("stt_14_tong_cnch"), 0)
+        if "tong_xe_hu_hong" in merged:
+            merged["tong_xe_hu_hong"] = self._safe_int(merged.get("tong_xe_hu_hong"), 0)
+
+        return merged
+
+    @staticmethod
+    def _map_validation_errors_to_fields(validation_errors: list[str]) -> list[str]:
+        targets: set[str] = set()
+        for error in validation_errors:
+            if error == "ERR_CNCH_COUNT_MISMATCH":
+                targets.add("danh_sach_cnch")
+            elif error == "ERR_VEHICLE_DAMAGE_COUNT_MISMATCH":
+                targets.add("danh_sach_phuong_tien_hu_hong")
+            elif error == "ERR_REPORT_DATE_FORMAT":
+                targets.add("ngay_bao_cao")
+            elif error == "ERR_FROM_DATE_FORMAT":
+                targets.add("tu_ngay")
+            elif error == "ERR_TO_DATE_FORMAT":
+                targets.add("den_ngay")
+            elif error == "ERR_DATE_RANGE":
+                targets.update({"tu_ngay", "den_ngay"})
+            elif "ERR_CNCH_DATE_FORMAT_ITEM_" in error:
+                targets.add("danh_sach_cnch")
+            elif error.startswith("ERR_SCHEMA_VALIDATION"):
+                for candidate in (
+                    "ngay_bao_cao",
+                    "tu_ngay",
+                    "den_ngay",
+                    "tong_quan_su_co",
+                    "stt_14_tong_cnch",
+                    "tong_xe_hu_hong",
+                    "danh_sach_cnch",
+                    "danh_sach_phuong_tien_hu_hong",
+                ):
+                    if candidate in error:
+                        targets.add(candidate)
+        return list(targets)
+
+    def _run_standard_flow(self, ingested: IngestedDocument, normalized: NormalizedDocument) -> PipelineResult:
+        del normalized
+        prior_errors: list[str] = []
+        last_invalid_output: BaseModel | None = None
+
+        table_dict = self._extract_table_by_rules(ingested.table_stream)
+        doc_map = self.phase0_document_mapping(ingested)
+        windows = self.phase1_context_window_builder(doc_map)
+
+        merged_fields: dict[str, Any] = {}
+        target_fields: list[str] | None = None
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                self.retry_count = attempt - 1
+                extracted_fields = self.phase2_field_level_extraction(
+                    windows,
+                    validation_errors=prior_errors or None,
+                    target_fields=target_fields,
+                )
+                merged_fields.update(extracted_fields)
+
+                corrected = self.phase3_deterministic_correction(merged_fields, table_dict, windows)
+                corrected = self._align_list_counts_with_table_hints(corrected)
+
+                final_output = self.response_model.model_validate(corrected)
+                last_invalid_output = final_output
+                validation_errors = self.stage4_validation(final_output)
+
+                if not validation_errors:
+                    self._commit_to_database(final_output)
+                    return PipelineResult(status="ok", attempts=attempt, output=final_output)
+
+                prior_errors = self._build_retry_feedback(validation_errors, final_output)
+                mapped = self._map_validation_errors_to_fields(validation_errors)
+                target_fields = mapped or None
+                logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
+            except StageError as exc:
+                if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(status="failed", attempts=attempt, errors=[stage_error])
+                if exc.stage == "inference" and self._is_inference_timeout_error(exc.message):
+                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
+                    logger.error("Hybrid extraction aborted (inference-timeout) at attempt %s: %s", attempt, stage_error)
+                    return PipelineResult(status="failed", attempts=attempt, errors=[stage_error])
+                prior_errors = self._build_retry_feedback([f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"], last_invalid_output)
+                logger.warning("Hybrid extraction stage error on attempt %s: %s", attempt, exc)
+
+        return PipelineResult(status="needs_manual_review", attempts=self.max_retries, errors=prior_errors)
+
     # Stage 3
     @trace_step("stage3_inference")
     def stage3_inference(
@@ -372,63 +636,19 @@ class HybridExtractionPipeline:
                 errors=[f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"],
             )
 
-        prior_errors: list[str] = []
-        last_invalid_output: BaseModel | None = None
-        table_dict = self._extract_table_by_rules(ingested.table_stream)
-
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                self.retry_count = attempt - 1
-                llm_output = self._invoke_stage3_infer(
-                    normalized,
-                    prior_errors or None,
-                    hint_data=table_dict,
-                )
-                llm_dict = llm_output.model_dump(exclude_none=True) if isinstance(llm_output, BaseModel) else {}
-                final_dict = {**table_dict, **llm_dict}
-                final_output = self.response_model.model_validate(final_dict)
-                last_invalid_output = final_output
-                validation_errors = self.stage4_validation(final_output)
-
-                if not validation_errors:
-                    self._commit_to_database(final_output)
-                    return PipelineResult(
-                        status="ok",
-                        attempts=attempt,
-                        output=final_output,
-                    )
-
-                prior_errors = self._build_retry_feedback(validation_errors, final_output)
-                logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
-            except StageError as exc:
-                if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
-                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
-                    logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
-                    return PipelineResult(
-                        status="failed",
-                        attempts=attempt,
-                        errors=[stage_error],
-                    )
-                if exc.stage == "inference" and self._is_inference_timeout_error(exc.message):
-                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
-                    logger.error("Hybrid extraction aborted (inference-timeout) at attempt %s: %s", attempt, stage_error)
-                    return PipelineResult(
-                        status="failed",
-                        attempts=attempt,
-                        errors=[stage_error],
-                    )
-                prior_errors = self._build_retry_feedback([f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"], last_invalid_output)
-                logger.warning("Hybrid extraction stage error on attempt %s: %s", attempt, exc)
+        result = self._run_standard_flow(ingested, normalized)
+        if result.status == "ok":
+            return result
 
         manual_path, metadata_path = self._move_to_manual_review(
             source_path,
-            invalid_output=last_invalid_output,
-            errors=prior_errors,
+            invalid_output=result.output,
+            errors=result.errors,
         )
         return PipelineResult(
-            status="needs_manual_review",
-            attempts=self.max_retries,
-            errors=prior_errors,
+            status=result.status,
+            attempts=result.attempts,
+            errors=result.errors,
             manual_review_path=str(manual_path),
             manual_review_metadata_path=str(metadata_path) if metadata_path else None,
         )
@@ -451,64 +671,20 @@ class HybridExtractionPipeline:
                 errors=[f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"],
             )
 
-        prior_errors: list[str] = []
-        last_invalid_output: BaseModel | None = None
-        table_dict = self._extract_table_by_rules(ingested.table_stream)
-
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                self.retry_count = attempt - 1
-                llm_output = self._invoke_stage3_infer(
-                    normalized,
-                    prior_errors or None,
-                    hint_data=table_dict,
-                )
-                llm_dict = llm_output.model_dump(exclude_none=True) if isinstance(llm_output, BaseModel) else {}
-                final_dict = {**table_dict, **llm_dict}
-                final_output = self.response_model.model_validate(final_dict)
-                last_invalid_output = final_output
-                validation_errors = self.stage4_validation(final_output)
-
-                if not validation_errors:
-                    self._commit_to_database(final_output)
-                    return PipelineResult(
-                        status="ok",
-                        attempts=attempt,
-                        output=final_output,
-                    )
-
-                prior_errors = self._build_retry_feedback(validation_errors, final_output)
-                logger.warning("Hybrid extraction validation failed on attempt %s: %s", attempt, validation_errors)
-            except StageError as exc:
-                if exc.stage == "inference" and self._is_quota_or_rate_limit_error(exc.message):
-                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
-                    logger.error("Hybrid extraction aborted (quota/rate-limit) at attempt %s: %s", attempt, stage_error)
-                    return PipelineResult(
-                        status="failed",
-                        attempts=attempt,
-                        errors=[stage_error],
-                    )
-                if exc.stage == "inference" and self._is_inference_timeout_error(exc.message):
-                    stage_error = f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"
-                    logger.error("Hybrid extraction aborted (inference-timeout) at attempt %s: %s", attempt, stage_error)
-                    return PipelineResult(
-                        status="failed",
-                        attempts=attempt,
-                        errors=[stage_error],
-                    )
-                prior_errors = self._build_retry_feedback([f"ERR_STAGE_{exc.stage.upper()}:{exc.message}"], last_invalid_output)
-                logger.warning("Hybrid extraction stage error on attempt %s: %s", attempt, exc)
+        result = self._run_standard_flow(ingested, normalized)
+        if result.status == "ok":
+            return result
 
         manual_path, metadata_path = self._write_manual_review_artifacts(
             pdf_bytes=pdf_bytes,
             filename=filename,
-            invalid_output=last_invalid_output,
-            errors=prior_errors,
+            invalid_output=result.output,
+            errors=result.errors,
         )
         return PipelineResult(
-            status="needs_manual_review",
-            attempts=self.max_retries,
-            errors=prior_errors,
+            status=result.status,
+            attempts=result.attempts,
+            errors=result.errors,
             manual_review_path=str(manual_path),
             manual_review_metadata_path=str(metadata_path) if metadata_path else None,
         )
@@ -608,6 +784,42 @@ class HybridExtractionPipeline:
 
         return result
 
+    def _align_list_counts_with_table_hints(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Fill missing list items to satisfy count fields extracted from tables.
+
+        This prevents hard-fail when smaller models miss detailed list entries
+        but deterministic table parsing already provides the expected counts.
+        """
+        data = dict(payload or {})
+
+        expected_cnch = self._safe_int(data.get("stt_14_tong_cnch"), 0)
+        cnch_list = data.get("danh_sach_cnch")
+        if not isinstance(cnch_list, list):
+            cnch_list = []
+        if expected_cnch > len(cnch_list):
+            start = len(cnch_list)
+            for idx in range(start + 1, expected_cnch + 1):
+                cnch_list.append(
+                    {
+                        "stt": idx,
+                        "ngay_xay_ra": "",
+                        "thoi_gian": "",
+                        "mo_ta": "",
+                        "dia_diem": "",
+                    }
+                )
+        data["danh_sach_cnch"] = cnch_list
+
+        expected_vehicles = self._safe_int(data.get("tong_xe_hu_hong"), 0)
+        vehicles = data.get("danh_sach_phuong_tien_hu_hong")
+        if not isinstance(vehicles, list):
+            vehicles = []
+        if expected_vehicles > len(vehicles):
+            vehicles.extend([""] * (expected_vehicles - len(vehicles)))
+        data["danh_sach_phuong_tien_hu_hong"] = vehicles
+
+        return data
+
     def _build_prompt(
         self,
         normalized: NormalizedDocument | None,
@@ -640,11 +852,20 @@ class HybridExtractionPipeline:
                 f"{hint_text}{fix_hint}"
             )
 
+        prose_schema_guard = ""
+        if self.extraction_mode == "standard" and hint_data is not None:
+            prose_schema_guard = (
+                "\n\nSTRICT OUTPUT FOR PROSE STAGE:\n"
+                "Only include these optional keys: "
+                "ngay_bao_cao, tu_ngay, den_ngay, tong_quan_su_co, danh_sach_cnch, danh_sach_phuong_tien_hu_hong.\n"
+                "Do NOT output table keys such as STT, Danh muc, Chi tiet, or any unknown top-level key."
+            )
+
         return (
             "Extract incident data to valid JSON with exact schema keys. "
             "Return only JSON. "
             "Date format should follow dd/mm/yyyy where applicable."
-            f"{hint_text}{fix_hint}\n\n"
+            f"{hint_text}{fix_hint}{prose_schema_guard}\n\n"
             f"Document:\n{normalized.merged_prompt_context}"
         )
 
@@ -736,6 +957,20 @@ class HybridExtractionPipeline:
             raise StageError("ingest", "Phát hiện PDF dạng Scan. Từ chối xử lý bằng pdfplumber")
 
     @staticmethod
+    def _compact_error_for_prompt(error: str, max_len: int = 320) -> str:
+        """Shrink verbose stage errors before feeding them back to the model."""
+        text = (error or "").strip()
+        for marker in ("<failed_attempts>", "<completion>", "ChatCompletion(", "Traceback"):
+            pos = text.find(marker)
+            if pos != -1:
+                text = text[:pos].strip()
+                break
+        text = re.sub(r"\s+", " ", text)
+        if len(text) > max_len:
+            return text[:max_len].rstrip() + "..."
+        return text
+
+    @staticmethod
     def _build_retry_feedback(
         validation_errors: list[str],
         output: BaseModel | None,
@@ -782,7 +1017,11 @@ class HybridExtractionPipeline:
                         "Dừng retry tự động; hãy đổi model/API key hoặc chờ reset quota rồi chạy lại."
                     )
                 else:
-                    feedback.append(f"Lỗi hệ thống/validation: {error}. Hãy đọc lại payload và gen lại JSON đúng schema.")
+                    compact_error = HybridExtractionPipeline._compact_error_for_prompt(error)
+                    feedback.append(
+                        f"Lỗi hệ thống/validation: {compact_error}. "
+                        "Hãy đọc lại payload và gen lại JSON đúng schema."
+                    )
             else:
                 feedback.append(f"Validation error: {error}. Hãy sửa và gen lại.")
 

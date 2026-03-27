@@ -5,7 +5,7 @@ import requests
 import sys
 
 body = {
-    'model': 'qwen3:8b',
+    'model': 'qwen2.5:3b',
     'messages': [{'role': 'user', 'content': 'Hello, respond with one word'}],
     'stream': False
 }

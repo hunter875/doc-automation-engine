@@ -68,7 +68,9 @@ class HybridExtractionOutput(BaseModel):
 class LLMVanXuoiOutput(BaseModel):
     """Mini schema for prose-only extraction in Stage 3."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Smaller local models may output table-style keys (e.g. "STT").
+    # Ignore unknown keys so known prose fields can still be recovered.
+    model_config = ConfigDict(extra="ignore")
 
     ngay_bao_cao: str | None = Field(
         default=None,
