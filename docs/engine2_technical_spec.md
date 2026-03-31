@@ -1,8 +1,8 @@
 # ⚙️ Engine 2 — Hệ thống Bóc tách Dữ liệu Tự động (AI Data Extraction)
 
-> **Phiên bản:** 2.1.0  
-> **Cập nhật:** 19/03/2026  
-> **Stack:** FastAPI · SQLAlchemy · Celery · PostgreSQL (JSONB) · Ollama (Instructor + Pydantic) · docxtpl  
+> **Phiên bản:** 3.0.0  
+> **Cập nhật:** 31/03/2026  
+> **Stack:** FastAPI · SQLAlchemy · Celery · PostgreSQL (JSONB) · Ollama (Instructor + Pydantic) · docxtpl · YAML Templates · PipelineMetrics  
 
 ---
 
@@ -16,13 +16,14 @@
 6. [Bước 3: Xào nấu dữ liệu (Aggregation & Map-Reduce)](#6-bước-3-xào-nấu-dữ-liệu-aggregation--map-reduce)
 7. [Bước 4: Bơm khuôn Word (Headless Document Export)](#7-bước-4-bơm-khuôn-word-headless-document-export)
 8. [Database Schema](#8-database-schema)
-9. [API Reference — 23 Endpoints](#9-api-reference--23-endpoints)
+9. [API Reference — 25 Endpoints](#9-api-reference--25-endpoints)
 10. [Cấu hình (Configuration)](#10-cấu-hình-configuration)
 11. [Celery Workers & Background Tasks](#11-celery-workers--background-tasks)
 12. [Word Template Scanner](#12-word-template-scanner)
 13. [Pydantic Schemas (Request/Response)](#13-pydantic-schemas-requestresponse)
-14. [Cấu trúc Source Code](#14-cấu-trúc-source-code)
-15. [Ví dụ End-to-End](#15-ví-dụ-end-to-end)
+14. [Phase 3 — Template-driven · Dynamic Columns · Batch Parallel · Observability](#14-phase-3--template-driven--dynamic-columns--batch-parallel--observability)
+15. [Cấu trúc Source Code](#15-cấu-trúc-source-code)
+16. [Ví dụ End-to-End](#16-ví-dụ-end-to-end)
 
 ---
 
@@ -44,13 +45,17 @@ Engine 2 là hệ thống **bóc tách dữ liệu có cấu trúc** từ tài l
 |---|---|---|
 | 1 | **Hybrid extraction mặc định** | Chạy `HybridExtractionPipeline` (pdfplumber + normalize + Ollama + rule validation) từ bytes in-memory |
 | 2 | **Template-driven** | Định nghĩa schema JSON → AI bóc tách đúng format |
-| 3 | **Validation Layer** | Ép kiểu, chuẩn hóa ngày, phát hiện lỗi TRƯỚC khi lưu DB |
-| 4 | **Human-in-the-loop** | Review (approve/reject/edit) trước khi aggregate |
-| 5 | **Aggregation** | SUM, AVG, COUNT, CONCAT → gom N báo cáo thành 1 |
-| 6 | **Word Export** | Nhồi dữ liệu vào template Word bằng Jinja2 (docxtpl) |
-| 7 | **Word Scanner** | Quét file Word mẫu → auto-generate schema |
-| 8 | **Batch processing** | Upload N file cùng lúc (max 20) |
-| 9 | **Multi-tenant** | Cách ly hoàn toàn theo `tenant_id` |
+| 3 | **YAML Template System** | Tất cả regex/pattern/threshold được gửi ngoài vào file YAML (`app/templates/pccc.yaml`), không còn hardcode |
+| 4 | **Dynamic Column Detection** | Tự động phát hiện cột STT/Nội dung/Kết quả trong bảng thống kê thay vì giả định cố định |
+| 5 | **Validation Layer** | Ép kiểu, chuẩn hóa ngày, phát hiện lỗi TRƯỚC khi lưu DB |
+| 6 | **Human-in-the-loop** | Review (approve/reject/edit) trước khi aggregate |
+| 7 | **Aggregation** | SUM, AVG, COUNT, CONCAT → gom N báo cáo thành 1 |
+| 8 | **Word Export** | Nhồi dữ liệu vào template Word bằng Jinja2 (docxtpl) |
+| 9 | **Word Scanner** | Quét file Word mẫu → auto-generate schema |
+| 10 | **Batch processing (Celery)** | Upload N file cùng lúc (max 20) → N Celery tasks phân tán |
+| 11 | **Batch parallel (in-process)** | `run_batch()` chạy block pipeline song song với `ThreadPoolExecutor` + backpressure |
+| 12 | **Observability Metrics** | `PipelineMetrics` (per-run counters/timers) + `GlobalMetrics` (thread-safe aggregator) + API endpoint |
+| 13 | **Multi-tenant** | Cách ly hoàn toàn theo `tenant_id` |
 
 ---
 
@@ -189,15 +194,24 @@ WHERE extracted_data @> '{"so_vu": 5}'::jsonb;
 **Files chính:**
 - `app/services/extraction_orchestrator.py`
 - `app/services/hybrid_extraction_pipeline.py`
+- `app/services/block_extraction_pipeline.py` *(block mode)*
+- `app/services/block_business_workflow.py` *(block mode orchestrator)*
 - `app/services/extractor_strategies.py`
 - `app/schemas/hybrid_extraction_schema.py`
 
 ### 4.1 Kiến trúc chạy hiện tại
 
+**Hybrid mode (standard):**
 - Router jobs tạo `ExtractionJob` và đẩy Celery task `extract_document_task`
 - Worker gọi `ExtractionOrchestrator.run(job_id)`
 - Orchestrator tải file từ S3, chạy `pipeline.run_from_bytes(file_bytes, filename)`
 - Kết quả được `JobManager.persist_pipeline_result()` lưu về DB
+
+**Block mode:**
+- `BlockBusinessWorkflow` nhận PDF bytes → `BlockExtractionPipeline.run_from_bytes()`
+- Pipeline 6 stage: layout reconstruction → block detection → LLM extraction → schema enforcement → validation → business rules
+- Tất cả pattern/regex/threshold được load từ **YAML template** (xem [Section 14](#14-phase-3--template-driven--dynamic-columns--batch-parallel--observability))
+- Output bao gồm `template` (ID) và `metrics` (counters + timers) trong payload cuối
 
 ### 4.2 Hybrid pipeline 4 chặng
 
@@ -629,7 +643,7 @@ CREATE TABLE aggregation_reports (
 
 ---
 
-## 9. API Reference — 23 Endpoints
+## 9. API Reference — 25 Endpoints
 
 **Router prefix:** `/api/v1/extraction`  
 **Tags:** `Extraction Templates`, `Extraction Jobs`, `Extraction Reports`
@@ -666,11 +680,13 @@ CREATE TABLE aggregation_reports (
 | Method | Path | Auth | Status | Description |
 |---|---|---|---|---|
 | `POST` | `/jobs` | `require_admin` | 202 | Upload 1 PDF + tạo job → Celery |
-| `POST` | `/jobs/batch` | `require_admin` | 202 | Upload N PDFs (max 20) → N jobs |
+| `POST` | `/jobs/batch` | `require_admin` | 202 | Upload N PDFs (max 20) → N Celery jobs phân tán |
+| `POST` | `/jobs/batch-block` | `require_admin` | 200 | Batch block-mode in-process parallel (ThreadPoolExecutor) |
 | `POST` | `/jobs/from-document` | `require_admin` | 202 | Tạo job từ document đã upload |
 | `GET` | `/jobs` | `require_viewer` | 200 | List jobs (filter: status, template_id, batch_id) |
 | `GET` | `/jobs/{job_id}` | `require_viewer` | 200 | Polling endpoint |
 | `GET` | `/jobs/batch/{batch_id}/status` | `require_viewer` | 200 | Batch progress |
+| `GET` | `/metrics` | `require_viewer` | 200 | Global pipeline extraction metrics (counters + timers) |
 | `POST` | `/jobs/{job_id}/retry` | `require_admin` | 200 | Retry failed/rejected |
 | `DELETE` | `/jobs/{job_id}` | `require_admin` | 204 | Xóa job đã hoàn tất |
 
@@ -849,15 +865,249 @@ Khi placeholder nằm TRONG bảng Word:
 
 ---
 
-## 14. Cấu trúc Source Code
+## 14. Phase 3 — Template-driven · Dynamic Columns · Batch Parallel · Observability
+
+### 14.1 YAML Template System
+
+> **Nguyên tắc: Zero hardcode — mọi regex, keyword, threshold đều nằm trong file YAML.**
+
+**Files:**
+- `app/templates/pccc.yaml` — template PCCC (55+ patterns)
+- `app/business/template_loader.py` — `DocumentTemplate` wrapper + registry
+
+#### Kiến trúc
+
+```
+app/templates/
+└── pccc.yaml           ← file YAML chứa toàn bộ pattern nghiệp vụ
+
+app/business/
+└── template_loader.py  ← DocumentTemplate (typed wrapper) + load_template() + lru_cache
+```
+
+#### DocumentTemplate class
+
+`DocumentTemplate` bọc dict YAML thành typed properties:
+
+```python
+tpl = load_template("pccc")
+
+tpl.template_id          # "pccc"
+tpl.narrative_start_re   # re.Pattern — compiled regex
+tpl.date_long_form_re    # re.Pattern
+tpl.date_period_markers  # list[str]
+tpl.unit_patterns        # list[str]
+tpl.incident_row_patterns_spaced   # list[re.Pattern]
+tpl.incident_row_patterns_compact  # list[re.Pattern]
+tpl.year_range           # (int, int)
+tpl.max_ket_qua          # int
+tpl.non_negative_fields  # list[str]
+tpl.extraction_prompt("header")    # str — system prompt cho block
+# ... 40+ properties tổng cộng
+```
+
+#### YAML Structure (pccc.yaml)
+
+```yaml
+id: pccc
+name: "Báo cáo PCCC ngày"
+version: 1
+
+block_detection:
+  narrative_start_pattern: "..."
+  table_anchor_pattern: "..."
+
+prompts:
+  header: "Trích xuất header..."
+  phan_nghiep_vu: "..."
+
+header:
+  date:
+    long_form: "..."
+    short_form: "..."
+    period_markers: [...]
+  report_number:
+    primary: "..."
+  unit_patterns: [...]
+
+narrative:
+  counts:
+    tong_so_vu_chay: { pattern: "...", group: 1 }
+    # ...
+  detail_keywords: [...]
+
+table:
+  header_skip_keywords: [...]
+  column_detection: { stt: [...], noi_dung: [...], ket_qua: [...] }
+  incident_row_patterns: { spaced: [...], compact: [...] }
+
+validation:
+  year_range: [2020, 2030]
+  max_ket_qua: 10000
+  non_negative_fields: [...]
+```
+
+#### Consumers
+
+Tất cả module sau đều nhận `tpl: DocumentTemplate | None`:
+
+| Module | Hàm | Trước | Sau |
+|---|---|---|---|
+| `block_extraction_pipeline.py` | `__init__()` | Hardcode 55+ regex | `self.tpl.*` |
+| `extractors.py` | `extract_metadata_from_header()` | Hardcode regex | `tpl.report_number_primary_re` |
+| `validators.py` | `validate_business()` | Hardcode constants | `tpl.year_range`, `tpl.max_ket_qua` |
+| `engine.py` | `run_business_rules()` | Không có tpl | Truyền `tpl=` xuống tất cả extractors/validators |
+| `block_business_workflow.py` | `__init__()` | Không có template | `self.tpl` → pipeline + payload |
+
+### 14.2 Dynamic Column Detection
+
+Thay vì giả định cột cố định `[0]=STT, [1]=Nội dung, [2]=Kết quả`, pipeline parser giờ **quét header row** để xác định column index:
+
+```python
+# Trong _parse_bang_thong_ke_from_tables()
+for idx, cell in enumerate(header_row):
+    upper = cell.upper()
+    if any(kw in upper for kw in ["STT", "SỐ TT"]):
+        col_stt = idx
+    elif any(kw in upper for kw in ["KẾT QUẢ", "SỐ LIỆU", "THỰC HIỆN"]):
+        col_kq = idx
+    elif any(kw in upper for kw in ["NỘI DUNG", "CHỈ TIÊU"]):
+        col_nd = idx
+```
+
+Keywords được load từ `tpl.column_detection_keywords("stt" | "noi_dung" | "ket_qua")`.
+
+Khi detect thành công → `metrics.inc("dynamic_col_detected")`.
+
+### 14.3 Batch Parallel Pipeline
+
+**File:** `app/services/batch_extraction.py`
+
+Chạy block pipeline song song trên N PDF files **in-process** (không qua Celery):
+
+```python
+from app.services.batch_extraction import BatchItem, run_batch
+
+items = [BatchItem("file1.pdf", bytes1), BatchItem("file2.pdf", bytes2), ...]
+result = run_batch(items, max_workers=2)
+
+result.total        # 5
+result.succeeded    # 4
+result.failed       # 1
+result.results      # list[dict] — payload mỗi file
+result.errors       # list[{"filename": ..., "error": ...}]
+result.metrics      # batch-level counters/timers
+```
+
+#### Tính năng
+
+| Tính năng | Mô tả |
+|---|---|
+| **ThreadPoolExecutor** | Song song N files, mặc định `EXTRACTION_BATCH_MAX_FILES // 2` (cap 4) |
+| **Backpressure** | Items vượt `EXTRACTION_BATCH_MAX_FILES` bị reject ngay với error `"backpressure: queue full"` |
+| **Per-item metrics** | Mỗi item có `batch_item` timer |
+| **Batch counters** | `batch_total`, `batch_succeeded`, `batch_failed` |
+| **Directory mode** | `run_batch_from_directory("/path/to/pdfs/")` — quét tất cả `*.pdf` |
+
+#### API Endpoint
+
+```bash
+# POST /api/v1/extraction/jobs/batch-block
+curl -X POST "http://localhost:8000/api/v1/extraction/jobs/batch-block" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-ID: $TENANT_ID" \
+  -F "files=@file1.pdf" \
+  -F "files=@file2.pdf" \
+  -F "max_workers=2"
+
+# Response 200:
+{
+  "total": 2, "succeeded": 2, "failed": 0,
+  "results": [{...}, {...}],
+  "errors": [],
+  "metrics": {"counters": {"batch_total": 2, ...}, "timers_ms": {...}}
+}
+```
+
+### 14.4 Observability Metrics
+
+**File:** `app/core/metrics.py`
+
+#### PipelineMetrics (per-run)
+
+Mỗi lần chạy pipeline tạo 1 instance `PipelineMetrics`:
+
+```python
+metrics = PipelineMetrics()
+
+metrics.inc("llm_calls")                    # counter += 1
+metrics.inc("llm_calls", 3)                 # counter += 3
+
+with metrics.timer("stage1_layout"):        # context manager — tự tính elapsed_ms
+    do_layout_stuff()
+
+metrics.to_dict()
+# {"counters": {"llm_calls": 4, ...}, "timers_ms": {"stage1_layout": 1234.5, ...}}
+```
+
+#### Counters được track
+
+| Counter | Khi nào tăng |
+|---|---|
+| `llm_calls` | Mỗi lần gọi LLM (extract block) |
+| `llm_extract_fallback` | LLM trả rỗng → dùng fallback |
+| `schema_enforcer_reask` | Schema enforcer phải hỏi lại LLM |
+| `narrative_fallback` | Regex fallback cho phần nghiệp vụ |
+| `dynamic_col_detected` | Dynamic column detection thành công |
+| `pipeline_success` | Pipeline kết thúc thành công |
+| `pipeline_failure` | Pipeline kết thúc thất bại |
+
+#### Timers được track
+
+| Timer | Đo cái gì |
+|---|---|
+| `stage1_layout` | PDF → reconstructed text + tables |
+| `stage2_detect` | Block detection |
+| `stage3_extract` | LLM extraction + schema enforcement |
+| `stage3_header_llm` | Header LLM call riêng |
+| `stage6_business` | Business rules engine |
+
+#### GlobalMetrics (thread-safe aggregator)
+
+```python
+from app.core.metrics import global_metrics
+
+# Mỗi pipeline run tự merge vào global:
+global_metrics.merge(per_run_metrics)
+
+# API endpoint trả về tổng hợp:
+# GET /api/v1/extraction/metrics
+global_metrics.to_dict()
+# {"counters": {"llm_calls": 150, "pipeline_success": 42, ...}, "timers_ms": {...}}
+
+global_metrics.reset()  # Reset khi cần
+```
+
+---
+
+## 15. Cấu trúc Source Code
 
 ```
 app/
 ├── api/v1/
 │   ├── extraction_templates.py # Template endpoints + word scan
-│   ├── extraction_jobs.py      # Job lifecycle + review
+│   ├── extraction_jobs.py      # Job lifecycle + review + batch-block + metrics
 │   ├── extraction_reports.py   # Aggregate + export endpoints
 │   └── extraction.py           # Compatibility router (include split routers)
+├── business/                    # ★ Business logic (tách khỏi services)
+│   ├── engine.py               # Orchestrates extractors → validators → normalizers
+│   ├── extractors.py           # Regex-based deterministic extraction (accepts tpl)
+│   ├── validators.py           # Business data validation (template-driven thresholds)
+│   ├── normalizers.py          # Vietnamese word spacing + date/field normalization
+│   └── template_loader.py      # DocumentTemplate wrapper + YAML registry + lru_cache
+├── core/
+│   ├── config.py               # Settings (Pydantic)
+│   └── metrics.py              # ★ PipelineMetrics + GlobalMetrics (thread-safe)
 ├── models/
 │   └── extraction.py           # ExtractionTemplate/Job/AggregationReport
 ├── schemas/
@@ -866,6 +1116,9 @@ app/
 ├── services/
 │   ├── extraction_orchestrator.py   # Worker orchestration (S3 + pipeline + persistence)
 │   ├── hybrid_extraction_pipeline.py # Ingest/normalize/infer/retry
+│   ├── block_extraction_pipeline.py # ★ 6-stage block pipeline (template-driven)
+│   ├── block_business_workflow.py   # ★ Block mode orchestrator + payload builder
+│   ├── batch_extraction.py          # ★ Batch parallel pipeline (ThreadPoolExecutor)
 │   ├── extractor_strategies.py      # LLM backend strategies (Ollama/OpenAI/Gemini)
 │   ├── template_manager.py          # Template domain service
 │   ├── job_manager.py               # Job lifecycle service
@@ -874,15 +1127,19 @@ app/
 │   ├── aggregation_service.py       # Aggregation + export context DTO
 │   ├── word_scanner.py              # Word template scanner
 │   └── word_export.py               # Secure docxtpl renderer
+├── templates/                       # ★ YAML extraction templates
+│   └── pccc.yaml                    # PCCC template (55+ externalized patterns)
 └── worker/
-  └── extraction_tasks.py          # Celery tasks (hybrid execution + cleanup)
+    └── extraction_tasks.py          # Celery tasks (hybrid execution + cleanup)
 
-Tổng quan: kiến trúc đã tách router/service theo domain để giảm coupling.
+★ = Phase 3 mới thêm hoặc refactor lớn
 ```
+
+Tổng quan: kiến trúc đã tách router/service/business theo domain, template-driven, có metrics.
 
 ---
 
-## 15. Ví dụ End-to-End
+## 16. Ví dụ End-to-End
 
 ### Scenario: 7 Báo cáo PCCC Ngày → 1 Báo cáo Tuần Word
 
@@ -987,5 +1244,5 @@ curl -X POST "http://localhost:8000/api/v1/extraction/aggregate/$REPORT_ID/expor
 
 ---
 
-> **Tài liệu này được cập nhật lần cuối: 19/03/2026**  
-> **Tổng source code Engine 2: kiến trúc split-router/service · 23 endpoints · 3 bảng DB · 7 JSONB columns · 3 GIN indexes cốt lõi (+1 optional cho reports)**
+> **Tài liệu này được cập nhật lần cuối: 31/03/2026**  
+> **Tổng source code Engine 2: kiến trúc split-router/service/business · 25 endpoints · 3 bảng DB · 7 JSONB columns · 3 GIN indexes cốt lõi (+1 optional cho reports) · YAML template system · PipelineMetrics + GlobalMetrics · Batch parallel pipeline**
