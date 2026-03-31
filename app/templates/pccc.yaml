@@ -1,0 +1,131 @@
+# ─── Document Template: PCCC Weekly/Monthly Report ────────────────────
+# This file defines the extraction schema for Vietnamese fire-prevention
+# (PCCC) statistical reports.  The block pipeline reads this at runtime
+# instead of relying on hardcoded regex / keywords.
+# ──────────────────────────────────────────────────────────────────────
+
+template_id: pccc
+template_name: "Báo cáo PCCC định kỳ"
+version: "1.0"
+language: vi
+
+# ── Block detection anchors ───────────────────────────────────────────
+block_detection:
+  narrative_start_pattern: "^I\\.\\s*"
+  narrative_start_fallback_lines: 30
+  table_anchor_pattern: "BIEU\\s*MAU\\s*THONG\\s*KE"
+  section_split_pattern: "^[IVX]+\\."
+
+# ── LLM system prompts ───────────────────────────────────────────────
+prompts:
+  extraction: >
+    Mày là chuyên gia bóc tách dữ liệu PCCC.
+    Trích xuất chính xác theo schema JSON cho phần {block_name}.
+    Tuyệt đối không suy đoán. Nếu thiếu dữ liệu thì trả giá trị mặc định theo schema.
+  enforcer: "Find ONLY {field_name}. Return JSON with one key: value."
+
+# ── Header extraction ─────────────────────────────────────────────────
+header:
+  max_lines: 30
+  max_context_chars: 3000
+  required_fields:
+    - so_bao_cao
+    - ngay_bao_cao
+    - thoi_gian_tu_den
+    - don_vi_bao_cao
+
+  report_number:
+    primary_pattern: "Số\\s*[:\\.]+\\s*(\\d[\\d\\s]*/\\s*BC[^\\n]+)"
+    fallback_pattern: "Số\\s*[:\\.]+\\s*(.+?)(?:\\n|\\s{2,})"
+    format_regex: "^\\d+/BC"
+
+  date:
+    long_form: "ngày\\s+(\\d{1,2})\\s+tháng\\s+(\\d{1,2})\\s+năm\\s+(\\d{4})"
+    short_form: "ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+    period_markers:
+      - "Từ ngày"
+      - "từ ngày"
+      - "đến ngày"
+      - "(Từ "
+      - "(từ "
+    skip_line_pattern: "\\bTừ\\b|\\bđến\\b"
+    output_format: "dd/mm/yyyy"
+
+  unit:
+    patterns:
+      - "PHÒNG[^\\n]*"
+      - "ĐỘI[^\\n]*"
+
+# ── Narrative extraction ──────────────────────────────────────────────
+narrative:
+  summary_section_keyword: "TÌNH HÌNH"
+  summary_max_lines: 10
+
+  counts:
+    tong_so_vu_chay:
+      - "TONG\\s*SO\\s*VU\\s*CHAY\\D*(\\d+)"
+      - "SO\\s*VU\\s*CHAY\\D*(\\d+)"
+    tong_so_vu_no:
+      - "TONG\\s*SO\\s*VU\\s*NO\\D*(\\d+)"
+      - "SO\\s*VU\\s*NO\\D*(\\d+)"
+    tong_so_vu_cnch:
+      - "TONG\\s*SO\\s*VU\\s*TAI\\s*NAN\\s*SU\\s*CO\\D*(\\d+)"
+      - "TONG\\s*SO\\s*VU\\s*CNCH\\D*(\\d+)"
+      - "SO\\s*VU\\s*CNCH\\D*(\\d+)"
+    quan_so_truc:
+      - "QUAN\\s*SO\\s*TRUC\\D*(\\d+)"
+      - "SO\\s*QUAN\\s*SO\\s*TRUC\\D*(\\d+)"
+
+  detail_keywords:
+    - "CNCH"
+    - "TAI NAN"
+    - "SU CO"
+  detail_max_lines: 12
+
+  incident_time_pattern: "lúc\\s+(\\d{1,2})\\s*giờ\\s+(\\d{2})\\s*phút\\s+ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+  incident_location_pattern: "tại(?:\\s+địa\\s+chỉ\\s*[:\\-]+\\s*)?[:\\-]?\\s*(.+?)(?:\\.|Thông tin|$)"
+  incident_description_pattern: "(?:người dân|nạn nhân)[^\\n]{0,200}"
+  incident_context_chars: 500
+  incident_location_max_chars: 200
+
+# ── Statistical table ─────────────────────────────────────────────────
+table:
+  header_skip_keywords:
+    - "DANH MUC"
+    - "CHI TIEU"
+  law_citation_tail: "[-/]CP\\s*$"
+
+  # Patterns that identify CNCH/incident total rows in the stat table
+  incident_row_patterns:
+    spaced:
+      - "TONG SO VU TAI NAN"
+      - "TONG SO VU SU CO"
+      - "SO VU TAI NAN"
+      - "TONG SO VU CNCH"
+    compact:
+      - "TONGSOVUTAINAN"
+      - "TONGSOVUSUCO"
+      - "SOVUTAINAN"
+      - "TONGSOVUCNCH"
+
+  # For structured incident tables (Địa điểm / Nguyên nhân style)
+  structured_incident_headers:
+    - "Địa điểm"
+    - "Nguyên nhân"
+
+  # CNCH fallback patterns used in build_final_payload
+  cnch_fallback_patterns:
+    - "TONGSOVUTAINAN"
+    - "TONGSOVUSUCO"
+    - "TONGSOVUCNCH"
+
+# ── Validation rules ──────────────────────────────────────────────────
+validation:
+  year_range: [2020, 2030]
+  max_ket_qua: 10000
+  cross_field_tolerance: 3
+  non_negative_fields:
+    - tong_so_vu_chay
+    - tong_so_vu_no
+    - tong_so_vu_cnch
+    - quan_so_truc

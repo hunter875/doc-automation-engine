@@ -249,6 +249,57 @@ def retry_job(
 
 
 @router.post(
+    "/jobs/batch-block",
+    status_code=status.HTTP_200_OK,
+    summary="Batch block-mode extraction (in-process parallel)",
+)
+async def batch_block_extraction(
+    files: list[UploadFile] = File(...),
+    max_workers: Optional[int] = Form(None),
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_admin),
+):
+    """Run block-mode extraction on multiple PDFs in parallel (no Celery)."""
+    from app.services.batch_extraction import BatchItem, run_batch
+
+    max_files = settings.EXTRACTION_BATCH_MAX_FILES
+    if len(files) > max_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Max {max_files} files per batch",
+        )
+
+    items = []
+    for f in files:
+        content = await f.read()
+        items.append(BatchItem(filename=f.filename or "unknown.pdf", pdf_bytes=content))
+
+    result = run_batch(items, max_workers=max_workers)
+    return {
+        "total": result.total,
+        "succeeded": result.succeeded,
+        "failed": result.failed,
+        "results": result.results,
+        "errors": result.errors,
+        "metrics": result.metrics,
+    }
+
+
+@router.get(
+    "/metrics",
+    status_code=status.HTTP_200_OK,
+    summary="Pipeline extraction metrics",
+)
+def get_extraction_metrics(
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_viewer),
+):
+    """Return global pipeline extraction metrics."""
+    from app.core.metrics import global_metrics
+    return global_metrics.to_dict()
+
+
+@router.post(
     "/review/{job_id}/approve",
     response_model=JobResponse,
     summary="Approve extraction result",

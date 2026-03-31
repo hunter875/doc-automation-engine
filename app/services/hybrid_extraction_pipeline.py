@@ -97,6 +97,8 @@ class PipelineResult:
     errors: list[str] = field(default_factory=list)
     manual_review_path: str | None = None
     manual_review_metadata_path: str | None = None
+    business_data: dict | None = None
+    metrics: dict | None = None
 
 
 class StageError(Exception):

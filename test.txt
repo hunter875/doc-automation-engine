@@ -1,1 +1,0 @@
-docker compose run --rm -p 8501:8501 api streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
