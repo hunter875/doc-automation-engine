@@ -1,11 +1,11 @@
-# 🚀 Enterprise Multi-Tenant RAG System
+# 🤖 doc-automation-engine
 
-> **Production-Ready SaaS Platform** cho phép nhiều doanh nghiệp (Tenant) quản lý và truy vấn tài liệu nội bộ bằng AI một cách an toàn, độc lập và tối ưu chi phí.
+> **Production-Ready Document Automation Platform** — hệ thống tự động hoá tài liệu doanh nghiệp kết hợp **Engine 1 (RAG — hỏi đáp thông minh)** và **Engine 2 (AI Data Extraction — bóc tách dữ liệu có cấu trúc)**, multi-tenant, bảo mật tuyệt đối.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-blue.svg)](https://www.postgresql.org/)
-[![OpenSearch](https://img.shields.io/badge/OpenSearch-2.x-yellow.svg)](https://opensearch.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+%20pgvector-blue.svg)](https://www.postgresql.org/)
+[![Celery](https://img.shields.io/badge/Celery-5.x-green.svg)](https://docs.celeryq.dev/)
 [![License](https://img.shields.io/badge/License-MIT-red.svg)](LICENSE)
 
 ---
@@ -16,34 +16,35 @@
 - [Kiến Trúc Hệ Thống](#-kiến-trúc-hệ-thống)
 - [Tech Stack](#-tech-stack)
 - [Cài Đặt & Chạy](#-cài-đặt--chạy)
-- [Cấu Trúc Project](#-cấu-trúc-project)
-- [API Reference](#-api-reference)
+- [Quickstart](#-quickstart)
+- [Cấu Trúc Source Code](#-cấu-trúc-source-code)
+- [API Reference — Engine 1 (RAG)](#-api-reference--engine-1-rag)
+- [API Reference — Engine 2 (Data Extraction)](#-api-reference--engine-2-data-extraction)
+- [Engine 2: Pipeline 4 Bước](#-engine-2-pipeline-4-bước)
 - [Database Schema](#-database-schema)
 - [Bảo Mật](#-bảo-mật)
-- [Monitoring & Observability](#-monitoring--observability)
 - [Deployment](#-deployment)
+- [Testing](#-testing)
 - [Contributing](#-contributing)
 
 ---
 
 ## 🎯 Tổng Quan
 
-**RAG + Structured Data Extraction project** - Hệ thống tự động hoá tài liệu doanh nghiệp kết hợp RAG (Retrieval-Augmented Generation) và trích xuất dữ liệu có cấu trúc.
+**`hunter875/doc-automation-engine`** là nền tảng xử lý tài liệu toàn diện cho doanh nghiệp, gồm 2 engine độc lập nhưng dùng chung hạ tầng:
 
-### Vấn Đề Giải Quyết
-
-Doanh nghiệp cần một giải pháp để:
-- **Tìm kiếm thông minh** trong khối lượng tài liệu nội bộ khổng lồ
-- **Trả lời câu hỏi** dựa trên context từ tài liệu riêng của công ty
-- **Bảo mật tuyệt đối** - dữ liệu không bị rò rỉ giữa các khách hàng
+| Engine | Mô tả | Use-case |
+|--------|-------|----------|
+| ⚡ **Engine 1 — RAG** | Upload tài liệu → Embed → Hybrid Search (pgvector + BM25) → LLM trả lời | Hỏi đáp tự do trên khối tài liệu nội bộ |
+| 🔬 **Engine 2 — Data Extraction** | Upload PDF/Word → AI bóc tách JSON theo schema → Validate → Aggregate → Export Word | Tổng hợp báo cáo định kỳ tự động (PCCC, tài chính, vận hành...) |
 
 ### 3 Trụ Cột Cốt Lõi
 
 | Trụ Cột | Mô Tả |
 |---------|-------|
-| 🔒 **Absolute Data Isolation** | Dữ liệu và Vector của Tenant A không thể bị rò rỉ sang Tenant B ở mọi cấp độ (API, DB, Search) |
-| ⚡ **Resiliency & Scale** | Xử lý file nặng không làm treo hệ thống (Async Worker). Có cơ chế chịu lỗi khi Third-party API sập |
-| 💰 **Security & FinOps** | Kiểm soát chi phí (Token Tracking) và bảo mật hạ tầng chuẩn Cloud (VPC, IAM) |
+| 🔒 **Multi-Tenant Isolation** | Dữ liệu của Tenant A không thể rò rỉ sang Tenant B ở mọi cấp độ (API, DB, Vector) |
+| ⚡ **Async & Resilient** | Xử lý file nặng không làm treo API (Celery worker). Retry tự động, cleanup stuck jobs |
+| 🧩 **Template-Driven** | Mọi pattern/regex/threshold đều nằm trong YAML template — zero hardcode |
 
 ---
 
@@ -59,125 +60,108 @@ Doanh nghiệp cần một giải pháp để:
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      NGINX (Reverse Proxy + SSL)                         │
-│                         Let's Encrypt HTTPS                              │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                     ┌───────────────┼───────────────┐
                     ▼               ▼               ▼
-┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐
-│  FastAPI    │ │  FastAPI    │ │    Celery Worker    │
-│  Instance 1 │ │  Instance 2 │ │  (Background Jobs)  │
-└─────────────┘ └─────────────┘ └─────────────────────┘
-        │               │                   │
-        └───────────────┼───────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
+        ┌─────────────┐ ┌─────────────┐ ┌──────────────────────┐
+        │  FastAPI    │ │  FastAPI    │ │  Celery Workers      │
+        │  Instance 1 │ │  Instance 2 │ │  (document_processing│
+        └─────────────┘ └─────────────┘ │   embeddings         │
+                │               │       │   extraction)        │
+                └───────────────┘       └──────────────────────┘
+                        │                         │
+        ┌───────────────┼─────────────────────────┘
+        │               │
+        ▼               ▼
 ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│ PostgreSQL  │ │  OpenSearch │ │    Redis    │
-│  (Metadata) │ │  (Vectors)  │ │(Queue/Cache)│
-└─────────────┘ └─────────────┘ └─────────────┘
-                        │
-                        ▼
-                ┌─────────────┐
-                │  AWS S3 /   │
-                │   MinIO     │
-                │ (Raw Files) │
-                └─────────────┘
-                        │
-                        ▼
-                ┌─────────────┐
-                │  OpenAI API │
-                │ (Embedding  │
-                │  & Chat)    │
-                └─────────────┘
+│ PostgreSQL  │ │    Redis    │ │   MinIO/S3  │
+│ + pgvector  │ │(Queue/Cache)│ │ (Raw Files) │
+│ (Metadata + │ └─────────────┘ └─────────────┘
+│  Vectors)   │
+└─────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│  Gemini API  /  Ollama (local)  │
+│  (Embedding & Extraction)       │
+└─────────────────────────────────┘
 ```
 
-### RAG Pipeline Flow
+### Engine 1 — RAG Pipeline
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          INGESTION PIPELINE                               │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────┐    ┌─────────┐    ┌──────────┐    ┌───────────┐    ┌─────┐ │
-│  │ Upload  │───▶│ Validate│───▶│  Extract │───▶│  Chunking │───▶│Queue│ │
-│  │  File   │    │  File   │    │   Text   │    │  (Chunks) │    │     │ │
-│  └─────────┘    └─────────┘    └──────────┘    └───────────┘    └─────┘ │
-│                                                                     │    │
-│  ┌─────────────────────────────────────────────────────────────────┘    │
-│  │ Celery Worker (Background)                                           │
-│  ▼                                                                       │
-│  ┌──────────┐    ┌───────────┐    ┌───────────────┐                     │
-│  │ Embedding│───▶│  Index to │───▶│ Update Status │                     │
-│  │ (OpenAI) │    │ OpenSearch│    │   in DB       │                     │
-│  └──────────┘    └───────────┘    └───────────────┘                     │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+INGESTION:
+  Upload File → Validate → Extract Text → Chunking → Celery Queue
+       ↓
+  Worker: Embed (Gemini) → Store in pgvector → Update status in DB
 
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           QUERY PIPELINE                                  │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────┐    ┌──────────┐    ┌───────────┐    ┌─────────┐    ┌─────┐ │
-│  │  User   │───▶│ Embed    │───▶│  Hybrid   │───▶│ Rerank  │───▶│ LLM │ │
-│  │  Query  │    │  Query   │    │  Search   │    │ Results │    │ Gen │ │
-│  └─────────┘    └──────────┘    └───────────┘    └─────────┘    └─────┘ │
-│                                       │                              │   │
-│                                       ▼                              ▼   │
-│                               ┌─────────────┐                ┌──────────┐│
-│                               │  k-NN +     │                │ Response ││
-│                               │  BM25       │                │ + Sources││
-│                               └─────────────┘                └──────────┘│
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+QUERY:
+  User Question → Embed Query → Hybrid Search (pgvector k-NN + BM25)
+       → Rerank Results → LLM Generate → Response + Sources
+```
+
+### Engine 2 — Data Extraction Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        ENGINE 2 PIPELINE                                     │
+│                                                                              │
+│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────────┐  │
+│  │ BƯỚC 1   │    │   BƯỚC 2     │    │   BƯỚC 3     │    │    BƯỚC 4     │  │
+│  │ AI       │    │  Validation  │    │ Aggregation  │    │  Word Export  │  │
+│  │ Extract  │───→│  Layer       │───→│ Map-Reduce   │───→│  (docxtpl)   │  │
+│  │          │    │  (Pydantic)  │    │  (Pandas)    │    │              │  │
+│  └──────────┘    └──────────────┘    └──────────────┘    └───────────────┘  │
+│       │                │                    │                    │            │
+│   Raw JSON         Clean JSON          Aggregated           .docx file      │
+│   (có lỗi)        (đã ép kiểu)          JSON              (hoàn chỉnh)     │
+│                                                                              │
+│                    ┌──────────┐                                              │
+│                    │  HUMAN   │ ← Approve / Reject / Edit                   │
+│                    │  REVIEW  │                                              │
+│                    └──────────┘                                              │
+│                    (giữa Bước 2 & 3)                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 🛠 Tech Stack
 
-### Core Technologies
-
-| Component | Technology | Purpose |
+| Component | Technology | Ghi chú |
 |-----------|------------|---------|
-| **API Framework** | FastAPI | Async I/O, Auto OpenAPI docs, Type validation |
-| **Relational DB** | PostgreSQL 15+ | Metadata, Users, RBAC, Usage Logs |
-| **Vector DB** | OpenSearch 2.x | k-NN Search, BM25 Hybrid Search |
-| **Object Storage** | AWS S3 / MinIO | Raw document storage |
-| **Message Broker** | Redis + Celery | Background jobs, Caching |
-| **AI/LLM** | OpenAI API | `text-embedding-3-small`, `gpt-4o-mini` |
+| **API Framework** | FastAPI | Async I/O, Auto OpenAPI docs |
+| **Relational DB** | PostgreSQL 15+ | Metadata, RBAC, JSONB, GIN index |
+| **Vector Store** | pgvector (ext.) | k-NN search tích hợp ngay trong PostgreSQL |
+| **Object Storage** | MinIO / AWS S3 | Raw document files |
+| **Message Broker** | Redis + Celery | 4 queues: default, document_processing, embeddings, extraction |
+| **LLM / Embedding** | Gemini API + Ollama | Gemini cho RAG; Ollama (qwen2.5/qwen3) cho extraction |
+| **Extraction Schema** | Instructor + Pydantic | Ép LLM output đúng JSON schema |
+| **Document Parse** | pdfplumber | PDF text + table extraction |
+| **Word Export** | docxtpl (Jinja2) | Render .docx template |
+| **Scheduler** | Celery Beat | Periodic cleanup stuck jobs |
 
-### Python Dependencies
+### Python Dependencies chính
 
 ```
-# Web Framework & Server
-fastapi              # High-performance async web framework
+fastapi              # Web framework
 uvicorn[standard]    # ASGI server
-python-multipart     # File upload handling
-
-# Database
 sqlalchemy           # ORM
 psycopg2-binary      # PostgreSQL driver
-alembic              # Database migrations
-
-# Security
-passlib[bcrypt]      # Password hashing
-python-jose[cryptography]  # JWT tokens
-
-# Validation
-pydantic             # Data validation
+pgvector             # pgvector Python client
+alembic              # DB migrations
 pydantic-settings    # Settings management
-
-# RAG Stack
-opensearch-py        # OpenSearch client
-minio                # S3-compatible storage
-openai               # OpenAI API client
-tiktoken             # Token counting
-
-# Background Processing
-redis                # Caching & message broker
-celery               # Distributed task queue
+redis                # Redis client
+celery               # Task queue
+minio                # S3-compatible storage client
+pdfplumber           # PDF parsing
+python-docx          # Word file handling
+docxtpl              # Word template rendering (Jinja2)
+instructor           # Structured LLM output
+google-generativeai  # Gemini API
+passlib[bcrypt]      # Password hashing
+python-jose[cryptography]  # JWT
 ```
 
 ---
@@ -187,262 +171,373 @@ celery               # Distributed task queue
 ### Prerequisites
 
 - Python 3.10+
-- Docker & Docker Compose
-- OpenAI API Key
+- Docker & Docker Compose v2
+- (Tuỳ chọn) Ollama chạy local nếu dùng extraction backend = `ollama`
+- Gemini API Key nếu dùng extraction backend = `gemini`
 
-### 1. Clone & Setup Environment
+### 1. Clone Repository
 
 ```bash
-# Clone repository
 git clone https://github.com/hunter875/doc-automation-engine.git
 cd doc-automation-engine
-
-# Tạo virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# hoặc: venv\Scripts\activate  # Windows
-
-# Install dependencies
-pip install -r requirements.txt
 ```
 
 ### 2. Cấu Hình Environment Variables
 
-Tạo file `.env` ở root directory:
+```bash
+cp .env.example .env
+# Mở .env và điền các giá trị cần thiết
+```
+
+**Nội dung `.env` quan trọng:**
 
 ```bash
-# Application
-APP_NAME="Enterprise RAG System"
+# ── Application ──────────────────────────────────────────
+APP_NAME="doc-automation-engine"   # Tên hiển thị (display name, có thể chứa dấu gạch ngang)
+APP_ENV=production          # development | production
 DEBUG=false
-SECRET_KEY="your-super-secret-key-change-in-production"
+SECRET_KEY="change-this-to-a-long-random-256-bit-string"
 ALGORITHM="HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
-# PostgreSQL
+# ── PostgreSQL ───────────────────────────────────────────
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=raguser
 POSTGRES_PASSWORD=ragpassword
 POSTGRES_DB=ragdb
 
-# OpenSearch
-OPENSEARCH_HOST=localhost
-OPENSEARCH_PORT=9200
-OPENSEARCH_USER=admin
-OPENSEARCH_PASSWORD=admin
-
-# Redis
+# ── Redis ────────────────────────────────────────────────
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-# MinIO / S3
+# ── MinIO / S3 ───────────────────────────────────────────
 MINIO_ENDPOINT=localhost:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 MINIO_BUCKET=rag-documents
+MINIO_SECURE=false
 
-# OpenAI
-OPENAI_API_KEY=sk-your-openai-api-key
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-OPENAI_CHAT_MODEL=gpt-4o-mini
+# ── Gemini API (cho RAG embedding + chat) ────────────────
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+GEMINI_CHAT_MODEL=gemini-2.0-flash
+GEMINI_FLASH_MODEL=gemini-2.5-flash
 
-# File Upload Limits
-MAX_FILE_SIZE_MB=10
-ALLOWED_MIME_TYPES=application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document
+# ── Ollama (cho Data Extraction) ─────────────────────────
+EXTRACTION_BACKEND=ollama          # ollama | gemini
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_TIMEOUT_SECONDS=300
+
+# ── Extraction settings ───────────────────────────────────
+EXTRACTION_BATCH_MAX_FILES=20
+HYBRID_MAX_RETRIES=3
+EXTRACTION_TIMEOUT_MINUTES=30
+
+# ── Logging ──────────────────────────────────────────────
+LOG_LEVEL=INFO
+LOG_DIR=logs
+LOG_FILE=app.log
 ```
 
-### 3. Khởi Động Services (Docker)
+> ⚠️ **Security note**: Đổi `SECRET_KEY` thành chuỗi ngẫu nhiên 256-bit trước khi deploy production. Không commit file `.env` thật lên git.
+
+### 3. Khởi Động Services (Docker Compose)
 
 ```bash
-# Start all services
-docker-compose up -d
-
-# Check status
-docker-compose ps
-```
-
-### 4. Database Migration
-
-```bash
-# Initialize Alembic (nếu chưa có)
-alembic init alembic
-
-# Generate migration
-alembic revision --autogenerate -m "Initial schema"
-
-# Apply migration
-alembic upgrade head
-```
-
-### 5. Run Application
-
-```bash
-# Development mode
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Production mode
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### 6. Start Celery Worker
-
-```bash
-# Start worker
-celery -A app.worker.celery_app worker --loglevel=info
-
-# Start with concurrency
-celery -A app.worker.celery_app worker --loglevel=info --concurrency=4
-```
-
-### Quick Start với Docker Compose (All-in-One)
-
-```bash
-# Build và chạy toàn bộ
+# Build và start toàn bộ services
 docker-compose up --build -d
 
-# Xem logs
+# Kiểm tra status
+docker-compose ps
+
+# Xem logs API
 docker-compose logs -f api
 
 # Stop
 docker-compose down
 ```
 
+**Services được khởi động:**
+
+| Service | Port | Mô tả |
+|---------|------|-------|
+| `api` | 8000 | FastAPI application |
+| `celery-worker` | — | Worker (4 queues) |
+| `celery-beat` | — | Scheduler (cleanup stuck jobs) |
+| `postgres` | 5432 | PostgreSQL 15 + pgvector |
+| `redis` | 6379 | Redis 7 |
+| `minio` | 9000 / 9001 | MinIO object storage |
+| `flower` (optional) | 5555 | Celery monitoring (profile: debug) |
+
+### 4. Database Migration
+
+DB tables được tự động tạo khi khởi động API (via `Base.metadata.create_all`). Nếu dùng Alembic:
+
+```bash
+# Khởi tạo Alembic (chỉ làm 1 lần)
+alembic init alembic
+
+# Generate migration từ models
+alembic revision --autogenerate -m "initial schema"
+
+# Apply migration
+alembic upgrade head
+
+# Kiểm tra version hiện tại
+alembic current
+```
+
+### 5. Cài đặt Local (không Docker)
+
+```bash
+# Tạo virtual environment
+python -m venv venv
+source venv/bin/activate       # Linux/Mac
+# venv\Scripts\activate        # Windows
+
+# Cài dependencies
+pip install -r requirements.txt
+
+# Start API
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Start Celery Worker (terminal riêng)
+celery -A app.worker.celery_app worker --loglevel=info \
+  --concurrency=4 -Q default,document_processing,embeddings,extraction
+
+# Start Celery Beat (terminal riêng)
+celery -A app.worker.celery_app beat --loglevel=info
+```
+
 ---
 
-## 📁 Cấu Trúc Project
+## 🚀 Quickstart
+
+### Engine 1 — RAG: Upload & Query
+
+```bash
+export BASE="http://localhost:8000"
+export TOKEN="<jwt_token_từ_login>"
+export TENANT="<tenant_uuid>"
+
+# 1. Upload tài liệu
+curl -X POST "$BASE/api/v1/tenants/$TENANT/documents" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@noi_quy_cong_ty.pdf" \
+  -F "title=Nội quy công ty 2026"
+# Response 202: {"id": "uuid", "status": "processing", ...}
+
+# 2. Hỏi đáp (sau khi processing xong)
+curl -X POST "$BASE/api/v1/tenants/$TENANT/query" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Chính sách nghỉ phép của công ty?",
+    "top_k": 5,
+    "search_type": "hybrid"
+  }'
+```
+
+### Engine 2 — Data Extraction: PDF → Word Report
+
+```bash
+# 1. Quét Word mẫu để tạo template
+curl -X POST "$BASE/api/v1/extraction/templates/scan-word" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@bao_cao_mau.docx" -F "use_llm=true"
+
+# 2. Tạo extraction template từ kết quả scan
+curl -X POST "$BASE/api/v1/extraction/templates" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Báo cáo PCCC Ngày","schema_definition":{...},"aggregation_rules":{...}}'
+
+# 3. Upload batch PDF (max 20 files)
+curl -X POST "$BASE/api/v1/extraction/jobs/batch" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" \
+  -F "template_id=$TEMPLATE_ID" \
+  -F "files=@ngay1.pdf" -F "files=@ngay2.pdf" -F "files=@ngay3.pdf"
+# → {"batch_id":"...", "total_files":3, "jobs":[...]}
+
+# 4. Poll batch status
+curl "$BASE/api/v1/extraction/jobs/batch/$BATCH_ID/status" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT"
+# → {"total":3,"extracted":3,"progress_percent":100.0}
+
+# 5. Approve từng job
+curl -X POST "$BASE/api/v1/extraction/review/$JOB_ID/approve" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" -d '{"notes":"OK"}'
+
+# 6. Aggregate → tạo báo cáo tổng hợp
+curl -X POST "$BASE/api/v1/extraction/aggregate" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d '{"template_id":"$TEMPLATE_ID","job_ids":["job1","job2","job3"],"report_name":"PCCC Tuần 10"}'
+
+# 7. Export Word
+curl -X POST "$BASE/api/v1/extraction/aggregate/$REPORT_ID/export-word" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" \
+  -F "file=@bao_cao_tuan_template.docx" --output bao_cao_tuan_10.docx
+```
+
+---
+
+## 📁 Cấu Trúc Source Code
 
 ```
 doc-automation-engine/
 ├── app/
-│   ├── main.py                 # FastAPI application entry point
+│   ├── main.py                          # FastAPI entry point, routers, lifespan
 │   ├── api/
-│   │   ├── dependencies.py     # Shared dependencies (auth, db session)
+│   │   ├── dependencies.py              # Shared deps (auth, db session, tenant)
 │   │   └── v1/
-│   │       ├── auth.py         # Authentication endpoints
-│   │       ├── document.py     # Document management endpoints
-│   │       ├── rag.py          # RAG query endpoints
-│   │       └── tenant.py       # Tenant management endpoints
+│   │       ├── auth.py                  # Đăng ký / Đăng nhập / Me
+│   │       ├── tenant.py                # Tenant CRUD + member management
+│   │       ├── document.py              # Document upload/list/delete
+│   │       ├── rag.py                   # RAG query + semantic search
+│   │       ├── extraction_templates.py  # Template CRUD + Word scanner
+│   │       ├── extraction_jobs.py       # Job lifecycle + review + batch + metrics
+│   │       ├── extraction_reports.py    # Aggregate + export endpoints
+│   │       └── extraction.py            # Compatibility router
+│   ├── business/
+│   │   ├── engine.py                    # Orchestrate extractors → validators
+│   │   ├── extractors.py                # Regex-based deterministic extraction
+│   │   ├── validators.py                # Business rule validation (template-driven)
+│   │   ├── normalizers.py               # Vietnamese word spacing + date normalization
+│   │   └── template_loader.py           # DocumentTemplate wrapper + YAML registry + lru_cache
 │   ├── core/
-│   │   ├── config.py           # Application settings (Pydantic)
-│   │   ├── exceptions.py       # Custom exception handlers
-│   │   └── security.py         # JWT, password hashing, RBAC
+│   │   ├── config.py                    # Settings (Pydantic BaseSettings)
+│   │   ├── security.py                  # JWT, bcrypt, RBAC
+│   │   ├── exceptions.py                # Custom exceptions
+│   │   ├── logging.py                   # Structured JSON logging
+│   │   ├── metrics.py                   # PipelineMetrics + GlobalMetrics
+│   │   └── tracing.py                   # Request tracing
 │   ├── db/
-│   │   ├── postgres.py         # PostgreSQL connection & session
-│   │   └── opensearch.py       # OpenSearch client setup
+│   │   ├── postgres.py                  # SQLAlchemy engine + session
+│   │   └── pgvector.py                  # pgvector extension setup + vector index
 │   ├── models/
-│   │   ├── user.py             # SQLAlchemy User model
-│   │   ├── tenant.py           # SQLAlchemy Tenant model
-│   │   └── document.py         # SQLAlchemy Document model
+│   │   ├── user.py                      # User model
+│   │   ├── tenant.py                    # Tenant + UserTenantRole models
+│   │   ├── document.py                  # Document model
+│   │   └── extraction.py                # ExtractionTemplate / Job / AggregationReport
 │   ├── schemas/
-│   │   ├── auth_schema.py      # Pydantic schemas for auth
-│   │   ├── doc_schema.py       # Pydantic schemas for documents
-│   │   └── rag_schema.py       # Pydantic schemas for RAG
+│   │   ├── extraction_schema.py         # Request/Response Pydantic models (Engine 2)
+│   │   └── hybrid_extraction_schema.py  # HybridExtractionOutput + sub-models
 │   ├── services/
-│   │   ├── auth_service.py     # Authentication business logic
-│   │   ├── doc_service.py      # Document processing logic
-│   │   ├── rag_service.py      # RAG pipeline logic
-│   │   ├── chunking.py         # Text chunking strategies
-│   │   └── embedding.py        # OpenAI embedding service
+│   │   ├── auth_service.py              # Authentication logic
+│   │   ├── doc_service.py               # Document processing (parse + chunk + embed)
+│   │   ├── rag_service.py               # RAG pipeline
+│   │   ├── chunking.py                  # Text chunking strategies
+│   │   ├── embedding.py                 # Gemini embedding service
+│   │   ├── extraction_orchestrator.py   # Worker: S3 → pipeline → persist
+│   │   ├── hybrid_extraction_pipeline.py # Standard extraction (pdfplumber + Ollama)
+│   │   ├── block_extraction_pipeline.py  # 6-stage block pipeline
+│   │   ├── block_business_workflow.py    # Block mode orchestrator
+│   │   ├── batch_extraction.py           # Batch parallel (ThreadPoolExecutor)
+│   │   ├── extractor_strategies.py       # LLM backends (Ollama/Gemini/OpenAI)
+│   │   ├── data_validator.py             # Type coercion + normalization
+│   │   ├── rule_engine.py                # Domain validation rules (injectable)
+│   │   ├── template_manager.py           # Template domain service
+│   │   ├── job_manager.py                # Job lifecycle service
+│   │   ├── aggregation_service.py        # Aggregation + export context
+│   │   ├── word_scanner.py               # Word template scanner
+│   │   └── word_export.py                # Secure docxtpl renderer
+│   ├── templates/
+│   │   └── pccc.yaml                     # YAML template PCCC (55+ externalized patterns)
 │   └── worker/
-│       ├── celery_app.py       # Celery configuration
-│       └── tasks.py            # Background task definitions
-├── docs/                       # Additional documentation
-├── docker-compose.yml          # Docker services configuration
-├── requirements.txt            # Python dependencies
-├── .env.example                # Environment variables template
-└── README.md                   # This file
+│       ├── celery_app.py                 # Celery configuration + task routes
+│       └── extraction_tasks.py           # Tasks: extract_document + cleanup_stuck_jobs
+├── tests/
+│   ├── conftest.py
+│   ├── test_api.py
+│   ├── test_auth_service.py
+│   ├── test_chunking.py
+│   ├── test_config.py
+│   ├── test_doc_service.py
+│   ├── test_embedding.py
+│   ├── test_extraction_orchestrator.py
+│   ├── test_hybrid_extraction_pipeline.py
+│   ├── test_security.py
+│   ├── test_word_export.py
+│   ├── test_word_scanner.py
+│   ├── test_aggregation_payload_shape.py
+│   └── test_aggregation_word_context.py
+├── docs/
+│   ├── engine2_technical_spec.md         # Tài liệu kỹ thuật chi tiết Engine 2
+│   ├── API_REFERENCE.md
+│   ├── DEPLOYMENT.md
+│   ├── DEVELOPMENT.md
+│   ├── HYBRID_EXTRACTION.md
+│   └── TECHNICAL.md
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+├── pyproject.toml
+├── .env.example
+└── README.md
 ```
 
 ---
 
-## 📚 API Reference
+## 📚 API Reference — Engine 1 (RAG)
 
 ### Base URL
 
 ```
 Development: http://localhost:8000
-Production:  https://api.your-domain.com
+API Docs:    http://localhost:8000/docs   (Swagger UI)
+             http://localhost:8000/redoc  (ReDoc)
 ```
 
 ### Authentication
 
-Tất cả API (trừ `/auth/*`) yêu cầu JWT token trong header:
+Tất cả API (trừ `/auth/*`) yêu cầu JWT Bearer token:
 
 ```
 Authorization: Bearer <access_token>
+```
+
+Hầu hết Tenant endpoints cần thêm:
+
+```
+X-Tenant-ID: <tenant_uuid>
 ```
 
 ---
 
 ### 🔐 Auth Endpoints
 
-#### POST `/api/v1/auth/register`
+#### `POST /api/v1/auth/register` — Đăng ký user mới
 
-Đăng ký user mới.
-
-**Request Body:**
 ```json
-{
-  "email": "user@example.com",
-  "password": "SecurePassword123!",
-  "full_name": "Nguyen Van A"
-}
+// Request
+{ "email": "user@example.com", "password": "SecurePass123!", "full_name": "Nguyen Van A" }
+
+// Response 201
+{ "id": "uuid", "email": "user@example.com", "full_name": "Nguyen Van A", "created_at": "..." }
 ```
 
-**Response:** `201 Created`
+#### `POST /api/v1/auth/login` — Đăng nhập
+
 ```json
-{
-  "id": "uuid",
-  "email": "user@example.com",
-  "full_name": "Nguyen Van A",
-  "created_at": "2026-02-23T10:00:00Z"
-}
+// Request
+{ "email": "user@example.com", "password": "SecurePass123!" }
+
+// Response 200
+{ "access_token": "eyJhbGci...", "token_type": "bearer", "expires_in": 86400 }
 ```
 
----
+#### `GET /api/v1/auth/me` — Thông tin user hiện tại
 
-#### POST `/api/v1/auth/login`
-
-Đăng nhập và nhận JWT token.
-
-**Request Body:**
 ```json
+// Response 200
 {
-  "email": "user@example.com",
-  "password": "SecurePassword123!"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIs...",
-  "token_type": "bearer",
-  "expires_in": 1800
-}
-```
-
----
-
-#### GET `/api/v1/auth/me`
-
-Lấy thông tin user hiện tại.
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Response:** `200 OK`
-```json
-{
-  "id": "uuid",
-  "email": "user@example.com",
-  "full_name": "Nguyen Van A",
-  "tenants": [
-    {
-      "tenant_id": "uuid",
-      "tenant_name": "Company ABC",
-      "role": "admin"
-    }
-  ]
+  "id": "uuid", "email": "user@example.com",
+  "tenants": [{ "tenant_id": "uuid", "tenant_name": "Company ABC", "role": "admin" }]
 }
 ```
 
@@ -450,315 +545,344 @@ Lấy thông tin user hiện tại.
 
 ### 🏢 Tenant Endpoints
 
-#### POST `/api/v1/tenants`
+| Method | Path | Role | Mô tả |
+|--------|------|------|-------|
+| `POST` | `/api/v1/tenants` | Authenticated | Tạo tenant mới (user tạo = `owner`) |
+| `GET` | `/api/v1/tenants/{tenant_id}` | viewer | Chi tiết tenant + members |
+| `POST` | `/api/v1/tenants/{tenant_id}/invite` | admin/owner | Mời thêm member |
 
-Tạo tenant/workspace mới. User tạo sẽ tự động có role `owner`.
-
-**Request Body:**
-```json
-{
-  "name": "Company ABC",
-  "description": "Main workspace for Company ABC"
-}
-```
-
-**Response:** `201 Created`
-```json
-{
-  "id": "uuid",
-  "name": "Company ABC",
-  "description": "Main workspace for Company ABC",
-  "billing_status": "active",
-  "created_at": "2026-02-23T10:00:00Z"
-}
-```
-
----
-
-#### GET `/api/v1/tenants/{tenant_id}`
-
-Lấy thông tin chi tiết tenant.
-
-**Response:** `200 OK`
-```json
-{
-  "id": "uuid",
-  "name": "Company ABC",
-  "billing_status": "active",
-  "members": [
-    {
-      "user_id": "uuid",
-      "email": "user@example.com",
-      "role": "owner"
-    }
-  ],
-  "usage": {
-    "total_documents": 150,
-    "total_tokens_used": 1250000,
-    "storage_used_mb": 450.5
-  }
-}
-```
-
----
-
-#### POST `/api/v1/tenants/{tenant_id}/invite`
-
-Mời user vào tenant (chỉ `owner` hoặc `admin`).
-
-**Request Body:**
-```json
-{
-  "email": "newuser@example.com",
-  "role": "viewer"
-}
-```
-
-**Roles Available:**
-- `owner` - Toàn quyền, quản lý billing
-- `admin` - Quản lý documents, invite members
-- `viewer` - Chỉ xem và query
+**Roles:**
+- `owner` — Toàn quyền
+- `admin` — Quản lý documents, invite members
+- `viewer` — Chỉ đọc và query
 
 ---
 
 ### 📄 Document Endpoints
 
-#### POST `/api/v1/tenants/{tenant_id}/documents`
+| Method | Path | Role | Mô tả |
+|--------|------|------|-------|
+| `POST` | `/api/v1/tenants/{tenant_id}/documents` | admin | Upload document (PDF/DOCX/TXT, max 10MB) |
+| `GET` | `/api/v1/tenants/{tenant_id}/documents` | viewer | Liệt kê documents (paginated) |
+| `GET` | `/api/v1/tenants/{tenant_id}/documents/{doc_id}` | viewer | Chi tiết document |
+| `DELETE` | `/api/v1/tenants/{tenant_id}/documents/{doc_id}` | admin | Xóa document |
 
-Upload document mới. File được validate và đưa vào queue xử lý.
-
-**Request:** `multipart/form-data`
-```
-file: <binary>
-title: "Company Policy 2026"
-description: "Nội quy công ty bản cập nhật"
-tags: ["policy", "hr", "2026"]
-```
-
-**Validation Rules:**
-- Max file size: 10MB
-- Allowed MIME types: PDF, TXT, DOCX
-- Magic bytes verification (không tin extension)
-
-**Response:** `202 Accepted`
+**Upload response 202:**
 ```json
 {
-  "id": "uuid",
-  "title": "Company Policy 2026",
+  "id": "uuid", "title": "Company Policy 2026",
   "status": "processing",
-  "file_name": "company_policy_2026.pdf",
-  "file_size_bytes": 2457600,
-  "created_at": "2026-02-23T10:00:00Z",
   "message": "Document đang được xử lý. Kiểm tra status sau vài phút."
 }
 ```
 
----
-
-#### GET `/api/v1/tenants/{tenant_id}/documents`
-
-Liệt kê documents của tenant.
-
-**Query Parameters:**
-- `page` (int): Trang hiện tại (default: 1)
-- `limit` (int): Số items/trang (default: 20, max: 100)
-- `status` (string): Filter theo status (`processing`, `completed`, `failed`)
-- `search` (string): Tìm theo title
-
-**Response:** `200 OK`
-```json
-{
-  "items": [
-    {
-      "id": "uuid",
-      "title": "Company Policy 2026",
-      "status": "completed",
-      "file_name": "company_policy_2026.pdf",
-      "chunk_count": 45,
-      "created_at": "2026-02-23T10:00:00Z"
-    }
-  ],
-  "total": 150,
-  "page": 1,
-  "limit": 20,
-  "pages": 8
-}
-```
-
----
-
-#### GET `/api/v1/tenants/{tenant_id}/documents/{doc_id}`
-
-Chi tiết document.
-
-**Response:** `200 OK`
-```json
-{
-  "id": "uuid",
-  "title": "Company Policy 2026",
-  "description": "Nội quy công ty bản cập nhật",
-  "status": "completed",
-  "file_name": "company_policy_2026.pdf",
-  "file_size_bytes": 2457600,
-  "mime_type": "application/pdf",
-  "chunk_count": 45,
-  "embedding_model": "text-embedding-3-small",
-  "tags": ["policy", "hr", "2026"],
-  "created_at": "2026-02-23T10:00:00Z",
-  "processed_at": "2026-02-23T10:02:30Z"
-}
-```
-
----
-
-#### DELETE `/api/v1/tenants/{tenant_id}/documents/{doc_id}`
-
-Xóa document (cần role `admin` trở lên).
-
-**Response:** `204 No Content`
+Document status flow: `processing` → `completed` / `failed`
 
 ---
 
 ### 🤖 RAG Query Endpoints
 
-#### POST `/api/v1/tenants/{tenant_id}/query`
+#### `POST /api/v1/tenants/{tenant_id}/query` — Hỏi đáp RAG
 
-**Main RAG endpoint** - Hỏi đáp dựa trên documents của tenant.
-
-**Request Body:**
 ```json
+// Request
 {
-  "question": "Chính sách nghỉ phép của công ty như thế nào?",
+  "question": "Chính sách nghỉ phép của công ty?",
   "top_k": 5,
   "search_type": "hybrid",
-  "include_sources": true
+  "include_sources": true,
+  "temperature": 0.7
 }
-```
 
-**Parameters:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `question` | string | required | Câu hỏi của user |
-| `top_k` | int | 5 | Số chunks retrieve (1-20) |
-| `search_type` | string | "hybrid" | `semantic`, `keyword`, hoặc `hybrid` |
-| `include_sources` | bool | true | Có trả về sources không |
-| `temperature` | float | 0.7 | LLM temperature (0-1) |
-
-**Response:** `200 OK`
-```json
+// Response 200
 {
-  "answer": "Theo chính sách công ty, nhân viên chính thức được nghỉ phép 12 ngày/năm. Nhân viên có thể đăng ký nghỉ phép qua hệ thống HR Portal và cần được quản lý trực tiếp phê duyệt trước ít nhất 3 ngày làm việc...",
+  "answer": "Theo chính sách công ty, nhân viên chính thức được nghỉ phép 12 ngày/năm...",
   "sources": [
     {
       "document_id": "uuid",
       "document_title": "Company Policy 2026",
       "chunk_id": "chunk_23",
-      "content": "Điều 15: Chế độ nghỉ phép năm\n15.1. Nhân viên chính thức được hưởng 12 ngày phép năm...",
+      "content": "Điều 15: Chế độ nghỉ phép năm...",
       "relevance_score": 0.92
-    },
-    {
-      "document_id": "uuid",
-      "document_title": "HR Guidelines",
-      "chunk_id": "chunk_8",
-      "content": "Quy trình đăng ký nghỉ phép:\n1. Đăng nhập HR Portal\n2. Chọn loại nghỉ phép...",
-      "relevance_score": 0.87
     }
   ],
-  "usage": {
-    "prompt_tokens": 1250,
-    "completion_tokens": 320,
-    "total_tokens": 1570
-  },
+  "usage": { "prompt_tokens": 1250, "completion_tokens": 320, "total_tokens": 1570 },
   "processing_time_ms": 2340
 }
 ```
 
+#### `POST /api/v1/tenants/{tenant_id}/search` — Semantic Search (không LLM)
+
+```json
+// Request
+{ "query": "chính sách nghỉ phép", "top_k": 10, "search_type": "hybrid" }
+```
+
 ---
 
-#### POST `/api/v1/tenants/{tenant_id}/search`
+### ❌ Error Responses
 
-Semantic search (không có LLM generation). Dùng để tìm documents liên quan.
-
-**Request Body:**
 ```json
 {
-  "query": "chính sách nghỉ phép",
-  "top_k": 10,
-  "search_type": "hybrid",
-  "filters": {
-    "tags": ["policy", "hr"],
-    "date_from": "2025-01-01"
+  "error": "PERMISSION_DENIED",
+  "message": "Bạn không có quyền truy cập tenant này",
+  "details": { "required_role": "viewer" }
+}
+```
+
+| HTTP | Code | Mô tả |
+|------|------|-------|
+| 400 | `VALIDATION_ERROR` | Request không hợp lệ |
+| 401 | `UNAUTHORIZED` | Token missing / expired |
+| 403 | `PERMISSION_DENIED` | Không đủ role |
+| 404 | `NOT_FOUND` | Resource không tồn tại |
+| 413 | `FILE_TOO_LARGE` | File vượt 10MB |
+| 415 | `UNSUPPORTED_FILE_TYPE` | MIME type không hỗ trợ |
+| 422 | `ValidationError` | Pydantic validation error |
+| 500 | `InternalError` | Lỗi server |
+
+---
+
+## 🔬 API Reference — Engine 2 (Data Extraction)
+
+**Router prefix:** `/api/v1/extraction`  
+**Yêu cầu header:** `X-Tenant-ID: <tenant_uuid>`
+
+### Templates
+
+| Method | Path | Role | Status | Mô tả |
+|--------|------|------|--------|-------|
+| `POST` | `/templates/scan-word` | viewer | 200 | Upload .docx → auto-infer schema |
+| `POST` | `/templates` | admin | 201 | Tạo template mới |
+| `GET` | `/templates` | viewer | 200 | List templates (paginated) |
+| `GET` | `/templates/{id}` | viewer | 200 | Chi tiết template |
+| `PATCH` | `/templates/{id}` | admin | 200 | Sửa template (schema change → version++) |
+| `DELETE` | `/templates/{id}` | owner | 204 | Soft delete |
+
+**Scan Word response:**
+```json
+{
+  "variables": [{"name": "so_vu", "type": "number", "occurrences": 3}],
+  "schema_definition": {"fields": [...]},
+  "aggregation_rules": {"rules": [...]},
+  "stats": {"unique_variables": 12, "tables_scanned": 3}
+}
+```
+
+### Jobs
+
+| Method | Path | Role | Status | Mô tả |
+|--------|------|------|--------|-------|
+| `POST` | `/jobs` | admin | 202 | Upload 1 PDF → Celery job |
+| `POST` | `/jobs/batch` | admin | 202 | Upload N PDFs (max 20) → N Celery jobs |
+| `POST` | `/jobs/batch-block` | admin | 200 | Batch block-mode in-process (ThreadPoolExecutor) |
+| `POST` | `/jobs/from-document` | admin | 202 | Tạo job từ document đã upload |
+| `GET` | `/jobs` | viewer | 200 | List jobs (filter: status, template_id, batch_id) |
+| `GET` | `/jobs/{job_id}` | viewer | 200 | Polling — xem status + extracted_data |
+| `GET` | `/jobs/batch/{batch_id}/status` | viewer | 200 | Batch progress |
+| `GET` | `/metrics` | viewer | 200 | Global pipeline metrics (counters + timers) |
+| `POST` | `/jobs/{job_id}/retry` | admin | 200 | Retry failed/rejected job |
+| `DELETE` | `/jobs/{job_id}` | admin | 204 | Xóa job |
+
+**Job status flow:**
+```
+PENDING → PROCESSING → EXTRACTED → APPROVED
+                    ↘ FAILED      ↘ REJECTED
+```
+
+**Batch-block response:**
+```json
+{
+  "total": 3, "succeeded": 3, "failed": 0,
+  "results": [{"filename": "ngay1.pdf", "status": "success", ...}],
+  "errors": [],
+  "metrics": {
+    "counters": {"batch_total": 3, "pipeline_success": 3},
+    "timers_ms": {"stage1_layout": 1234.5, "stage3_extract": 8901.2}
   }
 }
 ```
 
-**Response:** `200 OK`
-```json
-{
-  "results": [
-    {
-      "document_id": "uuid",
-      "document_title": "Company Policy 2026",
-      "chunk_content": "Điều 15: Chế độ nghỉ phép năm...",
-      "score": 0.92,
-      "highlight": "Nhân viên chính thức được <em>nghỉ phép</em> 12 ngày/năm"
-    }
-  ],
-  "total_results": 15,
-  "processing_time_ms": 450
-}
-```
+### Review
+
+| Method | Path | Role | Mô tả |
+|--------|------|------|-------|
+| `POST` | `/review/{job_id}/approve` | admin | Approve (+ optional `reviewed_data`) |
+| `POST` | `/review/{job_id}/reject` | admin | Reject (required `notes`) |
+
+### Aggregation & Export
+
+| Method | Path | Role | Status | Mô tả |
+|--------|------|------|--------|-------|
+| `POST` | `/aggregate` | admin | 201 | Gom N approved jobs → 1 report |
+| `GET` | `/aggregate` | viewer | 200 | List reports |
+| `GET` | `/aggregate/{id}` | viewer | 200 | Chi tiết report |
+| `DELETE` | `/aggregate/{id}` | admin | 204 | Xóa report |
+| `GET` | `/aggregate/{id}/export` | viewer | 200 | Export Excel/CSV/JSON (`?format=excel`) |
+| `POST` | `/aggregate/{id}/export-word` | viewer | 200 | Upload .docx template → render → download |
+| `GET` | `/aggregate/{id}/export-word-auto` | viewer | 200 | Dùng template đã lưu S3 để render |
 
 ---
 
-### Error Responses
+## 🔄 Engine 2: Pipeline 4 Bước
 
-Tất cả error responses tuân theo format:
+### Luồng chi tiết
 
+```
+1. User upload PDF + chọn Template
+       ↓
+2. Celery worker nhận task `extract_document`
+       ↓
+3. [Bước 1] Worker tải file từ S3 → run_from_bytes()
+  ├── Parse text + table bằng pdfplumber
+  ├── Normalize text/bảng theo YAML business rules
+  └── Toàn bộ xử lý trong RAM (không ghi file tạm)
+     ↓
+4. [Bước 1] Inference qua Ollama + Instructor + Pydantic
+  ├── Model: settings.OLLAMA_MODEL (vd: qwen2.5:7b)
+  ├── Output ép kiểu theo HybridExtractionOutput
+  └── RuleEngine check logic domain (count, date format, v.v.)
+     ↓
+5. [Bước 2] Retry / Manual-review
+  ├── Retry tối đa HYBRID_MAX_RETRIES (mặc định 3)
+  ├── Quá số retry → ghi metadata manual review
+  └── Persist trạng thái vào extraction_jobs (JSONB)
+       ↓
+6. INSERT clean_data → extraction_jobs.extracted_data (JSONB)
+       ↓
+7. [Human Review] Approve / Reject / Edit → reviewed_data
+       ↓
+8. [Bước 3] N approved jobs → AggregationService.aggregate()
+   ├── pd.json_normalize() đập phẳng nested JSON
+   ├── Apply rules: SUM, AVG, COUNT, CONCAT, LAST
+   └── Output: aggregated_data + records + _metadata
+       ↓
+9. [Bước 4] Upload Word template + aggregated_data
+   ├── docxtpl render Jinja2 placeholders
+   ├── Filters: number_vn, date_vn, date_short
+   └── Download file .docx hoàn chỉnh
+```
+
+### Bước 2: Validation Layer — Type Coercion
+
+`DataValidator` tự động ép kiểu dữ liệu LLM trả về:
+
+| Input (LLM trả ra) | Output (sau validate) | Ghi chú |
+|---|---|---|
+| `"Hai vụ"` | `2` | Vietnamese text → number (hỗ trợ: không, một, hai, ba...mười, trăm, nghìn, triệu, tỷ) |
+| `"1.500.000"` | `1500000` | VN thousand separator |
+| `"1.500.000,50"` | `1500000.5` | VN decimal format |
+| `"02-03-2026"` | `"02/03/2026"` | Normalize → DD/MM/YYYY |
+| `"ngày 2 tháng 3 năm 2026"` | `"02/03/2026"` | Vietnamese date text |
+| `"đúng"` / `"có"` / `"✓"` | `true` | Vietnamese boolean |
+| `"sai"` / `"không"` | `false` | Vietnamese boolean |
+
+**Validation report:**
 ```json
 {
-  "error": {
-    "code": "PERMISSION_DENIED",
-    "message": "Bạn không có quyền truy cập tenant này",
-    "details": {
-      "required_role": "viewer",
-      "your_role": null
-    }
-  },
-  "request_id": "req_abc123",
-  "timestamp": "2026-02-23T10:00:00Z"
+  "is_valid": true,
+  "total_fields": 6, "valid_fields": 5, "completeness_pct": 83.3,
+  "auto_corrections": [
+    {"field": "so_vu", "original": "Hai vụ", "coerced": 2, "note": "\"Hai vụ\" → 2"},
+    {"field": "ngay_bao_cao", "original": "02-03-2026", "coerced": "02/03/2026"}
+  ],
+  "missing_fields": ["dia_chi_cu_the"]
 }
 ```
 
-**Common Error Codes:**
+### Bước 3: Aggregation Methods
 
-| HTTP Status | Code | Description |
-|-------------|------|-------------|
-| 400 | `VALIDATION_ERROR` | Request body không hợp lệ |
-| 401 | `UNAUTHORIZED` | Token missing hoặc expired |
-| 403 | `PERMISSION_DENIED` | Không có quyền |
-| 404 | `NOT_FOUND` | Resource không tồn tại |
-| 413 | `FILE_TOO_LARGE` | File vượt quá 10MB |
-| 415 | `UNSUPPORTED_FILE_TYPE` | MIME type không được hỗ trợ |
-| 429 | `RATE_LIMITED` | Quá nhiều requests |
-| 500 | `INTERNAL_ERROR` | Lỗi server |
-| 503 | `SERVICE_UNAVAILABLE` | OpenAI hoặc service khác đang sập |
+| Method | Mô tả | Ví dụ |
+|--------|-------|-------|
+| `SUM` | Cộng tổng | `so_vu` ngày 1 + ngày 2 + ngày 3 |
+| `AVG` | Trung bình | `nhiet_do` trung bình tuần |
+| `MAX` / `MIN` | Cực trị | Giá trị lớn/nhỏ nhất |
+| `COUNT` | Đếm | Tổng số báo cáo |
+| `CONCAT` | Nối mảng | Gộp `danh_sach_su_co` 7 ngày → 1 list |
+| `LAST` | Giá trị cuối | `ten_nguoi_ky` bản ghi cuối |
+
+**Aggregation rules format:**
+```json
+{
+  "rules": [
+    {"output_field": "tong_so_vu", "source_field": "so_vu", "method": "SUM"},
+    {"output_field": "tat_ca_su_co", "source_field": "danh_sach_su_co", "method": "CONCAT"},
+    {"output_field": "nguoi_ky", "source_field": "ten_nguoi_ky", "method": "LAST"}
+  ],
+  "sort_by": "ngay_bao_cao"
+}
+```
+
+### Bước 4: Word Template Syntax
+
+```
+# Biến đơn giản
+{{ten_don_vi}}         → "Phòng PCCC Quận 1"
+{{tong_so_vu}}         → 45
+{{today}}              → "31/03/2026"   (auto-inject)
+{{now}}                → "31/03/2026 08:30"
+
+# Custom Jinja2 filters
+{{tong_so_vu | number_vn}}              → "1.500.000"
+{{ngay_bao_cao | date_vn}}              → "ngày 10 tháng 03 năm 2026"
+{{val | date_short}}                    → "10/03/2026"
+{{val | default_if_none("N/A")}}        → "N/A" nếu val là None
+
+# Loop bảng (trong Word Table)
+{% for row in records %}
+{{row.loai_su_co}} | {{row.so_nguoi}} | {{row.ngay_xay_ra}}
+{% endfor %}
+
+# Điều kiện
+{% if tong_so_vu > 0 %}Có {{tong_so_vu}} sự cố{% else %}Không có sự cố{% endif %}
+```
+
+### Ví dụ End-to-End: 7 Báo cáo PCCC → 1 Báo cáo Tuần
+
+**Kết quả file Word sau export:**
+```
+bao_cao_tuan_10.docx
+├── {{ten_don_vi}}     → "Phòng PCCC Quận 1"
+├── {{tong_so_vu}}     → 45 (SUM 7 ngày)
+├── {{ngay_bao_cao}}   → "ngày 10 tháng 03 năm 2026"
+├── Bảng sự cố         → 45 hàng (CONCAT 7 ngày)
+└── {{nguoi_ky}}       → "Đại tá Nguyễn Văn A" (LAST)
+```
+
+### Observability: Pipeline Metrics
+
+```bash
+# GET /api/v1/extraction/metrics
+{
+  "counters": {
+    "llm_calls": 150,
+    "pipeline_success": 42,
+    "pipeline_failure": 3,
+    "dynamic_col_detected": 38,
+    "schema_enforcer_reask": 5
+  },
+  "timers_ms": {
+    "stage1_layout": 1234.5,
+    "stage2_detect": 456.7,
+    "stage3_extract": 8901.2,
+    "stage6_business": 234.5
+  }
+}
+```
 
 ---
 
 ## 🗄 Database Schema
 
-### PostgreSQL Tables
+### PostgreSQL Core Tables
 
 ```sql
--- Tenants (Workspace/Organization)
+-- Tenants
 CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
-    description TEXT,
-    billing_status VARCHAR(50) DEFAULT 'active', -- active, suspended, cancelled
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    billing_status VARCHAR(50) DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Users
@@ -768,118 +892,88 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(255),
     is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
--- User-Tenant Roles (RBAC Junction Table)
+-- RBAC Junction Table
 CREATE TABLE user_tenant_roles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    role VARCHAR(50) NOT NULL, -- owner, admin, viewer
-    created_at TIMESTAMP DEFAULT NOW(),
+    role VARCHAR(50) NOT NULL,   -- owner | admin | viewer
     UNIQUE(user_id, tenant_id)
 );
 
--- Documents Metadata
+-- Documents (RAG)
 CREATE TABLE documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
     title VARCHAR(500) NOT NULL,
-    description TEXT,
-    file_name VARCHAR(255) NOT NULL,
-    file_size_bytes BIGINT,
-    mime_type VARCHAR(100),
-    s3_key VARCHAR(500), -- Path trong S3/MinIO
-    status VARCHAR(50) DEFAULT 'processing', -- processing, completed, failed
+    s3_key VARCHAR(500),
+    status VARCHAR(50) DEFAULT 'processing',
     chunk_count INTEGER DEFAULT 0,
     embedding_model VARCHAR(100),
-    error_message TEXT, -- Lưu lỗi nếu processing fail
-    tags TEXT[], -- PostgreSQL array
+    tags TEXT[],
     uploaded_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    processed_at TIMESTAMP
-);
-
--- Token Usage Logs (FinOps)
-CREATE TABLE tenant_usage_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id),
-    operation_type VARCHAR(50), -- embedding, chat, search
-    model_name VARCHAR(100),
-    prompt_tokens INTEGER DEFAULT 0,
-    completion_tokens INTEGER DEFAULT 0,
-    total_tokens INTEGER DEFAULT 0,
-    cost_usd DECIMAL(10, 6), -- Estimated cost
     created_at TIMESTAMP DEFAULT NOW()
 );
-
--- Indexes
 CREATE INDEX idx_documents_tenant ON documents(tenant_id);
 CREATE INDEX idx_documents_status ON documents(status);
-CREATE INDEX idx_usage_tenant_date ON tenant_usage_logs(tenant_id, created_at);
-CREATE INDEX idx_user_roles_user ON user_tenant_roles(user_id);
-CREATE INDEX idx_user_roles_tenant ON user_tenant_roles(tenant_id);
 ```
 
-### OpenSearch Index Mapping
+### Engine 2: Extraction Tables (PostgreSQL JSONB)
 
-```json
-{
-  "settings": {
-    "index": {
-      "number_of_shards": 3,
-      "number_of_replicas": 1,
-      "knn": true
-    }
-  },
-  "mappings": {
-    "properties": {
-      "tenant_id": {
-        "type": "keyword"
-      },
-      "document_id": {
-        "type": "keyword"
-      },
-      "chunk_id": {
-        "type": "keyword"
-      },
-      "embedding_model": {
-        "type": "keyword"
-      },
-      "content": {
-        "type": "text",
-        "analyzer": "standard"
-      },
-      "vector": {
-        "type": "knn_vector",
-        "dimension": 1536,
-        "method": {
-          "engine": "nmslib",
-          "space_type": "cosinesimil",
-          "name": "hnsw",
-          "parameters": {
-            "ef_construction": 256,
-            "m": 48
-          }
-        }
-      },
-      "metadata": {
-        "type": "object",
-        "properties": {
-          "page_number": { "type": "integer" },
-          "chunk_index": { "type": "integer" },
-          "tags": { "type": "keyword" }
-        }
-      },
-      "created_at": {
-        "type": "date"
-      }
-    }
-  }
-}
+```sql
+-- Extraction Templates
+CREATE TABLE extraction_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    schema_definition JSONB NOT NULL,    -- Fields cần bóc tách
+    aggregation_rules JSONB DEFAULT '{}', -- SUM/CONCAT/AVG rules
+    version INTEGER DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_extraction_templates_schema_gin ON extraction_templates USING GIN (schema_definition);
+
+-- Extraction Jobs
+CREATE TABLE extraction_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    template_id UUID NOT NULL REFERENCES extraction_templates(id),
+    document_id UUID NOT NULL REFERENCES documents(id),
+    batch_id UUID,
+    extraction_mode VARCHAR(20) DEFAULT 'standard',
+    status VARCHAR(20) DEFAULT 'pending',  -- pending|processing|extracted|approved|failed|rejected
+    extracted_data JSONB,                  -- AI output (đã qua Validation)
+    confidence_scores JSONB,               -- _validation_report + attempts
+    reviewed_data JSONB,                   -- Human-reviewed data
+    reviewed_by UUID REFERENCES users(id),
+    reviewed_at TIMESTAMP,
+    llm_model VARCHAR(100),
+    processing_time_ms INTEGER,
+    retry_count INTEGER DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_extraction_jobs_extracted_data_gin ON extraction_jobs USING GIN (extracted_data);
+CREATE INDEX idx_extraction_jobs_reviewed_data_gin  ON extraction_jobs USING GIN (reviewed_data);
+
+-- Aggregation Reports
+CREATE TABLE aggregation_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    template_id UUID NOT NULL REFERENCES extraction_templates(id),
+    name VARCHAR(255) NOT NULL,
+    job_ids UUID[] NOT NULL,
+    aggregated_data JSONB NOT NULL,
+    total_jobs INTEGER NOT NULL,
+    approved_jobs INTEGER NOT NULL,
+    status VARCHAR(20) DEFAULT 'draft',   -- draft | finalized
+    created_at TIMESTAMP DEFAULT NOW(),
+    finalized_at TIMESTAMP
+);
 ```
 
 ---
@@ -889,291 +983,87 @@ CREATE INDEX idx_user_roles_tenant ON user_tenant_roles(tenant_id);
 ### Authentication Flow
 
 ```
-┌─────────┐     ┌─────────┐     ┌─────────┐     ┌─────────┐
-│  User   │────▶│  Login  │────▶│ Verify  │────▶│  Issue  │
-│         │     │  API    │     │ Password│     │  JWT    │
-└─────────┘     └─────────┘     └─────────┘     └─────────┘
-                                                     │
-     ┌───────────────────────────────────────────────┘
-     ▼
-┌─────────┐     ┌─────────┐     ┌─────────┐     ┌─────────┐
-│  API    │────▶│ Extract │────▶│  Check  │────▶│ Process │
-│ Request │     │ user_id │     │  RBAC   │     │ Request │
-└─────────┘     └─────────┘     └─────────┘     └─────────┘
+User Login → bcrypt verify password → Issue JWT (HS256)
+API Request → Decode JWT → Extract user_id → Check user_tenant_roles → Allow/403
 ```
 
-### Security Best Practices
-
-#### 1. JWT Token Security
+### JWT Token
 
 ```python
-# JWT chỉ chứa user_id, không chứa sensitive data
-{
-    "sub": "user_uuid",
-    "exp": 1708684800,  # Expiration
-    "iat": 1708682000   # Issued at
-}
+# Payload chỉ chứa user_id (không có sensitive data)
+{"sub": "user_uuid", "exp": 1708684800, "iat": 1708682000}
 ```
 
-#### 2. RBAC Middleware
-
-Mọi request đều phải qua RBAC check:
+### RBAC Check
 
 ```python
-async def check_tenant_permission(
-    user_id: str,
-    tenant_id: str,
-    required_role: str
-) -> bool:
-    # Query user_tenant_roles table
-    # Verify user has required_role or higher
-    # Return 403 if not authorized
+async def check_tenant_permission(user_id, tenant_id, required_role):
+    # Query user_tenant_roles, kiểm tra hierarchy: owner > admin > viewer
+    # Return 403 nếu không đủ quyền
 ```
 
-#### 3. File Upload Security
+### File Upload Security
 
-| Check | Method |
-|-------|--------|
-| Size Limit | Nginx + FastAPI (10MB max) |
-| MIME Type | Magic bytes verification |
-| Content Scan | Parse file, reject corrupted |
-| Filename | Sanitize, generate UUID |
+| Check | Phương pháp |
+|-------|------------|
+| Size Limit | 10MB (config `MAX_FILE_SIZE_MB`) |
+| MIME Type | Magic bytes verification (không tin extension) |
+| Anti zip-bomb (Word) | Giới hạn: entry ≤ 50MB, tổng giải nén ≤ 120MB, max entries = 2000, compression ratio ≤ 150x |
 
-#### 4. API Rate Limiting
+### Data Isolation
 
-```python
-# Rate limits per endpoint
-RATE_LIMITS = {
-    "auth/login": "5/minute",
-    "documents/upload": "10/minute",
-    "query": "30/minute",
-    "search": "60/minute"
-}
-```
+- **API**: `tenant_id` lấy từ `X-Tenant-ID` header, validate với `user_tenant_roles`
+- **Database**: Mọi query đều có `WHERE tenant_id = :tenant_id`
+- **pgvector**: Filter metadata `tenant_id` trước mọi k-NN search
 
-#### 5. Data Isolation
+### Security Headers (Nginx Production)
 
-- **API Level**: Tenant_id extracted from URL, validated against user's roles
-- **Database Level**: All queries include `WHERE tenant_id = :tenant_id`
-- **OpenSearch Level**: Pre-filter query always includes `tenant_id` term
-
----
-
-## 📊 Monitoring & Observability
-
-### Structured Logging Format
-
-```json
-{
-  "timestamp": "2026-02-23T10:00:00.123Z",
-  "level": "INFO",
-  "logger": "app.services.rag_service",
-  "message": "RAG query completed",
-  "tenant_id": "uuid",
-  "user_id": "uuid",
-  "trace_id": "trace_abc123",
-  "request_id": "req_xyz789",
-  "data": {
-    "query_length": 45,
-    "chunks_retrieved": 5,
-    "tokens_used": 1570,
-    "latency_ms": 2340
-  }
-}
-```
-
-### Key Metrics to Track
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `rag_query_latency_p95` | Histogram | P95 latency của RAG queries |
-| `embedding_latency_p95` | Histogram | P95 latency embedding |
-| `document_processing_time` | Histogram | Thời gian xử lý document |
-| `tokens_used_total` | Counter | Tổng tokens đã dùng |
-| `active_celery_tasks` | Gauge | Số tasks đang chạy |
-| `failed_tasks_total` | Counter | Số tasks thất bại |
-| `opensearch_query_latency` | Histogram | Search latency |
-
-### Health Check Endpoints
-
-```bash
-# Application health
-GET /health
-
-# Detailed component status
-GET /health/detailed
-```
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0",
-  "components": {
-    "postgresql": { "status": "healthy", "latency_ms": 5 },
-    "opensearch": { "status": "healthy", "latency_ms": 12 },
-    "redis": { "status": "healthy", "latency_ms": 2 },
-    "celery": { "status": "healthy", "active_workers": 4 },
-    "openai": { "status": "healthy", "latency_ms": 450 }
-  }
-}
+```nginx
+add_header X-Frame-Options DENY;
+add_header X-Content-Type-Options nosniff;
+add_header X-XSS-Protection "1; mode=block";
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains";
 ```
 
 ---
 
 ## 🚀 Deployment
 
-### Development (Docker Compose)
-
-```yaml
-# docker-compose.yml
-version: "3.8"
-
-services:
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - POSTGRES_HOST=postgres
-      - REDIS_HOST=redis
-      - OPENSEARCH_HOST=opensearch
-    depends_on:
-      - postgres
-      - redis
-      - opensearch
-      - minio
-
-  celery_worker:
-    build: .
-    command: celery -A app.worker.celery_app worker --loglevel=info
-    environment:
-      - POSTGRES_HOST=postgres
-      - REDIS_HOST=redis
-    depends_on:
-      - redis
-      - postgres
-
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: raguser
-      POSTGRES_PASSWORD: ragpassword
-      POSTGRES_DB: ragdb
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-
-  opensearch:
-    image: opensearchproject/opensearch:2.11.0
-    environment:
-      - discovery.type=single-node
-      - plugins.security.disabled=true
-    volumes:
-      - opensearch_data:/usr/share/opensearch/data
-
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    volumes:
-      - minio_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
-  opensearch_data:
-  minio_data:
-```
-
-### Production (AWS)
-
-#### Infrastructure Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                           AWS VPC                                │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                    Public Subnet                          │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │   │
-│  │  │   EC2 (API)  │  │   EC2 (API)  │  │    Nginx     │    │   │
-│  │  │   + Celery   │  │   + Celery   │  │  (Optional)  │    │   │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                              │                                   │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                   Private Subnet                          │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │   │
-│  │  │     RDS      │  │ ElastiCache  │  │  OpenSearch  │    │   │
-│  │  │ (PostgreSQL) │  │   (Redis)    │  │   Service    │    │   │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                        S3 Bucket                          │   │
-│  │                    (Document Storage)                     │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### Security Groups
+### Docker Compose (Development / Staging)
 
 ```bash
-# EC2 Security Group (Public)
-- Inbound: 80, 443 from 0.0.0.0/0
-- Inbound: 22 from VPN/Bastion only
-- Outbound: All
+# Start
+docker-compose up --build -d
 
-# RDS Security Group (Private)
-- Inbound: 5432 from EC2 Security Group only
-- Outbound: None
+# Scale API instances
+docker-compose up --scale api=3 -d
 
-# ElastiCache Security Group (Private)
-- Inbound: 6379 from EC2 Security Group only
-
-# OpenSearch Security Group (Private)
-- Inbound: 9200 from EC2 Security Group only
+# Enable Celery Flower monitoring (port 5555)
+docker-compose --profile debug up -d
 ```
 
-#### IAM Role cho EC2
+### Production (AWS / VPS)
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:PutObject",
-        "s3:GetObject",
-        "s3:DeleteObject"
-      ],
-      "Resource": "arn:aws:s3:::your-rag-bucket/*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::your-rag-bucket"
-    }
-  ]
-}
+```
+Internet → Nginx (SSL) → FastAPI instances
+                       → Celery Workers
+                             │
+               PostgreSQL (Private) + Redis (Private) + S3/MinIO
 ```
 
-#### Nginx Configuration (SSL)
+**Production environment checklist:**
+
+- [ ] `DEBUG=false`
+- [ ] `SECRET_KEY` là chuỗi ngẫu nhiên 256-bit (không dùng default)
+- [ ] `CORS_ORIGINS` chỉ domain frontend thực tế
+- [ ] PostgreSQL + Redis chạy trên Private Subnet (không expose public)
+- [ ] Nginx với SSL/TLS (Let's Encrypt)
+- [ ] Celery Beat chạy liên tục (cleanup stuck jobs mỗi 30 phút)
+- [ ] Log rotation cấu hình (`LOG_MAX_BYTES`, `LOG_BACKUP_COUNT`)
+
+**Nginx config SSL:**
 
 ```nginx
-server {
-    listen 80;
-    server_name api.your-domain.com;
-    return 301 https://$server_name$request_uri;
-}
-
 server {
     listen 443 ssl http2;
     server_name api.your-domain.com;
@@ -1181,165 +1071,106 @@ server {
     ssl_certificate /etc/letsencrypt/live/api.your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/api.your-domain.com/privkey.pem;
 
-    # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-
-    # File upload limit
     client_max_body_size 10M;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 120s;
     }
 }
 ```
 
----
+### Health Check Endpoints
 
-## 🔄 Resiliency Patterns
+```bash
+# Liveness
+GET /health
+# → {"status": "healthy", "version": "1.0.0"}
 
-### Celery Retry Policy
-
-```python
-@celery_app.task(
-    bind=True,
-    autoretry_for=(OpenAIError, ConnectionError),
-    retry_backoff=True,        # Exponential backoff
-    retry_backoff_max=60,      # Max 60s between retries
-    retry_jitter=True,         # Add randomness
-    max_retries=3              # Max 3 attempts
-)
-def process_document(self, document_id: str):
-    try:
-        # Processing logic
-        pass
-    except Exception as exc:
-        # After 3 retries, move to DLQ
-        if self.request.retries >= 3:
-            mark_document_failed(document_id, str(exc))
-            raise Reject(exc, requeue=False)
-        raise
-```
-
-### Circuit Breaker Pattern
-
-```python
-from circuitbreaker import circuit
-
-@circuit(
-    failure_threshold=5,     # Open after 5 failures
-    recovery_timeout=30,     # Try again after 30s
-    expected_exception=OpenAIError
-)
-async def call_openai_with_circuit_breaker(prompt: str):
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            # ...
-        )
-    return response.json()
-```
-
-### Fallback Response
-
-```python
-async def rag_query(question: str) -> RAGResponse:
-    try:
-        return await call_openai_with_circuit_breaker(question)
-    except CircuitBreakerError:
-        return RAGResponse(
-            answer="Hệ thống đang tải cao, vui lòng thử lại sau 30 giây.",
-            sources=[],
-            error_code="SERVICE_OVERLOADED"
-        )
+# Readiness (kiểm tra DB + pgvector)
+GET /health/ready
+# → {"status": "ready", "checks": {"database": "connected", "pgvector": "connected"}}
 ```
 
 ---
 
 ## 🧪 Testing
 
-### Run Tests
-
 ```bash
-# Install test dependencies
+# Cài test dependencies
 pip install pytest pytest-asyncio pytest-cov httpx
 
-# Run all tests
+# Chạy toàn bộ tests
 pytest
 
-# Run with coverage
+# Chạy với coverage report
 pytest --cov=app --cov-report=html
+# → htmlcov/index.html
 
-# Run specific test file
-pytest tests/test_rag_service.py -v
+# Chạy test file cụ thể
+pytest tests/test_hybrid_extraction_pipeline.py -v
+pytest tests/test_word_export.py -v
+pytest tests/test_aggregation_word_context.py -v
 ```
 
-### Test Structure
+**Test coverage chính:**
 
-```
-tests/
-├── conftest.py              # Shared fixtures
-├── test_auth.py             # Auth endpoint tests
-├── test_documents.py        # Document API tests
-├── test_rag.py              # RAG query tests
-├── test_services/
-│   ├── test_chunking.py     # Chunking service tests
-│   └── test_embedding.py    # Embedding service tests
-└── test_integration/
-    └── test_full_pipeline.py
-```
+| File | Covers |
+|------|--------|
+| `test_api.py` | Auth + Tenant + Document endpoints |
+| `test_hybrid_extraction_pipeline.py` | Engine 2 extraction pipeline |
+| `test_word_export.py` | docxtpl renderer + anti zip-bomb |
+| `test_word_scanner.py` | Word template scanner + schema inference |
+| `test_aggregation_payload_shape.py` | Aggregation output structure |
+| `test_aggregation_word_context.py` | Word export context building |
+| `test_extraction_orchestrator.py` | Celery task orchestration |
+| `test_security.py` | JWT + bcrypt |
+| `test_chunking.py` | Text chunking strategies |
+| `test_embedding.py` | Gemini embedding service |
 
 ---
 
 ## 🤝 Contributing
 
-1. Fork repository
-2. Tạo feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
+1. Fork: `https://github.com/hunter875/doc-automation-engine`
+2. Tạo branch: `git checkout -b feature/ten-tinh-nang`
+3. Commit: `git commit -m 'feat: mô tả thay đổi'`
+4. Push: `git push origin feature/ten-tinh-nang`
 5. Tạo Pull Request
 
 ### Code Style
 
-- Sử dụng **Black** cho Python formatting
-- Sử dụng **isort** cho import sorting
+```bash
+black app/           # Format
+isort app/           # Sort imports
+mypy app/            # Type check
+flake8 app/          # Lint
+```
+
 - Type hints bắt buộc cho tất cả functions
 - Docstrings theo Google style
-
-```bash
-# Format code
-black app/
-isort app/
-
-# Type checking
-mypy app/
-```
+- Snake_case cho biến/hàm/files
 
 ---
 
 ## 📄 License
 
-MIT License - xem file [LICENSE](LICENSE) để biết thêm chi tiết.
+MIT License — xem file [LICENSE](LICENSE) để biết thêm chi tiết.
 
 ---
 
-## 📞 Support
+## 📞 Hỗ Trợ
 
-- **Documentation**: [docs/](docs/)
-- **Issues**: GitHub Issues
-- **Email**: support@your-domain.com
+- **Documentation**: [docs/](docs/) — engine2_technical_spec.md, API_REFERENCE.md, DEPLOYMENT.md
+- **Issues**: [GitHub Issues](https://github.com/hunter875/doc-automation-engine/issues)
+- **Swagger UI**: `http://localhost:8000/docs` (khi chạy local)
 
 ---
 
 <p align="center">
-  Built with ❤️ by Your Team
+  Built with ❤️ for Vietnamese enterprises —
+  <a href="https://github.com/hunter875/doc-automation-engine">hunter875/doc-automation-engine</a>
 </p>
