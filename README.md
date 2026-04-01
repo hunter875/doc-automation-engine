@@ -28,6 +28,8 @@
 
 ## 🎯 Tổng Quan
 
+**RAG + Structured Data Extraction project** - Hệ thống tự động hoá tài liệu doanh nghiệp kết hợp RAG (Retrieval-Augmented Generation) và trích xuất dữ liệu có cấu trúc.
+
 ### Vấn Đề Giải Quyết
 
 Doanh nghiệp cần một giải pháp để:
@@ -192,8 +194,8 @@ celery               # Distributed task queue
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/ragPJ.git
-cd ragPJ
+git clone https://github.com/hunter875/doc-automation-engine.git
+cd doc-automation-engine
 
 # Tạo virtual environment
 python -m venv venv
@@ -310,7 +312,7 @@ docker-compose down
 ## 📁 Cấu Trúc Project
 
 ```
-ragPJ/
+doc-automation-engine/
 ├── app/
 │   ├── main.py                 # FastAPI application entry point
 │   ├── api/
@@ -1341,4 +1343,3 @@ MIT License - xem file [LICENSE](LICENSE) để biết thêm chi tiết.
 <p align="center">
   Built with ❤️ by Your Team
 </p>
-# doc-automation-engine
