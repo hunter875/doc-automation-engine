@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = "ollama"
     OLLAMA_MODEL: str = "qwen3:8b"
-    OLLAMA_TIMEOUT_SECONDS: float = 300.0
+    OLLAMA_TIMEOUT_SECONDS: float = 90.0
     OLLAMA_LOG_RAW_PRE_VALIDATE: bool = True
     OLLAMA_RAW_PREVIEW_CHARS: int = 1200
 

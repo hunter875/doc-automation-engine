@@ -1,4 +1,4 @@
-from app.services.aggregation_service import build_word_export_context
+from app.application.aggregation_service import build_word_export_context
 
 
 def test_build_word_export_context_keeps_all_records_and_selected_record() -> None:

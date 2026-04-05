@@ -2,7 +2,7 @@ import io
 
 from docx import Document
 
-from app.services.word_scanner import scan_word_template
+from app.utils.word_scanner import scan_word_template
 
 
 def _build_docx_bytes(build_fn):

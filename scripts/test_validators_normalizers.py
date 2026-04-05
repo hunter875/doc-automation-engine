@@ -2,8 +2,8 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.business.validators import validate_business
-from app.business.normalizers import normalize_business
+from app.domain.rules.validation_rules import validate_business
+from app.domain.rules.normalizers import normalize_business
 
 print("=== VALIDATOR TESTS ===")
 

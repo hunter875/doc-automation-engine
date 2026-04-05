@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import (
+from app.api.deps import (
     TenantContext,
     get_tenant_context,
     require_admin,
@@ -20,17 +20,17 @@ from app.core.exceptions import (
     FileValidationError,
     S3Error,
 )
-from app.db.postgres import get_db
-from app.models.document import DocumentStatus
-from app.models.tenant import UserTenantRole
+from app.infrastructure.db.session import get_db
+from app.domain.models.document import DocumentStatus
+from app.domain.models.tenant import UserTenantRole
 from app.schemas.doc_schema import (
     DocumentResponse,
     DocumentUpdate,
     PaginatedDocuments,
     UploadResponse,
 )
-from app.services.doc_service import DocumentService
-from app.worker.tasks import process_document_task
+from app.application.doc_service import DocumentService
+from app.infrastructure.worker.tasks import process_document_task
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 

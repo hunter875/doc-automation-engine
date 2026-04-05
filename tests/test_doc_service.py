@@ -8,8 +8,8 @@ import pytest
 from app.core.exceptions import (
     DocumentNotFoundError,
 )
-from app.models.document import Document
-from app.models.tenant import Tenant
+from app.domain.models.document import Document
+from app.domain.models.tenant import Tenant
 
 
 # ============================================================================

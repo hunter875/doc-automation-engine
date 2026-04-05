@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import (
+from app.api.deps import (
     TenantContext,
     get_tenant_context,
     require_viewer,
@@ -16,8 +16,8 @@ from app.core.exceptions import (
     ProcessingError,
     VectorStoreError,
 )
-from app.db.postgres import get_db
-from app.models.tenant import UserTenantRole
+from app.infrastructure.db.session import get_db
+from app.domain.models.tenant import UserTenantRole
 from app.schemas.rag_schema import (
     RAGQueryRequest,
     RAGQueryResponse,
@@ -25,7 +25,7 @@ from app.schemas.rag_schema import (
     SearchResponse,
     SearchResultItem,
 )
-from app.services.rag_service import RAGService
+from app.engines.rag.rag_pipeline import RAGService
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 

@@ -84,7 +84,10 @@ if ok3:
             "pending": "⏳ Chờ xử lý",
             "processing": "🔄 Đang xử lý",
             "extracted": "✅ Đã trích xuất",
+            "enriching": "🔬 Đang làm giàu",
+            "ready_for_review": "🟠 Chờ duyệt",
             "approved": "✅ Đã duyệt",
+            "rejected": "🚫 Từ chối",
             "failed": "❌ Thất bại",
             "aggregated": "📊 Đã tổng hợp",
         }

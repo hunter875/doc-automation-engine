@@ -253,11 +253,16 @@ ALLOWED_MIME_TYPES=application/pdf,text/plain,application/vnd.openxmlformats-off
 
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Check status
-docker-compose ps
+docker compose ps
 ```
+
+Sau khi start xong:
+
+- API: http://localhost:8000
+- Streamlit UI: http://localhost:8501
 
 ### 4. Database Migration
 
@@ -296,14 +301,19 @@ celery -A app.worker.celery_app worker --loglevel=info --concurrency=4
 
 ```bash
 # Build và chạy toàn bộ
-docker-compose up --build -d
+docker compose up --build -d
 
 # Xem logs
-docker-compose logs -f api
+docker compose logs -f api
+
+# Xem logs giao diện Streamlit
+docker compose logs -f streamlit
 
 # Stop
-docker-compose down
+docker compose down
 ```
+
+Với Docker Desktop trên Windows, cách này cho phép chạy luôn cả FastAPI và Streamlit trong container, không cần cài Python package vào máy local. Docker vẫn sẽ pull base image một lần đầu nếu máy chưa có.
 
 ---
 

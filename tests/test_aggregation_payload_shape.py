@@ -1,4 +1,4 @@
-from app.services.aggregation_service import _normalize_master_payload
+from app.application.aggregation_service import _normalize_master_payload
 
 
 def test_master_payload_includes_empty_arrays_and_flat_scalars():

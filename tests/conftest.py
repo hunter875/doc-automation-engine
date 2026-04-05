@@ -20,7 +20,7 @@ os.environ["POSTGRES_PASSWORD"] = "test"
 os.environ["POSTGRES_DB"] = "test_rag"
 os.environ["REDIS_HOST"] = "localhost"
 
-from app.db.postgres import Base
+from app.infrastructure.db.session import Base
 
 
 # ============================================================================
@@ -77,7 +77,7 @@ def test_user_data():
 def test_user(db_session):
     """Create a test user in the database."""
     from app.core.security import get_password_hash
-    from app.models.user import User
+    from app.domain.models.user import User
 
     user = User(
         id=uuid.uuid4(),
@@ -96,7 +96,7 @@ def test_user(db_session):
 def inactive_user(db_session):
     """Create an inactive test user."""
     from app.core.security import get_password_hash
-    from app.models.user import User
+    from app.domain.models.user import User
 
     user = User(
         id=uuid.uuid4(),
@@ -118,7 +118,7 @@ def inactive_user(db_session):
 @pytest.fixture
 def test_tenant(db_session):
     """Create a test tenant."""
-    from app.models.tenant import Tenant
+    from app.domain.models.tenant import Tenant
 
     tenant = Tenant(
         id=uuid.uuid4(),
@@ -135,7 +135,7 @@ def test_tenant(db_session):
 @pytest.fixture
 def test_user_role(db_session, test_user, test_tenant):
     """Create a user-tenant role mapping."""
-    from app.models.tenant import UserTenantRole
+    from app.domain.models.tenant import UserTenantRole
 
     role = UserTenantRole(
         id=uuid.uuid4(),
@@ -156,7 +156,7 @@ def test_user_role(db_session, test_user, test_tenant):
 @pytest.fixture
 def mock_openai():
     """Mock OpenAI client."""
-    with patch("app.services.embedding.openai_client") as mock:
+    with patch("app.engines.rag.embedding_service.openai_client") as mock:
         # Mock embeddings
         mock_embedding_response = MagicMock()
         mock_embedding_data = MagicMock()
@@ -181,10 +181,10 @@ def mock_openai():
 @pytest.fixture
 def mock_pgvector():
     """Mock pgvector operations."""
-    with patch("app.db.pgvector.search_vectors") as mock_search, \
-         patch("app.db.pgvector.hybrid_search") as mock_hybrid, \
-         patch("app.db.pgvector.bulk_index_documents") as mock_bulk, \
-         patch("app.db.pgvector.delete_document_chunks") as mock_delete:
+    with patch("app.engines.rag.vector_search.search_vectors") as mock_search, \
+         patch("app.engines.rag.vector_search.hybrid_search") as mock_hybrid, \
+         patch("app.engines.rag.vector_search.bulk_index_documents") as mock_bulk, \
+         patch("app.engines.rag.vector_search.delete_document_chunks") as mock_delete:
 
         # Mock search response
         mock_search.return_value = [
@@ -221,7 +221,7 @@ def mock_pgvector():
 @pytest.fixture
 def mock_s3():
     """Mock S3/MinIO client."""
-    with patch("app.services.doc_service.s3_client") as mock:
+    with patch("app.application.doc_service.s3_client") as mock:
         mock.put_object.return_value = {}
         mock.get_object.return_value = {
             "Body": MagicMock(read=lambda: b"test file content")

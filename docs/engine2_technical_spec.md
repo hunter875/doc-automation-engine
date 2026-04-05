@@ -1,8 +1,8 @@
 # ⚙️ Engine 2 — Hệ thống Bóc tách Dữ liệu Tự động (AI Data Extraction)
 
-> **Phiên bản:** 3.0.0  
-> **Cập nhật:** 31/03/2026  
-> **Stack:** FastAPI · SQLAlchemy · Celery · PostgreSQL (JSONB) · Ollama (Instructor + Pydantic) · docxtpl · YAML Templates · PipelineMetrics  
+> **Phiên bản:** 4.0.0  
+> **Cập nhật:** 03/04/2026  
+> **Stack:** FastAPI · SQLAlchemy · Celery · PostgreSQL (JSONB) · Ollama (Instructor + Pydantic) · docxtpl · YAML Templates · PipelineMetrics · Two-Stage Block Pipeline  
 
 ---
 
@@ -12,18 +12,19 @@
 2. [Kiến trúc Lưu trữ — PostgreSQL Hybrid](#2-kiến-trúc-lưu-trữ--postgresql-hybrid)
 3. [Pipeline 4 Bước Khép Kín](#3-pipeline-4-bước-khép-kín)
 4. [Bước 1: Bóc tách thô (Hybrid Extraction)](#4-bước-1-bóc-tách-thô-hybrid-extraction)
-5. [Bước 2: Rây lọc & Ép kiểu (Validation Layer)](#5-bước-2-rây-lọc--ép-kiểu-validation-layer)
-6. [Bước 3: Xào nấu dữ liệu (Aggregation & Map-Reduce)](#6-bước-3-xào-nấu-dữ-liệu-aggregation--map-reduce)
-7. [Bước 4: Bơm khuôn Word (Headless Document Export)](#7-bước-4-bơm-khuôn-word-headless-document-export)
-8. [Database Schema](#8-database-schema)
-9. [API Reference — 25 Endpoints](#9-api-reference--25-endpoints)
-10. [Cấu hình (Configuration)](#10-cấu-hình-configuration)
-11. [Celery Workers & Background Tasks](#11-celery-workers--background-tasks)
-12. [Word Template Scanner](#12-word-template-scanner)
-13. [Pydantic Schemas (Request/Response)](#13-pydantic-schemas-requestresponse)
-14. [Phase 3 — Template-driven · Dynamic Columns · Batch Parallel · Observability](#14-phase-3--template-driven--dynamic-columns--batch-parallel--observability)
-15. [Cấu trúc Source Code](#15-cấu-trúc-source-code)
-16. [Ví dụ End-to-End](#16-ví-dụ-end-to-end)
+5. [Block Mode — Two-Stage Pipeline (v4)](#5-block-mode--two-stage-pipeline-v4)
+6. [Bước 2: Rây lọc & Ép kiểu (Validation Layer)](#6-bước-2-rây-lọc--ép-kiểu-validation-layer)
+7. [Bước 3: Xào nấu dữ liệu (Aggregation & Map-Reduce)](#7-bước-3-xào-nấu-dữ-liệu-aggregation--map-reduce)
+8. [Bước 4: Bơm khuôn Word (Headless Document Export)](#8-bước-4-bơm-khuôn-word-headless-document-export)
+9. [Database Schema](#9-database-schema)
+10. [API Reference — 25 Endpoints](#10-api-reference--25-endpoints)
+11. [Cấu hình (Configuration)](#11-cấu-hình-configuration)
+12. [Celery Workers & Background Tasks](#12-celery-workers--background-tasks)
+13. [Word Template Scanner](#13-word-template-scanner)
+14. [Pydantic Schemas (Request/Response)](#14-pydantic-schemas-requestresponse)
+15. [Phase 3 — Template-driven · Dynamic Columns · Batch Parallel · Observability](#15-phase-3--template-driven--dynamic-columns--batch-parallel--observability)
+16. [Cấu trúc Source Code](#16-cấu-trúc-source-code)
+17. [Ví dụ End-to-End](#17-ví-dụ-end-to-end)
 
 ---
 
@@ -44,18 +45,19 @@ Engine 2 là hệ thống **bóc tách dữ liệu có cấu trúc** từ tài l
 | # | Tính năng | Mô tả |
 |---|---|---|
 | 1 | **Hybrid extraction mặc định** | Chạy `HybridExtractionPipeline` (pdfplumber + normalize + Ollama + rule validation) từ bytes in-memory |
-| 2 | **Template-driven** | Định nghĩa schema JSON → AI bóc tách đúng format |
-| 3 | **YAML Template System** | Tất cả regex/pattern/threshold được gửi ngoài vào file YAML (`app/templates/pccc.yaml`), không còn hardcode |
-| 4 | **Dynamic Column Detection** | Tự động phát hiện cột STT/Nội dung/Kết quả trong bảng thống kê thay vì giả định cố định |
-| 5 | **Validation Layer** | Ép kiểu, chuẩn hóa ngày, phát hiện lỗi TRƯỚC khi lưu DB |
-| 6 | **Human-in-the-loop** | Review (approve/reject/edit) trước khi aggregate |
-| 7 | **Aggregation** | SUM, AVG, COUNT, CONCAT → gom N báo cáo thành 1 |
-| 8 | **Word Export** | Nhồi dữ liệu vào template Word bằng Jinja2 (docxtpl) |
-| 9 | **Word Scanner** | Quét file Word mẫu → auto-generate schema |
-| 10 | **Batch processing (Celery)** | Upload N file cùng lúc (max 20) → N Celery tasks phân tán |
-| 11 | **Batch parallel (in-process)** | `run_batch()` chạy block pipeline song song với `ThreadPoolExecutor` + backpressure |
-| 12 | **Observability Metrics** | `PipelineMetrics` (per-run counters/timers) + `GlobalMetrics` (thread-safe aggregator) + API endpoint |
-| 13 | **Multi-tenant** | Cách ly hoàn toàn theo `tenant_id` |
+| 2 | **Block mode two-stage (v4)** | Stage 1 = deterministic (không LLM), Stage 2 = LLM enrichment async độc lập. Document dùng được ngay sau Stage 1 kể cả khi Ollama tắt |
+| 3 | **Template-driven** | Định nghĩa schema JSON → AI bóc tách đúng format |
+| 4 | **YAML Template System** | Tất cả regex/pattern/threshold được gửi ngoài vào file YAML (`app/templates/pccc.yaml`), không còn hardcode |
+| 5 | **Dynamic Column Detection** | Tự động phát hiện cột STT/Nội dung/Kết quả trong bảng thống kê thay vì giả định cố định |
+| 6 | **Validation Layer** | Ép kiểu, chuẩn hóa ngày, phát hiện lỗi TRƯỚC khi lưu DB |
+| 7 | **Human-in-the-loop** | Review (approve/reject/edit) trước khi aggregate |
+| 8 | **Aggregation** | SUM, AVG, COUNT, CONCAT → gom N báo cáo thành 1 |
+| 9 | **Word Export** | Nhồi dữ liệu vào template Word bằng Jinja2 (docxtpl) |
+| 10 | **Word Scanner** | Quét file Word mẫu → auto-generate schema |
+| 11 | **Batch processing (Celery)** | Upload N file cùng lúc (max 20) → N Celery tasks phân tán |
+| 12 | **Batch parallel (in-process)** | `run_batch()` chạy block pipeline song song với `ThreadPoolExecutor` + backpressure |
+| 13 | **Observability Metrics** | `PipelineMetrics` (per-run counters/timers) + `GlobalMetrics` (thread-safe aggregator) + API endpoint |
+| 14 | **Multi-tenant** | Cách ly hoàn toàn theo `tenant_id` |
 
 ---
 
@@ -157,22 +159,31 @@ WHERE extracted_data @> '{"so_vu": 5}'::jsonb;
        ↓
 2. Celery worker nhận task
        ↓
-3. [Bước 1] Worker tải file từ S3 → `run_from_bytes()`
-  ├── Parse text + table bằng `pdfplumber`
-  ├── Normalize text/bảng theo rule nghiệp vụ
-  └── Giữ toàn bộ xử lý trong RAM (không ghi file tạm)
+3. [Bước 1] Worker tải file từ S3 → tùy `extraction_mode`:
+  **Standard/Vision/Fast:**
+  ├── `pipeline.run_from_bytes()` — pdfplumber + normalize + Ollama + rule validation
+  └── `persist_pipeline_result()` → job.status = EXTRACTED
+
+  **Block (v4 — two-stage):**
+  ├── `pipeline.run_stage1_from_bytes()` — pdfplumber + regex ONLY, no LLM
+  ├── `persist_stage1_result()` → job.status = EXTRACTED, enrichment_status = PENDING
+  └── `enrich_job_task.apply_async(queue="enrichment")` → fire-and-forget
      ↓
-4. [Bước 1] Inference qua Ollama + Instructor + Pydantic
-  ├── Model mặc định: `settings.OLLAMA_MODEL` (vd: `qwen2.5:7b`)
-  ├── Output ép kiểu theo `HybridExtractionOutput`
-  └── RuleEngine check logic domain (`stt_14_tong_cnch == len(danh_sach_cnch)`, format ngày...)
+4. [Stage 1 Block] 6 sub-stages (tất cả deterministic):
+  ├── layout reconstruction (pdfplumber + restore_vn_spacing)
+  ├── block detection (regex anchors từ YAML template)
+  ├── header extraction (regex: số báo cáo, ngày, đơn vị)
+  ├── narrative extraction (regex: tong_so_vu_*, chi_tiet_cnch)
+  ├── table parsing (dynamic column detect + pdfplumber)
+  └── business rules engine + sanity checks
      ↓
-5. [Bước 2] Retry/Manual-review
-  ├── Retry tối đa `HYBRID_MAX_RETRIES`
-  ├── Quá số lần retry → ghi metadata manual review
-  └── Persist trạng thái vào `extraction_jobs`
-       ↓
-6. INSERT clean_data → extraction_jobs.extracted_data (JSONB)
+5. [Stage 2 Block — async, queue enrichment] enrich_job_task:
+  ├── Đọc chi_tiet_cnch từ extracted_data
+  ├── Gọi CNCHListOutput LLM (120s timeout, model: qwen3:8b)
+  ├── Thành công → enriched_data = {"danh_sach_cnch": [...]}
+  └── Thất bại → enrichment_status = FAILED, job vẫn dùng được
+     ↓
+6. INSERT → extraction_jobs.extracted_data (Stage 1) + enriched_data (Stage 2)
        ↓
 7. [Human Review] Approve / Reject / Edit → reviewed_data
        ↓
@@ -192,26 +203,26 @@ WHERE extracted_data @> '{"so_vu": 5}'::jsonb;
 ## 4. Bước 1: Bóc tách thô (Hybrid Extraction)
 
 **Files chính:**
-- `app/services/extraction_orchestrator.py`
-- `app/services/hybrid_extraction_pipeline.py`
-- `app/services/block_extraction_pipeline.py` *(block mode)*
-- `app/services/block_business_workflow.py` *(block mode orchestrator)*
-- `app/services/extractor_strategies.py`
-- `app/schemas/hybrid_extraction_schema.py`
+- `app/engines/extraction/orchestrator.py`
+- `app/engines/extraction/hybrid_pipeline.py`
+- `app/engines/extraction/block_pipeline.py` *(block mode — xem Section 5)*
+- `app/engines/extraction/extractors.py`
+- `app/engines/extraction/schemas.py`
 
 ### 4.1 Kiến trúc chạy hiện tại
 
-**Hybrid mode (standard):**
-- Router jobs tạo `ExtractionJob` và đẩy Celery task `extract_document_task`
+**Hybrid mode (standard/vision/fast):**
+- Router tạo `ExtractionJob` và đẩy Celery task `extract_document_task` → queue `extraction`
 - Worker gọi `ExtractionOrchestrator.run(job_id)`
 - Orchestrator tải file từ S3, chạy `pipeline.run_from_bytes(file_bytes, filename)`
 - Kết quả được `JobManager.persist_pipeline_result()` lưu về DB
 
-**Block mode:**
-- `BlockBusinessWorkflow` nhận PDF bytes → `BlockExtractionPipeline.run_from_bytes()`
-- Pipeline 6 stage: layout reconstruction → block detection → LLM extraction → schema enforcement → validation → business rules
-- Tất cả pattern/regex/threshold được load từ **YAML template** (xem [Section 14](#14-phase-3--template-driven--dynamic-columns--batch-parallel--observability))
-- Output bao gồm `template` (ID) và `metrics` (counters + timers) trong payload cuối
+**Block mode (v4 — two-stage):**
+- Orchestrator nhận diện `extraction_mode == "block"` và dùng đường đặc biệt:
+  1. Gọi `pipeline.run_stage1_from_bytes()` — không có LLM, trả về ngay
+  2. Gọi `persist_stage1_result()` → `job.status = EXTRACTED`, `job.enrichment_status = PENDING`
+  3. Dispatch `enrich_job_task.apply_async(queue="enrichment")` → fire-and-forget
+- Xem chi tiết tại [Section 5](#5-block-mode--two-stage-pipeline-v4)
 
 ### 4.2 Hybrid pipeline 4 chặng
 
@@ -227,17 +238,319 @@ WHERE extracted_data @> '{"so_vu": 5}'::jsonb;
 - Ví dụ với nghiệp vụ PCCC: `stt_14_tong_cnch == len(danh_sach_cnch)`
 - Ví dụ khác: check format ngày `dd/mm/yyyy`, date range, đối soát count/list theo domain
 
-Mục tiêu là tách phần khung xử lý chung khỏi luật nghiệp vụ riêng, để Engine 2 tái sử dụng cho nhiều domain (PCCC, tài chính, vận hành...).
-
 ### 4.4 Trạng thái lưu kết quả
 
-- **Success:** `status=extracted`, `extracted_data=<HybridExtractionOutput model_dump>`
+- **Success:** `status=extracted`, `extracted_data=<output model_dump>`
 - **Fail sau retries:** `status=failed`, `extracted_data` chứa `_manual_review_path` và `_manual_review_metadata`
 - `confidence_scores` lưu `_validation_attempts` + trạng thái pipeline
 
 ---
 
-## 5. Bước 2: Rây lọc & Ép kiểu (Validation Layer)
+## 5. Block Mode — Two-Stage Pipeline (v4)
+
+> **Nguyên tắc cốt lõi:** LLM không bao giờ nằm trên critical path. Document phải dùng được ngay sau Stage 1 kể cả khi Ollama tắt hoàn toàn.
+
+### 5.1 Tại sao cần Two-Stage
+
+| Vấn đề (v3 — một stage) | Giải pháp (v4 — two-stage) |
+|---|---|
+| LLM timeout 120s → user chờ 120s mới thấy kết quả | User thấy kết quả ngay sau Stage 1 (~vài giây) |
+| Ollama chết → toàn bộ job `FAILED`, không có dữ liệu nào | Ollama chết → job vẫn `EXTRACTED`, dùng bình thường |
+| 4 extraction workers tất cả chờ LLM | 4 extraction workers chạy tự do; 2 enrichment workers riêng xử lý LLM |
+| LLM output lẫn vào `extracted_data` → khó audit | LLM output trong `enriched_data` riêng, `final_data` merge theo priority rõ ràng |
+
+### 5.2 Kiến trúc tổng quan
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                       BLOCK MODE TWO-STAGE PIPELINE (v4)                       │
+│                                                                                │
+│  ┌──────────────────────────────────┐      ┌──────────────────────────────────┐ │
+│  │          STAGE 1                 │      │          STAGE 2                 │ │
+│  │    (Deterministic — No LLM)      │      │    (LLM Enrichment — Async)      │ │
+│  │                                  │      │                                  │ │
+│  │  1. PDF layout reconstruction    │      │  1. Read chi_tiet_cnch from DB   │ │
+│  │  2. Block detection              │─────→│  2. Call CNCHListOutput (120s)   │ │
+│  │  3. Header extraction (regex)    │ fire │  3. Write enriched_data (JSONB)  │ │
+│  │  4. Narrative extraction (regex) │ and  │  4. enrichment_status = ENRICHED │ │
+│  │  5. Table parsing (pdfplumber)   │ forget    hoặc FAILED nếu lỗi           │ │
+│  │  6. Business rules engine        │      │                                  │ │
+│  │  7. Regex CNCH / vehicle / CV    │      └──────────────────────────────────┘ │
+│  │                                  │               Queue: enrichment           │
+│  │  → job.status = EXTRACTED        │               concurrency = 2             │
+│  │  → enrichment_status = PENDING   │                                          │
+│  └──────────────────────────────────┘                                          │
+│           Queue: extraction                                                     │
+│           concurrency = 4                                                       │
+└────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.3 Stage 1 — Deterministic Extraction
+
+**Entry point:** `BlockExtractionPipeline.run_stage1_from_bytes(pdf_bytes, filename)`  
+**File:** `app/engines/extraction/block_pipeline.py`
+
+Gồm 6 stage nội bộ, **tất cả đều không gọi LLM**:
+
+| Stage nội bộ | Timer metric | Mô tả |
+|---|---|---|
+| `stage1_layout` | `stage1_layout` | `pdfplumber` tái tạo text + extract tables. `layout_text` giữ trật tự đọc |
+| `stage2_detect` | `stage2_detect` | Phát hiện block: `header`, `phan_nghiep_vu`, `bang_thong_ke` bằng regex anchor từ YAML template |
+| `stage3_extract` | `stage3_extract` | `_extract_header()` → regex; `_extract_narrative()` → regex (`_parse_phan_nghiep_vu_fallback`); `_extract_table()` → dynamic column detect + pdfplumber; `_apply_cnch_fallback()` → đối soát với bảng thống kê |
+| `stage6_business` | `stage6_business` | `_run_business_rules()` → RuleEngine check tất cả domain logic (counts, date format, sanity) |
+| `stage_narrative_arrays` | `stage_narrative_arrays` | `_extract_narrative_arrays(..., chi_tiet_cnch="")` với **chi_tiet_cnch trống** → bỏ qua nhánh LLM. Regex/business-rules trích `pt_hu_hong`, `cong_van`, regex CNCH |
+| Sanity check | — | Đối soát `tong_so_vu_chay/no/cnch` với bảng thống kê (`stt_2`, `stt_8`, `stt_14`), ghi đè nếu lệch |
+
+**Output:** `PipelineResult`
+```python
+@dataclass
+class PipelineResult:
+    status: str                    # "ok" | "failed"
+    attempts: int
+    output: BlockExtractionOutput | None
+    errors: list[str]
+    business_data: dict | None
+    metrics: dict | None
+    chi_tiet_cnch: str = ""        # ← v4 mới: raw CNCH subsection text cho Stage 2
+```
+
+**`BlockExtractionOutput` schema:**
+```python
+class BlockExtractionOutput(BaseModel):
+    header: BlockHeader
+    phan_I_va_II_chi_tiet_nghiep_vu: BlockNghiepVu
+    bang_thong_ke: list[ChiTieu]
+    danh_sach_cnch: list[CNCHItem]                     # regex-only ở Stage 1
+    danh_sach_phuong_tien_hu_hong: list[PhuongTienHuHongItem]
+    danh_sach_cong_van_tham_muu: list[CongVanItem]
+```
+
+**Sub-schemas `BlockNghiepVu`:**
+```python
+class BlockNghiepVu(BaseModel):
+    tong_so_vu_chay: int
+    tong_so_vu_no: int
+    tong_so_vu_cnch: int
+    chi_tiet_cnch: str      # ← raw text của mục 3, Stage 2 dùng để gọi LLM
+    quan_so_truc: int
+    tong_chi_vien: int
+    tong_cong_van: int
+    tong_xe_hu_hong: int
+```
+
+### 5.4 Stage 2 — LLM Enrichment
+
+**Entry point:** `enrich_job_task(job_id)` — Celery task  
+**File:** `app/infrastructure/worker/enrichment_tasks.py`  
+**Queue:** `enrichment` | **Concurrency:** 2 | **Soft time limit:** 180s | **Max retries:** 3
+
+LLM method duy nhất trong toàn bộ block pipeline:
+
+```python
+def _llm_enrich_cnch(self, chi_tiet_cnch: str) -> list[CNCHItem]:
+    """Gọi CNCHListOutput LLM call — PHƯƠNG THỨC DUY NHẤT gọi LLM trong block pipeline."""
+    result: CNCHListOutput = self.extractor.extract(
+        messages=[
+            {"role": "system", "content": cnch_prompt},
+            {"role": "user", "content": chi_tiet_cnch},
+        ],
+        response_model=CNCHListOutput,
+        model=self.model,
+        temperature=0.0,
+        timeout_seconds=120.0,
+    )
+```
+
+**`CNCHItem` — 8 fields (LLM điền đầy đủ ở Stage 2):**
+```python
+class CNCHItem(BaseModel):
+    stt: int
+    ngay_xay_ra: str        # dd/mm/yyyy
+    thoi_gian: str          # "HH:MM ngày dd/mm/yyyy" hoặc "HH giờ MM phút ngày dd/mm/yyyy"
+    dia_diem: str
+    noi_dung_tin_bao: str   # loại sự cố (ví dụ: "người dân nhảy sông")
+    luc_luong_tham_gia: str # "01 xe, 06 CBCS"
+    ket_qua_xu_ly: str
+    thong_tin_nan_nhan: str
+    mo_ta: str              # internal — backward compat với business-rules path
+```
+
+**Flow của `enrich_job_task`:**
+```
+1. Load job từ DB
+2. Guard: chỉ process khi enrichment_status IN (PENDING, FAILED)
+3. Set enrichment_status = RUNNING, enrichment_started_at = now
+4. Đọc chi_tiet_cnch từ job.extracted_data["phan_I_va_II_..."]["chi_tiet_cnch"]
+5. Gọi BlockExtractionPipeline._llm_enrich_cnch(chi_tiet_cnch)
+6. Thành công → job.enriched_data = {"danh_sach_cnch": [...]}, enrichment_status = ENRICHED
+   Thất bại → enrichment_status = FAILED, job.extracted_data KHÔNG BỊ ĐỤ VÀO
+```
+
+### 5.5 EnrichmentStatus — State machine độc lập
+
+```
+           Stage 1 succeeded
+                  │
+          ┌───────▼────────┐
+          │    PENDING     │  enrichment_status = PENDING
+          └───────┬────────┘  (enrichment_status = SKIPPED nếu không có chi_tiet_cnch)
+                  │ enrich_job_task picked up
+          ┌───────▼────────┐
+          │    RUNNING     │
+          └────┬───────┬───┘
+       success │       │ failure
+          ┌────▼───┐  ┌▼───────┐
+          │ENRICHED│  │ FAILED │ ← job vẫn EXTRACTED, dùng Stage 1 data
+          └────────┘  └───┬────┘
+                          │ retry (max 3, backoff 60s)
+                          └──────→ RUNNING lại
+```
+
+`None` = job được tạo trước khi upgrade lên v4 (legacy, không có enrichment)
+
+### 5.6 Merge priority — `final_data` property
+
+```python
+@property
+def final_data(self) -> dict | None:
+    """Merge priority: reviewed_data > (extracted + enriched merged) > extracted"""
+    if self.reviewed_data:
+        return self.reviewed_data          # Human-edited luôn thắng
+    if self.extracted_data and self.enriched_data:
+        merged = dict(self.extracted_data)
+        merged.update(self.enriched_data)  # LLM fields merge ON TOP nhưng không overwrite
+        return merged
+    return self.reviewed_data or self.extracted_data
+```
+
+**Nguyên tắc:** `enriched_data` chỉ chứa `{"danh_sach_cnch": [...]}`. Stage 1 `extracted_data` chứa tất cả fields còn lại. Hai set này không overlap → không bao giờ ghi đè lẫn nhau.
+
+### 5.7 Persistence — JobManager
+
+**`persist_stage1_result(job, result, llm_model, processing_time_ms)`**
+- Ghi `job.extracted_data = flatten_block_output(result.output.model_dump())`
+- Set `job.status = EXTRACTED`
+- Set `job.enrichment_status = PENDING` nếu `result.chi_tiet_cnch` không rỗng, else `SKIPPED`
+- **Không đụng vào** `enriched_data`
+
+**`persist_enrichment_result(job_id, enriched_cnch, error)`**
+- Ghi `job.enriched_data = {"danh_sach_cnch": [...]}`
+- Set `job.enrichment_status = ENRICHED | FAILED | SKIPPED`
+- **Tuyệt đối không đụng vào** `job.extracted_data`
+
+### 5.8 Counters & Timers thêm trong v4
+
+| Metric | Loại | Mô tả |
+|---|---|---|
+| `llm_calls` | counter | Mỗi lần `_llm_enrich_cnch` được invoke |
+| `cnch_llm_extracted` | counter | LLM trả về items > 0 |
+| `cnch_llm_fallback` | counter | LLM call ném exception, dùng regex kết quả |
+| `stage_narrative_arrays` | timer | Toàn bộ thời gian Stage 1 narrative arrays |
+
+### 5.9 Enrichment settlement gate — Aggregation consistency
+
+> **Vấn đề gốc:** Enrichment là *eventual mutation system* — LLM mutate state document một cách async, nondeterministic, retryable. Nếu aggregate chạy khi job A enriched còn job B chưa, report tuần sẽ inconsistent: một số vụ CNCH có 8 fields đầy đủ, số khác chỉ có regex skeleton.
+
+**Giải pháp — 3 điểm fix đồng thời trong `AggregationService.aggregate()`:**
+
+**1. Settlement gate (block aggregation khi enrichment chưa xong):**
+
+```python
+unsettled = [j for j in jobs
+             if j.enrichment_status in (EnrichmentStatus.PENDING, EnrichmentStatus.RUNNING)]
+if unsettled:
+    raise ProcessingError(
+        f"{len(unsettled)} job(s) still have enrichment in-flight. "
+        "Wait for enrichment to settle before aggregating."
+    )
+```
+
+Trạng thái settled = `ENRICHED | FAILED | SKIPPED | None(legacy)`. Chỉ cần enrichment dừng lại (dù thành công hay thất bại) thì mới cho aggregate.
+
+**2. Dùng `final_data` thay vì `extracted_data` trực tiếp:**
+
+```python
+# Trước (sai — bỏ qua enriched_data hoàn toàn):
+row = rd or job.extracted_data
+
+# Sau (đúng — merge theo priority chain):
+row = job.final_data   # reviewed > (extracted+enriched) > extracted
+```
+
+**3. Per-job enrichment audit trail ghi vào `_metadata`:**
+
+```json
+"_metadata": {
+  "enrichment_summary": {
+    "stage1+stage2": 5,   // ← 5 jobs được LLM enrich đầy đủ
+    "stage1_only":   2,   // ← 2 jobs enrichment FAILED, dùng regex
+    "reviewed":      0
+  },
+  "enrichment_partial": false,  // true nếu mix giữa stage1+stage2 và stage1_only
+  "enrichment_audit": [
+    {"job_id": "abc12345", "enrichment_status": "enriched",  "data_source": "stage1+stage2"},
+    {"job_id": "def67890", "enrichment_status": "failed",    "data_source": "stage1_only"},
+    ...
+  ]
+}
+```
+
+`enrichment_partial: true` là warning flag — report vẫn được tạo (vì `FAILED` đã settled) nhưng UI có thể hiện cảnh báo "một số vụ CNCH có thể thiếu thông tin chi tiết".
+
+**Kết quả sau fix — các trường hợp xử lý:**
+
+| Trạng thái enrichment lúc aggregate | Hành vi |
+|---|---|
+| Tất cả `ENRICHED` | Aggregate bình thường, `enrichment_partial=false` |
+| Mix `ENRICHED` + `FAILED` | Aggregate bình thường, `enrichment_partial=true`, audit trail đầy đủ |
+| Tất cả `FAILED` | Aggregate bình thường, dùng Stage 1 regex data, `enrichment_partial=false` |
+| Tất cả `SKIPPED` | Aggregate bình thường (không có CNCH text), `enrichment_partial=false` |
+| Bất kỳ job nào `PENDING` hoặc `RUNNING` | **Raise ProcessingError** — yêu cầu caller đợi |
+
+### 5.10 Acceptance criteria (cập nhật)
+
+| Yêu cầu | Cách đáp ứng |
+|---|---|
+| Document dùng được khi Ollama tắt | `extracted_data` luôn được ghi trong Stage 1 |
+| Report không bao giờ inconsistent | Settlement gate block aggregate khi enrichment in-flight |
+| Audit trail cho mỗi report | `_metadata.enrichment_audit` ghi nguồn data từng job |
+| Throughput không bị ảnh hưởng khi LLM chậm | Stage 1 worker trả về ngay; enrichment pool riêng |
+| LLM = optimization layer | `FAILED` settled → aggregate dùng Stage 1 data, `enrichment_partial=true` |
+
+### 5.11 Ghi chú kiến trúc — Two-field vs Single state machine
+
+**Thiết kế hiện tại (two-field model)** được chọn vì lý do bảo thủ: không đụng vào `status` enum hiện tại, tránh break tất cả filter query (`WHERE status='extracted'`) và API response schema. Tuy nhiên nó tạo ra trade-off rõ ràng.
+
+**Thiết kế thay thế (single linear state machine)** sẽ sạch hơn:
+
+```
+UPLOAD → EXTRACTED → ENRICHMENT_PENDING
+              ↓ (async)
+         ENRICHED | ENRICH_FAILED | ENRICH_SKIPPED   (== SETTLED)
+              ↓
+         READY_FOR_REVIEW
+              ↓              ↓
+          APPROVED       REJECTED
+              ↓
+          AGGREGATED
+              ↓
+          EXPORTED
+```
+
+| Tiêu chí | Two-field (v4 hiện tại) | Single state machine |
+|---|---|---|
+| Query "job sẵn sàng review?" | `status='extracted' AND enrichment_status NOT IN ('pending','running')` | `status='ready_for_review'` |
+| Settlement gate trong aggregate() | Manual check `enrichment_status` | `status NOT IN ('enrichment_pending', 'running')` |
+| Cross-reference trong UI | Phải đọc 2 field | 1 field |
+| Backward compat hybrid mode | `enrichment_status` = NULL → transparent | Hybrid tự chuyển `EXTRACTED → ENRICH_SKIPPED → READY_FOR_REVIEW` |
+| `AGGREGATED` / `EXPORTED` tracking | Không có | Explicit, queryable |
+| Chi phí refactor | Đã done | Phải đổi enum + tất cả filter query + migration |
+
+**Nếu muốn migrate lên single state machine:** đổi `ExtractionJobStatus` enum, cập nhật tất cả `WHERE status=...` query trong `job_service.py` / `aggregation_service.py` / API endpoints / tests, sau đó xóa `enrichment_status` column (hoặc giữ để backward compat query).
+
+---
+
+## 6. Bước 2: Rây lọc & Ép kiểu (Validation Layer)
 
 **File:** `app/services/data_validator.py`
 
@@ -347,7 +660,7 @@ job.confidence_scores["_validation_report"] = validation_report
 
 ---
 
-## 6. Bước 3: Xào nấu dữ liệu (Aggregation & Map-Reduce)
+## 7. Bước 3: Xào nấu dữ liệu (Aggregation & Map-Reduce)
 
 **File:** `app/services/aggregation_service.py`
 
@@ -431,7 +744,7 @@ Kết quả lưu trong `_flat_records` để export dễ dàng.
 
 ---
 
-## 7. Bước 4: Bơm khuôn Word (Headless Document Export)
+## 8. Bước 4: Bơm khuôn Word (Headless Document Export)
 
 **File:** `app/services/word_export.py`  
 **Thư viện:** `docxtpl` (Jinja2 for .docx)
@@ -515,7 +828,7 @@ curl -X POST "http://localhost:8000/api/v1/extraction/aggregate/{report_id}/expo
 
 ---
 
-## 8. Database Schema
+## 9. Database Schema
 
 ### 8.1 extraction_templates
 
@@ -537,7 +850,7 @@ CREATE TABLE extraction_templates (
 CREATE INDEX idx_extraction_templates_schema_gin ON extraction_templates USING GIN (schema_definition);
 ```
 
-### 8.2 extraction_jobs
+### 9.2 extraction_jobs
 
 ```sql
 CREATE TABLE extraction_jobs (
@@ -546,16 +859,26 @@ CREATE TABLE extraction_jobs (
     template_id     UUID NOT NULL REFERENCES extraction_templates(id) ON DELETE CASCADE,
     document_id     UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     batch_id        UUID,                        -- Nhóm batch
-    extraction_mode VARCHAR(20) DEFAULT 'standard' NOT NULL,  -- standard|vision|fast
+    extraction_mode VARCHAR(20) DEFAULT 'standard' NOT NULL,  -- standard|vision|fast|block
 
     -- State machine: pending → processing → extracted → approved
     --                                      ↘ failed     ↘ rejected
     status          VARCHAR(20) DEFAULT 'pending' NOT NULL,
 
-    -- AI output (JSONB — đã qua Validation Layer)
+    -- Stage 1 — AI output (deterministic, không có LLM trong block mode)
     extracted_data     JSONB,
     confidence_scores  JSONB,                    -- Bao gồm _validation_report
     source_references  JSONB,
+    debug_traces       JSONB,
+
+    -- Stage 2 — LLM enrichment (async, độc lập với Stage 1)
+    -- enriched_data KHÔNG BAO GIỜ overwrite extracted_data
+    -- final_data property merge: reviewed > (extracted+enriched) > extracted
+    enrichment_status    VARCHAR(20),            -- pending|running|enriched|failed|skipped|NULL(legacy)
+    enriched_data        JSONB,                  -- {"danh_sach_cnch": [...]} — chỉ chứa LLM-filled fields
+    enrichment_error     TEXT,
+    enrichment_started_at   TIMESTAMP,
+    enrichment_completed_at TIMESTAMP,
 
     -- Human review
     reviewed_data   JSONB,
@@ -565,7 +888,7 @@ CREATE TABLE extraction_jobs (
 
     -- Processing metadata
     parser_used        VARCHAR(50),              -- pdfplumber|none
-    llm_model          VARCHAR(100),             -- qwen2.5:7b (hoặc model extractor tương ứng)
+    llm_model          VARCHAR(100),
     llm_tokens_used    INTEGER DEFAULT 0,
     processing_time_ms INTEGER,
     error_message      TEXT,
@@ -579,7 +902,18 @@ CREATE TABLE extraction_jobs (
 
 CREATE INDEX idx_extraction_jobs_extracted_data_gin ON extraction_jobs USING GIN (extracted_data);
 CREATE INDEX idx_extraction_jobs_reviewed_data_gin  ON extraction_jobs USING GIN (reviewed_data);
+-- Index cho enrichment worker polling
+CREATE INDEX idx_extraction_jobs_enrichment_status
+    ON extraction_jobs (enrichment_status)
+    WHERE enrichment_status IS NOT NULL;
 ```
+
+**Migration cho DB cũ (chạy một lần):**
+```bash
+python scripts/migrate_add_enrichment_columns.py
+```
+
+Script idempotent (`ADD COLUMN IF NOT EXISTS`). Xem `scripts/migrate_add_enrichment_columns.py`.
 
 ### 8.3 aggregation_reports
 
@@ -606,7 +940,16 @@ CREATE TABLE aggregation_reports (
   -- CREATE INDEX idx_aggregation_reports_data_gin ON aggregation_reports USING GIN (aggregated_data);
   ```
 
-### 8.4 Job State Machine
+### 9.4 Job State Machine
+
+> **Thiết kế hiện tại (v4): two-field model.**
+> `job.status` = trạng thái chính của job lifecycle.
+> `job.enrichment_status` = trạng thái riêng của LLM enrichment (block mode only).
+>
+> **Trade-off so với single state machine:**
+> Two-field giữ backward compat với hybrid mode và tránh đổi tất cả query filter hiện tại. Nhược điểm: UI và aggregate gate phải cross-reference 2 field để biết job "sẵn sàng review" chưa. Xem thảo luận kiến trúc tại Section 5.11.
+
+**`job.status` — main lifecycle:**
 
 ```
           create_job()
@@ -627,6 +970,9 @@ CREATE TABLE aggregation_reports (
     │ EXTRACTED │ │ FAILED │◄──── retry_job() resets to PENDING
     └──┬─────┬──┘ └────────┘     (retry_count++)
        │     │
+       │     │  [Block mode: enrichment chạy async — xem job.enrichment_status]
+       │     │  [Hybrid mode: không có enrichment, có thể approve ngay]
+       │     │
  approve│   reject│
        ▼     ▼
  ┌──────────┐ ┌──────────┐
@@ -634,6 +980,7 @@ CREATE TABLE aggregation_reports (
  └──────────┘ └──────────┘
        │
        │ aggregate()
+       │ [gate: tất cả enrichment_status phải settled trước khi aggregate]
        ▼
  ┌─────────────────────┐
  │ AggregationReport   │
@@ -641,14 +988,41 @@ CREATE TABLE aggregation_reports (
  └─────────────────────┘
 ```
 
+**`job.enrichment_status` — block mode enrichment lifecycle:**
+
+```
+  (Stage 1 complete, chi_tiet_cnch có text)   →  PENDING
+  (Stage 1 complete, chi_tiet_cnch rỗng)      →  SKIPPED
+  (hybrid/non-block mode)                      →  SKIPPED
+  enrich_job_task picked up                   →  RUNNING
+  LLM call thành công, items > 0              →  ENRICHED
+  LLM call thành công, items = []             →  SKIPPED
+  LLM call thất bại (sau max 3 retries)       →  FAILED   ← job vẫn EXTRACTED, dùng được
+  NULL                                         →  legacy job (pre-v4, không có enrichment)
+```
+
+**"Job sẵn sàng cho review" = điều kiện:**
+```python
+job.status == "extracted"
+AND job.enrichment_status NOT IN ("pending", "running")
+# (hoặc enrichment_status IS NULL cho legacy jobs)
+```
+
+**Enrichment settlement = điều kiện cho phép aggregate:**
+```python
+# Tất cả jobs phải thỏa:
+job.enrichment_status NOT IN ("pending", "running")
+# ENRICHED | FAILED | SKIPPED | NULL đều là "settled"
+```
+
 ---
 
-## 9. API Reference — 25 Endpoints
+## 10. API Reference — 25 Endpoints
 
 **Router prefix:** `/api/v1/extraction`  
 **Tags:** `Extraction Templates`, `Extraction Jobs`, `Extraction Reports`
 
-### 9.1 Word Scanner
+### 10.1 Word Scanner
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -665,7 +1039,7 @@ CREATE TABLE aggregation_reports (
 }
 ```
 
-### 9.2 Templates CRUD
+### 10.2 Templates CRUD
 
 | Method | Path | Auth | Status | Description |
 |---|---|---|---|---|
@@ -675,7 +1049,7 @@ CREATE TABLE aggregation_reports (
 | `PATCH` | `/templates/{template_id}` | `require_admin` | 200 | Sửa template (schema change → version++) |
 | `DELETE` | `/templates/{template_id}` | `RoleChecker("owner")` | 204 | Soft delete |
 
-### 9.3 Jobs
+### 10.3 Jobs
 
 | Method | Path | Auth | Status | Description |
 |---|---|---|---|---|
@@ -690,14 +1064,14 @@ CREATE TABLE aggregation_reports (
 | `POST` | `/jobs/{job_id}/retry` | `require_admin` | 200 | Retry failed/rejected |
 | `DELETE` | `/jobs/{job_id}` | `require_admin` | 204 | Xóa job đã hoàn tất |
 
-### 9.4 Review
+### 10.4 Review
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/review/{job_id}/approve` | `require_admin` | Approve (+ optional `reviewed_data`) |
 | `POST` | `/review/{job_id}/reject` | `require_admin` | Reject (required `notes`) |
 
-### 9.5 Aggregation & Export
+### 10.5 Aggregation & Export
 
 | Method | Path | Auth | Status | Description |
 |---|---|---|---|---|
@@ -711,7 +1085,7 @@ CREATE TABLE aggregation_reports (
 
 ---
 
-## 10. Cấu hình (Configuration)
+## 11. Cấu hình (Configuration)
 
 **File:** `app/core/config.py` → class `Settings`
 
@@ -743,48 +1117,85 @@ environment:
 
 ---
 
-## 11. Celery Workers & Background Tasks
+## 12. Celery Workers & Background Tasks
 
-**File:** `app/worker/extraction_tasks.py`
+**File:** `app/infrastructure/worker/extraction_tasks.py`
 
-### 11.1 extract_document_task
+### 12.1 extract_document_task
 
 ```python
-@celery_app.task(
-    name="extract_document",
+@shared_task(
     bind=True,
-    max_retries=settings.EXTRACTION_MAX_RETRIES,
+    max_retries=3,
+    soft_time_limit=600,
+    time_limit=720,
 )
 def extract_document_task(self, job_id: str):
-  """Pipeline: load job → S3 download → hybrid run_from_bytes → persist."""
+    """Pipeline: load job → S3 download → orchestrator.run() → persist."""
 ```
 
-- **Queue runtime:** được route vào `extraction` qua `celery_app.conf.task_routes`
-- **Retry:** Exponential backoff (2^retry_count × 60s), max 3 lần
-- **Failure:** Sau max retries → status = `failed`, `error_message` ghi lại
+- **Queue:** `extraction` | **Concurrency:** 4 | **Prefetch:** 1
+- **Block mode:** gọi `run_stage1_from_bytes()` → `persist_stage1_result()` → dispatch `enrich_job_task`
+- **Non-block mode:** gọi `run_from_bytes()` → `persist_pipeline_result()` (unchanged)
+- **Retry:** Exponential backoff (30s → 60s → 120s + jitter), max 3 lần, chỉ retry transient errors
+- **Failure:** Sau max retries → `status = failed`, `error_message` ghi lại
+
+### 12.2 enrich_job_task *(v4 mới)*
+
+**File:** `app/infrastructure/worker/enrichment_tasks.py`
 
 ```python
-celery_app.conf.task_routes = {
-    "app.worker.extraction_tasks.extract_document_task": {"queue": "extraction"},
-}
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    soft_time_limit=180,
+    time_limit=240,
+    queue="enrichment",
+)
+def enrich_job_task(self, job_id: str):
+    """Stage 2: đọc chi_tiet_cnch → gọi LLM → ghi enriched_data."""
 ```
 
-Nếu không route rõ, task có thể rơi vào queue mặc định (`task_default_queue`).
+- **Queue:** `enrichment` | **Concurrency:** 2 | **Soft time limit:** 180s
+- Chỉ retry khi transient error (timeout, connection reset). Validation error / empty text → không retry
+- Luôn safe-fail: nếu lỗi sau max retries, `enrichment_status = FAILED`, `extracted_data` không bị ảnh hưởng
+- Guard: skip nếu `enrichment_status NOT IN (PENDING, FAILED)` — idempotent
 
-### 11.2 cleanup_stuck_jobs
+### 12.3 cleanup_stuck_jobs
 
 ```python
-@celery_app.task(name="cleanup_stuck_extraction_jobs")
+@shared_task(name="cleanup_stuck_extraction_jobs")
 def cleanup_stuck_jobs():
     """Periodic: tìm jobs stuck ở 'processing' > 30 phút → mark 'failed'."""
 ```
 
-- Chạy bởi **Celery Beat** (periodic scheduler)
+- Chạy bởi **Celery Beat** mỗi 30 phút
 - Timeout: `settings.EXTRACTION_TIMEOUT_MINUTES` (default 30 phút)
+
+### 12.4 Celery queue routing
+
+```python
+task_routes = {
+    "app.infrastructure.worker.tasks.process_document_task":       {"queue": "document_processing"},
+    "app.infrastructure.worker.tasks.generate_embeddings_task":    {"queue": "embeddings"},
+    "app.infrastructure.worker.extraction_tasks.extract_document_task": {"queue": "extraction"},
+    "app.infrastructure.worker.enrichment_tasks.enrich_job_task":  {"queue": "enrichment"},
+}
+```
+
+### 12.5 Docker Compose — Worker services
+
+| Service | Queue | Concurrency | Mục đích |
+|---|---|---|---|
+| `celery-extraction-worker` | `extraction` | 4 | Stage 1 deterministic, tải PDF, parse |
+| `celery-enrichment-worker` | `enrichment` | 2 | Stage 2 LLM enrichment (giới hạn song song Ollama) |
+| `celery-worker` | `default`, `document_processing`, `embeddings` | 4 | RAG, embeddings, general tasks |
+| `celery-beat` | — | — | Scheduler (cleanup tasks) |
 
 ---
 
-## 12. Word Template Scanner
+## 13. Word Template Scanner
 
 **File:** `app/services/word_scanner.py`
 
@@ -828,7 +1239,7 @@ Khi placeholder nằm TRONG bảng Word:
 
 ---
 
-## 13. Pydantic Schemas (Request/Response)
+## 14. Pydantic Schemas (Request/Response)
 
 **File:** `app/schemas/extraction_schema.py`
 
@@ -865,7 +1276,7 @@ Khi placeholder nằm TRONG bảng Word:
 
 ---
 
-## 14. Phase 3 — Template-driven · Dynamic Columns · Batch Parallel · Observability
+## 15. Phase 3 — Template-driven · Dynamic Columns · Batch Parallel · Observability
 
 ### 14.1 YAML Template System
 
@@ -1090,56 +1501,94 @@ global_metrics.reset()  # Reset khi cần
 
 ---
 
-## 15. Cấu trúc Source Code
+## 16. Cấu trúc Source Code
 
 ```
 app/
 ├── api/v1/
-│   ├── extraction_templates.py # Template endpoints + word scan
-│   ├── extraction_jobs.py      # Job lifecycle + review + batch-block + metrics
-│   ├── extraction_reports.py   # Aggregate + export endpoints
-│   └── extraction.py           # Compatibility router (include split routers)
-├── business/                    # ★ Business logic (tách khỏi services)
-│   ├── engine.py               # Orchestrates extractors → validators → normalizers
-│   ├── extractors.py           # Regex-based deterministic extraction (accepts tpl)
-│   ├── validators.py           # Business data validation (template-driven thresholds)
-│   ├── normalizers.py          # Vietnamese word spacing + date/field normalization
-│   └── template_loader.py      # DocumentTemplate wrapper + YAML registry + lru_cache
+│   ├── document.py
+│   ├── extraction.py
+│   ├── templates.py
+│   ├── jobs.py
+│   ├── aggregation.py
+│   ├── rag.py
+│   ├── auth.py
+│   └── tenant.py
+├── application/
+│   ├── aggregation_service.py   # flatten_block_output + build_word_export_context
+│   ├── auth_service.py
+│   ├── doc_service.py
+│   ├── extraction_service.py    # Backward-compat facade
+│   ├── job_service.py           # ★ JobManager: persist_stage1_result, persist_enrichment_result (v4)
+│   ├── review_service.py
+│   └── template_service.py
 ├── core/
-│   ├── config.py               # Settings (Pydantic)
-│   └── metrics.py              # ★ PipelineMetrics + GlobalMetrics (thread-safe)
-├── models/
-│   └── extraction.py           # ExtractionTemplate/Job/AggregationReport
+│   ├── config.py
+│   ├── constants.py
+│   ├── exceptions.py
+│   ├── logger.py
+│   ├── logging.py
+│   ├── security.py
+│   └── tracing.py
+├── domain/
+│   ├── models/
+│   │   ├── document.py
+│   │   ├── extraction_job.py  # ★ ExtractionJob, ExtractionJobStatus, EnrichmentStatus (v4)
+│   │   ├── tenant.py
+│   │   └── user.py
+│   ├── rules/
+│   │   ├── engine.py          # run_business_rules() — RuleEngine domain checks
+│   │   ├── extractors.py      # Regex-based deterministic extractors (accepts tpl)
+│   │   └── normalizers.py     # Vietnamese word spacing + date normalization
+│   └── templates/
+│       └── template_loader.py # DocumentTemplate wrapper + YAML registry + lru_cache
+├── engines/
+│   └── extraction/
+│       ├── block_pipeline.py  # ★ BlockExtractionPipeline:
+│       │                      #    - run_stage1_from_bytes() — no LLM (v4)
+│       │                      #    - run_from_bytes()        — legacy, full pipeline
+│       │                      #    - _llm_enrich_cnch()      — LLM method duy nhất (v4)
+│       ├── extractors.py      # OllamaInstructorExtractor, GeminiExtractor...
+│       ├── hybrid_pipeline.py # HybridExtractionPipeline + PipelineResult (chi_tiet_cnch v4)
+│       ├── orchestrator.py    # ★ ExtractionOrchestrator.run() — two-stage dispatch (v4)
+│       ├── schemas.py         # BlockExtractionOutput, CNCHItem (8 fields), CNCHListOutput...
+│       └── rag/               # Engine 1 RAG pipeline
+├── infrastructure/
+│   ├── db/
+│   │   └── session.py
+│   ├── llm/
+│   ├── storage/
+│   └── worker/
+│       ├── celery_app.py       # ★ Queue routing: extraction + enrichment (v4)
+│       ├── enrichment_tasks.py # ★ enrich_job_task — Stage 2 LLM (v4, file mới)
+│       ├── extraction_tasks.py # extract_document_task — Stage 1 dispatch
+│       └── tasks.py            # RAG + general tasks
 ├── schemas/
-│   ├── extraction_schema.py    # Request/response schemas
-│   └── hybrid_extraction_schema.py # HybridExtractionOutput + CNCHItem
-├── services/
-│   ├── extraction_orchestrator.py   # Worker orchestration (S3 + pipeline + persistence)
-│   ├── hybrid_extraction_pipeline.py # Ingest/normalize/infer/retry
-│   ├── block_extraction_pipeline.py # ★ 6-stage block pipeline (template-driven)
-│   ├── block_business_workflow.py   # ★ Block mode orchestrator + payload builder
-│   ├── batch_extraction.py          # ★ Batch parallel pipeline (ThreadPoolExecutor)
-│   ├── extractor_strategies.py      # LLM backend strategies (Ollama/OpenAI/Gemini)
-│   ├── template_manager.py          # Template domain service
-│   ├── job_manager.py               # Job lifecycle service
-│   ├── rule_engine.py               # Domain validation rules
-│   ├── extraction_service.py        # Backward-compatible facade
-│   ├── aggregation_service.py       # Aggregation + export context DTO
-│   ├── word_scanner.py              # Word template scanner
-│   └── word_export.py               # Secure docxtpl renderer
-├── templates/                       # ★ YAML extraction templates
-│   └── pccc.yaml                    # PCCC template (55+ externalized patterns)
-└── worker/
-    └── extraction_tasks.py          # Celery tasks (hybrid execution + cleanup)
+│   ├── auth_schema.py
+│   ├── doc_schema.py
+│   ├── extraction_schema.py
+│   └── rag_schema.py
+└── utils/
+    ├── debug_trace.py
+    ├── file_utils.py
+    ├── metrics.py             # ★ PipelineMetrics + GlobalMetrics (thread-safe)
+    ├── pdf_utils.py
+    ├── word_export.py         # Secure docxtpl renderer (anti zip-bomb)
+    └── word_scanner.py        # Word template scanner → auto-generate schema
 
-★ = Phase 3 mới thêm hoặc refactor lớn
+scripts/
+├── migrate_add_enrichment_columns.py  # ★ Idempotent SQL migration cho 5 enrichment columns (v4)
+└── ...
+
+app/domain/templates/
+└── pccc.yaml                  # YAML extraction template (55+ externalized patterns)
+
+★ = thêm hoặc thay đổi lớn trong v4
 ```
-
-Tổng quan: kiến trúc đã tách router/service/business theo domain, template-driven, có metrics.
 
 ---
 
-## 16. Ví dụ End-to-End
+## 17. Ví dụ End-to-End
 
 ### Scenario: 7 Báo cáo PCCC Ngày → 1 Báo cáo Tuần Word
 
@@ -1244,5 +1693,6 @@ curl -X POST "http://localhost:8000/api/v1/extraction/aggregate/$REPORT_ID/expor
 
 ---
 
-> **Tài liệu này được cập nhật lần cuối: 31/03/2026**  
-> **Tổng source code Engine 2: kiến trúc split-router/service/business · 25 endpoints · 3 bảng DB · 7 JSONB columns · 3 GIN indexes cốt lõi (+1 optional cho reports) · YAML template system · PipelineMetrics + GlobalMetrics · Batch parallel pipeline**
+> **Tài liệu này được cập nhật lần cuối: 03/04/2026**  
+> **Phiên bản 4.0 — Two-Stage Block Pipeline:** Stage 1 deterministic (no LLM) + Stage 2 LLM enrichment async · EnrichmentStatus state machine · enriched_data column tách biệt · enrich_job_task trên queue riêng · celery-enrichment-worker (concurrency=2) · migrate_add_enrichment_columns.py  
+> **Tổng source code Engine 2:** kiến trúc split-router/application/domain · 25 endpoints · 3 bảng DB · 12 JSONB columns (7 gốc + 5 enrichment) · 3 GIN indexes cốt lõi (+1 enrichment_status partial index) · YAML template system · PipelineMetrics + GlobalMetrics · Batch parallel pipeline

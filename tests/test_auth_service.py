@@ -6,9 +6,9 @@ import pytest
 
 from app.core.exceptions import InvalidCredentialsError, UserNotFoundError
 from app.core.security import get_password_hash, verify_password
-from app.models.user import User
+from app.domain.models.user import User
 from app.schemas.auth_schema import UserRegisterRequest
-from app.services.auth_service import AuthService
+from app.application.auth_service import AuthService
 
 
 # ============================================================================

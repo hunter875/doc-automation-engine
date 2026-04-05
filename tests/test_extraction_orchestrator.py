@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.core.exceptions import ProcessingError
-from app.schemas.hybrid_extraction_schema import HybridExtractionOutput
-from app.services.extraction_orchestrator import ExtractionOrchestrator
-from app.services.hybrid_extraction_pipeline import PipelineResult
+from app.engines.extraction.schemas import HybridExtractionOutput
+from app.engines.extraction.orchestrator import ExtractionOrchestrator
+from app.engines.extraction.hybrid_pipeline import PipelineResult
 
 
 class _FakePipeline:
@@ -42,7 +42,7 @@ def test_orchestrator_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
     db = _build_db_with_document(document)
 
     monkeypatch.setattr(
-        "app.services.extraction_orchestrator.s3_client",
+        "app.engines.extraction.orchestrator.s3_client",
         SimpleNamespace(get_object=lambda **_: {"Body": SimpleNamespace(read=lambda: b"pdf-bytes")}),
     )
 
@@ -94,7 +94,7 @@ def test_orchestrator_run_pipeline_error_marks_failed(monkeypatch: pytest.Monkey
     db = _build_db_with_document(document)
 
     monkeypatch.setattr(
-        "app.services.extraction_orchestrator.s3_client",
+        "app.engines.extraction.orchestrator.s3_client",
         SimpleNamespace(get_object=lambda **_: {"Body": SimpleNamespace(read=lambda: b"bad-pdf")}),
     )
 

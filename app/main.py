@@ -9,13 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1 import auth, document, rag, tenant
-from app.api.v1.extraction_jobs import router as extraction_jobs_router
-from app.api.v1.extraction_reports import router as extraction_reports_router
-from app.api.v1.extraction_templates import router as extraction_templates_router
+from app.api.v1.jobs import router as extraction_jobs_router
+from app.api.v1.aggregation import router as extraction_reports_router
+from app.api.v1.templates import router as extraction_templates_router
 from app.core.config import settings
 from app.core.exceptions import RAGException
 from app.core.logging import configure_logging
-from app.db.postgres import engine, Base
+from app.infrastructure.db.session import engine, Base
 
 # Configure logging
 configure_logging(
@@ -35,8 +35,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting RAG API server...")
 
     # Initialize pgvector extension FIRST (before creating tables)
-    from app.db.postgres import SessionLocal
-    from app.db.pgvector import ensure_pgvector_extension, create_vector_index
+    from app.infrastructure.db.session import SessionLocal
+    from app.engines.rag.vector_search import ensure_pgvector_extension, create_vector_index
     db = SessionLocal()
     try:
         ensure_pgvector_extension(db)
@@ -191,7 +191,7 @@ def readiness_check():
     # Check database connection
     try:
         from sqlalchemy import text as sa_text
-        from app.db.postgres import SessionLocal
+        from app.infrastructure.db.session import SessionLocal
         db = SessionLocal()
         db.execute(sa_text("SELECT 1"))
         db.close()
@@ -201,7 +201,7 @@ def readiness_check():
     
     # Check pgvector connection
     try:
-        from app.db.pgvector import check_pgvector_connection, ensure_pgvector_extension
+        from app.engines.rag.vector_search import check_pgvector_connection, ensure_pgvector_extension
         db_session = SessionLocal()
         ensure_pgvector_extension(db_session)
         pgvector_ok = check_pgvector_connection(db_session)

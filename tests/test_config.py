@@ -196,7 +196,7 @@ class TestUserModel:
     def test_create_user(self, db_session):
         """Test creating a user."""
         import uuid
-        from app.models.user import User
+        from app.domain.models.user import User
 
         user = User(
             id=uuid.uuid4(),
@@ -217,7 +217,7 @@ class TestUserModel:
     def test_user_repr(self, db_session):
         """Test User string representation."""
         import uuid
-        from app.models.user import User
+        from app.domain.models.user import User
 
         user = User(
             id=uuid.uuid4(),
@@ -239,7 +239,7 @@ class TestTenantModel:
     def test_create_tenant(self, db_session):
         """Test creating a tenant."""
         import uuid
-        from app.models.tenant import Tenant
+        from app.domain.models.tenant import Tenant
 
         tenant = Tenant(
             id=uuid.uuid4(),
@@ -258,7 +258,7 @@ class TestTenantModel:
     def test_tenant_repr(self):
         """Test Tenant string representation."""
         import uuid
-        from app.models.tenant import Tenant
+        from app.domain.models.tenant import Tenant
 
         tenant = Tenant(
             id=uuid.uuid4(),
@@ -270,7 +270,7 @@ class TestTenantModel:
     def test_user_tenant_role(self, db_session, test_user, test_tenant):
         """Test creating user-tenant role."""
         import uuid
-        from app.models.tenant import UserTenantRole
+        from app.domain.models.tenant import UserTenantRole
 
         role = UserTenantRole(
             id=uuid.uuid4(),
@@ -289,7 +289,7 @@ class TestTenantModel:
     def test_role_repr(self, test_user, test_tenant):
         """Test UserTenantRole string representation."""
         import uuid
-        from app.models.tenant import UserTenantRole
+        from app.domain.models.tenant import UserTenantRole
 
         role = UserTenantRole(
             id=uuid.uuid4(),

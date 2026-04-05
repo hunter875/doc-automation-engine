@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.schemas.hybrid_extraction_schema import CNCHItem, HybridExtractionOutput
-from app.services.hybrid_extraction_pipeline import (
+from app.engines.extraction.schemas import CNCHItem, HybridExtractionOutput
+from app.engines.extraction.hybrid_pipeline import (
     HybridExtractionPipeline,
     IngestedDocument,
     IngestedPage,
 )
-from app.services.rule_engine import build_default_hybrid_rule_engine
+from app.domain.rules.rule_engine import build_default_hybrid_rule_engine
 
 
 def _sample_ingested() -> IngestedDocument:

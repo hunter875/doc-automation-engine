@@ -5,7 +5,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import (
+from app.api.deps import (
     TenantContext,
     get_current_user,
     get_tenant_context,
@@ -17,9 +17,9 @@ from app.core.exceptions import (
     TenantNotFoundError,
 )
 from app.core.security import check_role_permission
-from app.db.postgres import get_db
-from app.models.tenant import Tenant, UserTenantRole
-from app.models.user import User
+from app.infrastructure.db.session import get_db
+from app.domain.models.tenant import Tenant, UserTenantRole
+from app.domain.models.user import User
 from app.schemas.rag_schema import (
     TenantCreate,
     TenantMemberAdd,

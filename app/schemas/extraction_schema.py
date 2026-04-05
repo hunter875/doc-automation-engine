@@ -259,8 +259,11 @@ class BatchStatusResponse(BaseModel):
     pending: int
     processing: int
     extracted: int
+    enriching: int = 0
+    ready_for_review: int = 0
     approved: int
     rejected: int
+    aggregated: int = 0
     failed: int
     progress_percent: float
 

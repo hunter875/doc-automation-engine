@@ -1,0 +1,189 @@
+# ==========================================================
+# DOCUMENT TEMPLATE — PCCC REPORT
+# Keys/paths here are read directly by DocumentTemplate (template_loader.py).
+# Structure MUST match what each property accessor calls via _get().
+# ==========================================================
+
+template_id: pccc
+template_name: "Báo cáo PCCC định kỳ"
+version: "2.1"
+language: vi
+
+# ==========================================================
+# BLOCK DETECTION
+# Used by: narrative_start_re, table_anchor_re, section_split_re
+# ==========================================================
+
+block_detection:
+  # Matches "I." at the start of the narrative section
+  narrative_start_pattern: "^I\\."
+  narrative_start_fallback_lines: 30
+  # Matches "BIỂU MẪU THỐNG KÊ" (table anchor on page 4)
+  table_anchor_pattern: "BIEU\\s*MAU\\s*THONG\\s*KE"
+  section_split_pattern: "^[IVX]+\\."
+
+# ==========================================================
+# PROMPTS
+# Used by: extraction_prompt(), enforcer_prompt()
+# ==========================================================
+
+prompts:
+  extraction: >-
+    Bạn là chuyên gia trích xuất dữ liệu từ báo cáo PCCC Việt Nam.
+    Trích xuất dữ liệu từ block '{block_name}' và trả về JSON hợp lệ theo schema.
+    Chỉ trả về JSON, không giải thích.
+  enforcer: >-
+    Trích xuất trường '{field_name}' từ đoạn văn bản báo cáo PCCC.
+    Trả về JSON với key 'value'.
+
+# ==========================================================
+# HEADER
+# Used by: header_max_lines, header_max_context_chars, header_required_fields,
+#           report_number_primary_re, report_number_fallback_re,
+#           date_long_form_re, date_short_form_re, date_period_markers,
+#           date_skip_line_re, unit_patterns
+# ==========================================================
+
+header:
+  max_lines: 30
+  max_context_chars: 3000
+  required_fields:
+    - so_bao_cao
+    - ngay_bao_cao
+
+  report_number:
+    # Matches: "Số: 180/BC-KV30"
+    primary_pattern: "Số\\s*[:\\.]?\\s*(\\d{1,4}/BC[^\\n\\s]{1,30})"
+    fallback_pattern: "(\\d{1,4}/BC-[A-Z0-9]{1,20})"
+    format_regex: "^\\d+/BC-.+"
+
+  date:
+    # Matches: "ngày 21 tháng 03 năm 2026"
+    long_form: "ngày\\s+(\\d{1,2})\\s+tháng\\s+(\\d{1,2})\\s+năm\\s+(\\d{4})"
+    # Matches: "ngày 21/03/2026"
+    short_form: "ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+    # Lines containing these strings are skipped when searching for ngay_bao_cao
+    period_markers:
+      - "Từ"
+      - "đến"
+    # Skip lines starting with "Từ <digit>" (period range lines)
+    skip_line_pattern: "^\\(?Từ\\s+\\d"
+
+  unit:
+    # Matches unit name in header area
+    patterns:
+      - "ĐỘI CC&CNCH[^\\n]{0,50}"
+      - "PHÒNG CẢNH SÁT[^\\n]{0,50}"
+
+# ==========================================================
+# NARRATIVE
+# Used by: summary_section_keyword, summary_max_lines,
+#           narrative_count_patterns(), detail_keywords, detail_max_lines,
+#           incident_time_re, incident_location_re, incident_description_re,
+#           incident_context_chars, incident_location_max_chars
+# Note: count patterns are applied to NORMALIZED text
+#       (uppercase, diacritics stripped, single-space collapsed).
+# ==========================================================
+
+narrative:
+  summary_section_keyword: "KẾT QUẢ"
+  summary_max_lines: 15
+
+  counts:
+    # Applied to: BlockExtractionPipeline._normalize(text) → uppercase, no diacritics
+    tong_so_vu_chay:
+      - "XAY RA (\\d+) VU CHAY"
+      - "TONG SO VU CHAY[:\\s]+(\\d+)"
+      - "(\\d+) VU CHAY"
+    tong_so_vu_no:
+      - "XAY RA (\\d+) VU NO"
+      - "TONG SO VU NO[:\\s]+(\\d+)"
+      - "(\\d+) VU NO"
+    tong_so_vu_cnch:
+      # layout_text: "xảy ra 01 sự cố liên quan đến công tác CNCH"
+      - "XAY RA (\\d+) SU CO"
+      - "XAY RA (\\d+) VU TAI NAN"
+      - "TONG SO VU TAI NAN[:\\s]+(\\d+)"
+      - "(\\d+) SU CO LIEN QUAN"
+    quan_so_truc:
+      # layout_text: "+ Quân số trực: 25 đồng chí."
+      - "QUAN SO TRUC[:\\s]+(\\d+)"
+      - "QUAN SO TRUC LA (\\d+)"
+
+  # Fallback keyword scan when section regex fails
+  detail_keywords:
+    - "CNCH"
+    - "TAI NAN"
+    - "SU CO"
+    - "CUU NAN"
+  detail_max_lines: 20
+
+  # Matches: "lúc 16 giờ 33 phút ngày 20/03/2026"
+  # Groups: (1)=hour, (2)=minute, (3)=date dd/mm/yyyy
+  incident_time_pattern: "lúc\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s*phút?\\s+ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+
+  # Matches: "tại địa chỉ: Bờ sông Sài Gòn, phường Chánh Hiệp, Thành phố Hồ Chí Minh"
+  # Group (1) = địa điểm text
+  incident_location_pattern: "tại(?:\\s+địa\\s+chỉ)?[:\\-]?\\s*(.+?)(?:\\.|Thông tin|nạn nhân)"
+
+  # Matches description sentence after incident trigger keywords
+  incident_description_pattern: "(?:người dân|nạn nhân)[^.]{0,300}"
+
+  incident_context_chars: 600
+  incident_location_max_chars: 200
+
+# ==========================================================
+# TABLE
+# Used by: table_header_skip_keywords, law_citation_tail_re,
+#           incident_row_patterns_spaced/compact,
+#           structured_incident_headers, cnch_fallback_patterns
+# ==========================================================
+
+table:
+  # Rows whose normalized joined text contains these are skipped (header rows)
+  header_skip_keywords:
+    - "DANH MUC CHI TIEU"
+    - "DANH MUC"
+    - "STT DANH MUC"
+    - "KET QUA GHI CHU"
+
+  # Tail pattern that indicates a law citation (no numeric result expected)
+  law_citation_tail: "ND-CP|Nghi\\s+dinh\\s+so"
+
+  # Patterns matched against normalized noi_dung to find CNCH incident rows
+  # Used by _apply_cnch_fallback — normalized = upper, no diacritics, no spaces
+  cnch_fallback_patterns:
+    - "TONGSOVUTAINAN"
+    - "TONGSOVUCNCH"
+    - "TAISUSUCO"
+
+  incident_row_patterns:
+    # Patterns matched against normalized text (spaced — after diacritics removed)
+    spaced:
+      - "TONG SO VU TAI NAN SU CO"
+      - "TONG SO VU CNCH"
+      - "TONG SO VU TAI NAN"
+    # Patterns matched against compact normalized text (no spaces)
+    compact:
+      - "TONGSOVUTAINAN"
+      - "TONGSOVUCNCH"
+
+  # Column headers indicating a structured incident table (vs stat table)
+  structured_incident_headers:
+    - "Địa điểm"
+    - "Nguyên nhân"
+    - "Thời gian"
+
+# ==========================================================
+# VALIDATION RULES
+# Used by: year_range, max_ket_qua, cross_field_tolerance, non_negative_fields
+# ==========================================================
+
+validation:
+  year_range: [2020, 2035]
+  non_negative_fields:
+    - stt_02_tong_chay
+    - stt_08_tong_no
+    - stt_14_tong_cnch
+  cross_field_tolerance: 3
+  max_ket_qua: 100000

@@ -9,9 +9,9 @@ real endpoints are implemented in split routers:
 
 from fastapi import APIRouter
 
-from app.api.v1.extraction_jobs import router as jobs_router
-from app.api.v1.extraction_reports import router as reports_router
-from app.api.v1.extraction_templates import router as templates_router
+from app.api.v1.jobs import router as jobs_router
+from app.api.v1.aggregation import router as reports_router
+from app.api.v1.templates import router as templates_router
 
 router = APIRouter(prefix="/extraction", tags=["Extraction (Engine 2)"])
 router.include_router(templates_router)
@@ -48,7 +48,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import (
+from app.api.deps import (
     RoleChecker,
     TenantContext,
     get_current_user,
@@ -57,9 +57,9 @@ from app.api.dependencies import (
     require_viewer,
 )
 from app.core.config import settings
-from app.db.postgres import get_db
-from app.models.extraction import ExtractionJobStatus
-from app.models.user import User
+from app.infrastructure.db.session import get_db
+from app.domain.models.extraction_job import ExtractionJobStatus
+from app.domain.models.user import User
 from app.schemas.extraction_schema import (
     AggregateRequest,
     AggregateResponse,
@@ -78,8 +78,8 @@ from app.schemas.extraction_schema import (
     TemplateResponse,
     TemplateUpdate,
 )
-from app.services.extraction_service import ExtractionService
-from app.services.aggregation_service import AggregationService, ExportService
+from app.application.extraction_service import ExtractionService
+from app.application.aggregation_service import AggregationService, ExportService
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def scan_word_template(
     current_user: User = Depends(get_current_user),
 ):
     """Scan a Word document for placeholders/loops and return detected holes."""
-    from app.services.word_scanner import scan_word_template as do_scan
+    from app.utils.word_scanner import scan_word_template as do_scan
 
     if not file.filename or not file.filename.lower().endswith((".docx", ".doc")):
         raise HTTPException(
@@ -152,7 +152,7 @@ async def scan_word_template(
 
     # Save word template to S3 for later Word export
     try:
-        from app.services.doc_service import s3_client
+        from app.application.doc_service import s3_client
         import uuid as _uuid
         s3_key = f"word_templates/{_uuid.uuid4()}/{file.filename}"
         s3_client.put_object(
@@ -316,7 +316,7 @@ async def create_job(
     if mode not in ("standard", "vision", "block"):
         raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
 
-    from app.services.doc_service import DocumentService
+    from app.application.doc_service import DocumentService
 
     # 1. Read file
     content = await file.read()
@@ -341,7 +341,7 @@ async def create_job(
     )
 
     # 4. Dispatch Celery task
-    from app.worker.extraction_tasks import extract_document_task
+    from app.infrastructure.worker.extraction_tasks import extract_document_task
 
     extract_document_task.delay(str(job.id))
 
@@ -371,7 +371,7 @@ async def create_batch_jobs(
     if mode not in ("standard", "vision", "block"):
         raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
 
-    from app.services.doc_service import DocumentService
+    from app.application.doc_service import DocumentService
 
     max_files = settings.EXTRACTION_BATCH_MAX_FILES
     if len(files) > max_files:
@@ -385,7 +385,7 @@ async def create_batch_jobs(
     ext_service = ExtractionService(db)
     jobs_created: list[JobSummary] = []
 
-    from app.worker.extraction_tasks import extract_document_task
+    from app.infrastructure.worker.extraction_tasks import extract_document_task
 
     for file in files:
         try:
@@ -443,7 +443,7 @@ def create_job_from_document(
     db: Session = Depends(get_db),
 ):
     """Create an extraction job from an already-uploaded document (no re-upload)."""
-    from app.services.doc_service import DocumentService
+    from app.application.doc_service import DocumentService
 
     # Verify document exists
     doc_service = DocumentService(db)
@@ -458,7 +458,7 @@ def create_job_from_document(
         mode=body.mode,
     )
 
-    from app.worker.extraction_tasks import extract_document_task
+    from app.infrastructure.worker.extraction_tasks import extract_document_task
 
     extract_document_task.delay(str(job.id))
 
@@ -561,7 +561,7 @@ def retry_job(
     service = ExtractionService(db)
     job = service.retry_job(job_id, ctx.tenant_id)
 
-    from app.worker.extraction_tasks import extract_document_task
+    from app.infrastructure.worker.extraction_tasks import extract_document_task
 
     extract_document_task.delay(str(job.id))
 
@@ -723,7 +723,7 @@ def export_report(
     For Word export: requires a Word template to be uploaded first via
     POST /extraction/aggregate/{report_id}/word-template
     """
-    from app.models.extraction import ExtractionJob
+    from app.domain.models.extraction_job import ExtractionJob
 
     agg_service = AggregationService(db)
     report = agg_service.get_report(report_id, ctx.tenant_id)
@@ -791,7 +791,7 @@ async def export_report_word(
       - {{total_so_vu | number_vn}} for Vietnamese number formatting
       - {{ngay_bao_cao | date_vn}} for Vietnamese date formatting
     """
-    from app.services.word_export import render_aggregation_to_word
+    from app.utils.word_export import render_aggregation_to_word
 
     if not file.filename or not file.filename.lower().endswith((".docx", ".doc")):
         raise HTTPException(
@@ -865,8 +865,8 @@ def export_report_word_auto(
     db: Session = Depends(get_db),
 ):
     """Export report to Word using the template's saved .docx file from S3."""
-    from app.services.word_export import render_aggregation_to_word
-    from app.services.doc_service import s3_client
+    from app.utils.word_export import render_aggregation_to_word
+    from app.application.doc_service import s3_client
 
     agg_service = AggregationService(db)
     report = agg_service.get_report(report_id, ctx.tenant_id)

@@ -15,7 +15,7 @@ class TestEmbeddingService:
 
     def test_embed_single_text(self, mock_openai):
         """Test generating embedding for a single text."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         embedding = service.embed_single("Hello world")
@@ -27,7 +27,7 @@ class TestEmbeddingService:
 
     def test_embed_single_empty_text_raises(self, mock_openai):
         """Test that empty text raises ValueError."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
 
@@ -39,7 +39,7 @@ class TestEmbeddingService:
 
     def test_embed_batch(self, mock_openai):
         """Test generating embeddings for a batch of texts."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         # Setup mock for batch
         mock_data = []
@@ -62,7 +62,7 @@ class TestEmbeddingService:
 
     def test_embed_batch_empty_list(self, mock_openai):
         """Test batch embedding with empty list."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         result = service.embed_batch([])
@@ -72,7 +72,7 @@ class TestEmbeddingService:
 
     def test_embed_batch_filters_empty_texts(self, mock_openai):
         """Test that empty texts are filtered out in batch."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         result = service.embed_batch(["", "  ", None])
@@ -82,7 +82,7 @@ class TestEmbeddingService:
 
     def test_embed_with_token_count(self, mock_openai):
         """Test embedding with token count tracking."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         texts = ["Hello world"]
@@ -95,7 +95,7 @@ class TestEmbeddingService:
 
     def test_embed_batch_respects_batch_size(self, mock_openai):
         """Test that batch size is respected."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         # Create many mock responses
         def create_response(*args, **kwargs):
@@ -133,7 +133,7 @@ class TestChatService:
 
     def test_generate_response(self, mock_openai):
         """Test generating a chat response."""
-        from app.services.embedding import ChatService
+        from app.engines.rag.embedding_service import ChatService
 
         service = ChatService()
         answer, usage = service.generate("What is AI?")
@@ -145,7 +145,7 @@ class TestChatService:
 
     def test_generate_with_system_prompt(self, mock_openai):
         """Test generation with system prompt."""
-        from app.services.embedding import ChatService
+        from app.engines.rag.embedding_service import ChatService
 
         service = ChatService()
         answer, usage = service.generate(
@@ -162,7 +162,7 @@ class TestChatService:
 
     def test_generate_with_custom_params(self, mock_openai):
         """Test generation with custom temperature and max_tokens."""
-        from app.services.embedding import ChatService
+        from app.engines.rag.embedding_service import ChatService
 
         service = ChatService(temperature=0.5, max_tokens=500)
         answer, usage = service.generate(
@@ -177,7 +177,7 @@ class TestChatService:
 
     def test_generate_stream(self, mock_openai):
         """Test streaming chat completion."""
-        from app.services.embedding import ChatService
+        from app.engines.rag.embedding_service import ChatService
 
         # Setup streaming mock
         chunk1 = MagicMock()
@@ -210,7 +210,7 @@ class TestRAGPrompt:
 
     def test_build_rag_prompt(self):
         """Test building RAG prompt with context."""
-        from app.services.embedding import build_rag_prompt
+        from app.engines.rag.embedding_service import build_rag_prompt
 
         question = "What is machine learning?"
         context_chunks = [
@@ -227,7 +227,7 @@ class TestRAGPrompt:
 
     def test_build_rag_prompt_empty_context(self):
         """Test building RAG prompt with empty context."""
-        from app.services.embedding import build_rag_prompt
+        from app.engines.rag.embedding_service import build_rag_prompt
 
         prompt = build_rag_prompt("Question?", [])
 
@@ -235,7 +235,7 @@ class TestRAGPrompt:
 
     def test_build_rag_prompt_single_context(self):
         """Test building RAG prompt with single context chunk."""
-        from app.services.embedding import build_rag_prompt
+        from app.engines.rag.embedding_service import build_rag_prompt
 
         prompt = build_rag_prompt("What?", ["Only one context."])
 
@@ -243,7 +243,7 @@ class TestRAGPrompt:
 
     def test_rag_system_prompt_exists(self):
         """Test that RAG system prompt is defined."""
-        from app.services.embedding import RAG_SYSTEM_PROMPT
+        from app.engines.rag.embedding_service import RAG_SYSTEM_PROMPT
 
         assert RAG_SYSTEM_PROMPT is not None
         assert len(RAG_SYSTEM_PROMPT) > 0
@@ -260,7 +260,7 @@ class TestTokenCounting:
 
     def test_count_tokens(self):
         """Test counting tokens in text."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         count = service.count_tokens("Hello world")
@@ -270,7 +270,7 @@ class TestTokenCounting:
 
     def test_count_tokens_empty_string(self):
         """Test counting tokens for empty string."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         count = service.count_tokens("")
@@ -279,7 +279,7 @@ class TestTokenCounting:
 
     def test_longer_text_more_tokens(self):
         """Test that longer text has more tokens."""
-        from app.services.embedding import EmbeddingService
+        from app.engines.rag.embedding_service import EmbeddingService
 
         service = EmbeddingService()
         short_count = service.count_tokens("Hello")

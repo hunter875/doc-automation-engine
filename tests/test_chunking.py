@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.chunking import (
+from app.engines.rag.chunking import (
     ChunkingStrategy,
     FixedSizeChunker,
     ParagraphChunker,

@@ -89,7 +89,7 @@ def test_render_aggregation_to_word_keeps_all_records(monkeypatch: pytest.Monkey
 
 
 def test_render_word_template_rejects_oversized_template(monkeypatch):
-    monkeypatch.setattr("app.services.word_export.MAX_TEMPLATE_INPUT_BYTES", 8)
+    monkeypatch.setattr("app.utils.word_export.MAX_TEMPLATE_INPUT_BYTES", 8)
 
     with pytest.raises(ValueError, match="file size exceeds"):
         word_export.render_word_template(b"0123456789", {})
