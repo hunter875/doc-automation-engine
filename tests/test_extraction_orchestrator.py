@@ -7,9 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.core.exceptions import ProcessingError
-from app.engines.extraction.schemas import HybridExtractionOutput
+from app.engines.extraction.schemas import BlockExtractionOutput, PipelineResult
 from app.engines.extraction.orchestrator import ExtractionOrchestrator
-from app.engines.extraction.hybrid_pipeline import PipelineResult
 
 
 class _FakePipeline:
@@ -17,7 +16,7 @@ class _FakePipeline:
         self.result = result
         self.calls: list[tuple[bytes, str]] = []
 
-    def run_from_bytes(self, pdf_bytes: bytes, filename: str) -> PipelineResult:
+    def run_stage1_from_bytes(self, pdf_bytes: bytes, filename: str) -> PipelineResult:
         self.calls.append((pdf_bytes, filename))
         return self.result
 
@@ -36,7 +35,7 @@ def test_orchestrator_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     manager = MagicMock()
     manager.get_job_for_processing.return_value = job
-    manager.persist_pipeline_result.return_value = saved_job
+    manager.persist_stage1_result.return_value = saved_job
 
     document = SimpleNamespace(id="doc-1", s3_key="docs/abc.pdf", file_name="abc.pdf")
     db = _build_db_with_document(document)
@@ -46,14 +45,7 @@ def test_orchestrator_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
         SimpleNamespace(get_object=lambda **_: {"Body": SimpleNamespace(read=lambda: b"pdf-bytes")}),
     )
 
-    pipeline_output = HybridExtractionOutput(
-        ngay_bao_cao="19/03/2026",
-        stt_14_tong_cnch=0,
-        tong_xe_hu_hong=0,
-        danh_sach_cnch=[],
-        danh_sach_phuong_tien_hu_hong=[],
-    )
-    pipeline = _FakePipeline(PipelineResult(status="ok", attempts=1, output=pipeline_output))
+    pipeline = _FakePipeline(PipelineResult(status="ok", attempts=1, output=None))
 
     orchestrator = ExtractionOrchestrator(
         db,
@@ -66,7 +58,7 @@ def test_orchestrator_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result is saved_job
     manager.get_job_for_processing.assert_called_once_with("job-1")
     manager.set_processing.assert_called_once_with(job, parser_used="pdfplumber")
-    manager.persist_pipeline_result.assert_called_once()
+    manager.persist_stage1_result.assert_called_once()
     assert pipeline.calls == [(b"pdf-bytes", "abc.pdf")]
 
 
@@ -99,7 +91,7 @@ def test_orchestrator_run_pipeline_error_marks_failed(monkeypatch: pytest.Monkey
     )
 
     class _FailingPipeline:
-        def run_from_bytes(self, pdf_bytes: bytes, filename: str) -> PipelineResult:  # noqa: ARG002
+        def run_stage1_from_bytes(self, pdf_bytes: bytes, filename: str) -> PipelineResult:  # noqa: ARG002
             raise RuntimeError("pipeline failed")
 
     orchestrator = ExtractionOrchestrator(

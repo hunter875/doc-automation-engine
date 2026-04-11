@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ProcessingError
 from app.domain.models.extraction_job import ExtractionJob, ExtractionJobStatus, EnrichmentStatus
 from app.domain.workflow import JobStatus, transition_job_state
-from app.engines.extraction.hybrid_pipeline import PipelineResult
+from app.engines.extraction.schemas import PipelineResult
 from app.application.aggregation_service import flatten_block_output
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class JobManager:
         document_id: str,
         user_id: str,
         batch_id: str | None = None,
-        mode: str = "standard",
+        mode: str = "block",
     ) -> ExtractionJob:
         parser_map = {"standard": "pdfplumber", "vision": "none", "block": "pdfplumber"}
         job = ExtractionJob(
@@ -161,72 +161,6 @@ class JobManager:
         )
         job.parser_used = parser_used
         self.db.flush()
-
-    def persist_pipeline_result(
-        self,
-        *,
-        job: ExtractionJob,
-        result: PipelineResult,
-        llm_model: str,
-        processing_time_ms: int,
-    ) -> ExtractionJob:
-        job.llm_model = llm_model
-        job.llm_tokens_used = 0
-        job.processing_time_ms = processing_time_ms
-
-        if result.status == "ok" and result.output:
-            model_payload = result.output.model_dump() if isinstance(result.output, BaseModel) else result.output
-            model_payload = flatten_block_output(model_payload)
-            job.extracted_data = model_payload
-            job.confidence_scores = {
-                "_validation_attempts": result.attempts,
-                "status": "perfect_match",
-            }
-            job.source_references = {}
-            job.error_message = None
-
-            # PROCESSING → EXTRACTED
-            transition_job_state(
-                self.db,
-                job_id=str(job.id),
-                to_state=JobStatus.EXTRACTED,
-                actor_type="worker",
-                reason="hybrid/gemini pipeline succeeded",
-            )
-            # Hybrid/Gemini mode: no enrichment, go straight to READY_FOR_REVIEW
-            transition_job_state(
-                self.db,
-                job_id=str(job.id),
-                to_state=JobStatus.READY_FOR_REVIEW,
-                actor_type="system",
-                reason="no enrichment needed (hybrid/gemini mode)",
-            )
-        else:
-            job.error_message = (
-                f"Hybrid extraction failed after {result.attempts} attempts. Errors: {result.errors}"
-            )[:2000]
-            job.extracted_data = {
-                "_manual_review_path": result.manual_review_path,
-                "_manual_review_metadata": result.manual_review_metadata_path,
-            }
-            job.confidence_scores = {
-                "_validation_attempts": result.attempts,
-                "status": result.status,
-            }
-            job.source_references = {}
-
-            transition_job_state(
-                self.db,
-                job_id=str(job.id),
-                to_state=JobStatus.FAILED,
-                actor_type="worker",
-                reason=f"pipeline failed: {result.errors}",
-            )
-
-        job.completed_at = datetime.utcnow()
-        self.db.commit()
-        self.db.refresh(job)
-        return job
 
     # ------------------------------------------------------------------
     # Two-stage persistence helpers

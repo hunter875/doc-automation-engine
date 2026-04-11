@@ -107,12 +107,27 @@ def enrich_job_task(self, job_id: str) -> dict:
         enriched_cnch = pipeline._llm_enrich_cnch(chi_tiet_cnch)
 
         # Persist — never overwrite extracted_data
+        # Preserve Stage-1-only fields (e.g. mo_ta) that the LLM doesn't return
+        stage1_cnch: list[dict] = (
+            (extracted.get("danh_sach_cnch") or [])
+            if isinstance(extracted.get("danh_sach_cnch"), list)
+            else []
+        )
+        stage1_by_stt: dict[int, dict] = {
+            int(item.get("stt", -1)): item
+            for item in stage1_cnch
+            if isinstance(item, dict)
+        }
+
         serialized = []
         for item in enriched_cnch:
-            if hasattr(item, "model_dump"):
-                serialized.append(item.model_dump())
-            elif isinstance(item, dict):
-                serialized.append(item)
+            row: dict = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+            # Restore fields the LLM omits but Stage 1 already filled
+            s1 = stage1_by_stt.get(int(row.get("stt", -1)), {})
+            for preserve_field in ("mo_ta",):
+                if not row.get(preserve_field) and s1.get(preserve_field):
+                    row[preserve_field] = s1[preserve_field]
+            serialized.append(row)
 
         now = datetime.utcnow()
         if serialized:

@@ -73,14 +73,14 @@ def _is_retriable_error(error: Exception) -> bool:
     time_limit=720,
 )
 def extract_document_task(self, job_id: str):
-    """Run the Hybrid extraction pipeline for a single job.
+    """Run the block extraction pipeline for a single job.
 
     Steps:
       1. Load job from DB, set status='processing'
       2. Download PDF from MinIO (via document.s3_key)
-    3. Run HybridExtractionPipeline from in-memory bytes
-    4. Save extracted JSON or manual-review metadata
-    5. Update job status and processing metadata
+      3. Run BlockExtractionPipeline Stage 1 from in-memory bytes
+      4. Save extracted JSON or manual-review metadata
+      5. Update job status and processing metadata
 
     On failure:
       - Retry with exponential backoff (30s → 60s → 120s)

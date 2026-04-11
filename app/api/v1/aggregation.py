@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import unicodedata
 from typing import Annotated, Optional
 from urllib.parse import quote
+
+from botocore.exceptions import ClientError
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -242,15 +247,58 @@ def export_report_word_auto(
     template = TemplateManager(db).get_template(str(report.template_id), ctx.tenant_id)
 
     if not template.word_template_s3_key:
+        logger.error(
+            "EXPORT_TEMPLATE_MISSING | report_id=%s aggregation_id=%s "
+            "tenant_id=%s template_id=%s word_template_s3_key=NULL",
+            report_id, report_id, ctx.tenant_id, report.template_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mẫu trích xuất này chưa có file Word template.",
         )
 
+    logger.info(
+        "EXPORT_WORD_START | report_id=%s tenant_id=%s template_id=%s s3_key=%s bucket=%s",
+        report_id, ctx.tenant_id, template.id, template.word_template_s3_key, settings.S3_BUCKET_NAME,
+    )
+
     try:
         s3_resp = s3_client.get_object(Bucket=settings.S3_BUCKET_NAME, Key=template.word_template_s3_key)
         template_bytes = s3_resp["Body"].read()
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in ("NoSuchKey", "404"):
+            logger.error(
+                "EXPORT_TEMPLATE_NOT_FOUND_IN_STORAGE | report_id=%s tenant_id=%s "
+                "template_id=%s s3_key=%s bucket=%s",
+                report_id, ctx.tenant_id, template.id,
+                template.word_template_s3_key, settings.S3_BUCKET_NAME,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"File Word template không tìm thấy trong S3 "
+                    f"(key={template.word_template_s3_key}). "
+                    "Hãy gắn lại file Word cho mẫu này qua mục Cài đặt mẫu."
+                ),
+            )
+        logger.error(
+            "EXPORT_TEMPLATE_INVALID_STATE | report_id=%s tenant_id=%s "
+            "template_id=%s s3_key=%s error=%s",
+            report_id, ctx.tenant_id, template.id,
+            template.word_template_s3_key, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Không tải được file Word template từ S3: {exc}",
+        )
     except Exception as exc:
+        logger.error(
+            "EXPORT_TEMPLATE_INVALID_STATE | report_id=%s tenant_id=%s "
+            "template_id=%s s3_key=%s error=%s",
+            report_id, ctx.tenant_id, template.id,
+            template.word_template_s3_key, exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Không tải được file Word template từ S3: {exc}",

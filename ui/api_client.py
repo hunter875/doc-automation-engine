@@ -181,6 +181,12 @@ def post_file(path: str, file_name: str, file_bytes: bytes, tags: str = "") -> t
         return False, str(exc)
 
 
+import logging as _logging
+import traceback as _traceback
+
+_ui_logger = _logging.getLogger("ui.api_client")
+
+
 def post_form(path, data, files=None, require_tenant=False):
     url = f"{st.session_state.base_url}{path}"
     try:
@@ -190,6 +196,7 @@ def post_form(path, data, files=None, require_tenant=False):
             return False, f"{resp.status_code}: {_parse_error(resp)}"
         return True, resp.json()
     except Exception as exc:
+        _ui_logger.error("post_form %s failed: %s\n%s", path, exc, _traceback.format_exc())
         return False, str(exc)
 
 

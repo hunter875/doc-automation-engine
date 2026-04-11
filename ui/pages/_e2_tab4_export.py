@@ -1,4 +1,4 @@
-"""Tab 4 — Tổng hợp & Xuất báo cáo."""
+"""Reports — Tổng hợp & Xuất báo cáo."""
 
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -42,27 +42,27 @@ def _render_agg_preview(agg_data: dict) -> None:
 
 
 def render_tab4():
-    st.markdown("### 📦 Tổng hợp & Xuất báo cáo")
+    st.markdown("### � Báo cáo")
     st.markdown(
-        "Gom nhiều hồ sơ đã duyệt → áp luật tổng hợp (SUM / CONCAT…) → tải về Excel hoặc bơm vào khuôn Word."
+        "Gom nhiều hồ sơ đã duyệt → tổng hợp tự động → tải về Excel hoặc Word."
     )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — TẠO BỘ TỔNG HỢP
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown("---")
-    st.markdown("#### 1️⃣ Tạo bộ tổng hợp mới")
+    st.markdown("#### 1️⃣ Tạo báo cáo mới")
 
     jobs = load_jobs()
     approved_jobs = [j for j in jobs if j.get("status") == "approved"]
 
     if not approved_jobs:
-        st.info("Chưa có hồ sơ nào được duyệt. Hãy quay lại **Tab 3** để duyệt trước.")
+        st.info("Chưa có hồ sơ nào được duyệt. Hãy duyệt hồ sơ trong tab **📥 Hồ sơ** trước.")
     else:
         templates = load_templates()
         tpl_id_to_name = {t["id"]: t.get("name", t["id"][:8]) for t in templates}
 
-        # Chỉ hiện khuôn có job đã duyệt
+        # Chỉ hiện mẫu có job đã duyệt
         tpl_ids_with_jobs = sorted({j.get("template_id", "") for j in approved_jobs if j.get("template_id")})
         available_tpls = {tpl_id_to_name.get(tid, tid[:8]): tid for tid in tpl_ids_with_jobs}
 
@@ -72,19 +72,19 @@ def render_tab4():
             a1, a2 = st.columns([3, 2])
             with a1:
                 sel_agg_tpl_ui = st.selectbox(
-                    "Khuôn tham chiếu (áp luật tổng hợp)", list(available_tpls.keys()), key="e2_agg_tpl",
+                    "Mẫu báo cáo", list(available_tpls.keys()), key="e2_agg_tpl",
                 )
                 sel_agg_tpl_id = available_tpls[sel_agg_tpl_ui]
             with a2:
                 default_name = f"Báo cáo {_dt.now().strftime('%d/%m/%Y %H:%M')}"
-                report_name = st.text_input("Tên bộ báo cáo", value=default_name, key="e2_agg_name")
+                report_name = st.text_input("Tên báo cáo", value=default_name, key="e2_agg_name")
 
             jobs_for_tpl = [j for j in approved_jobs if str(j.get("template_id", "")) == sel_agg_tpl_id]
 
             if not jobs_for_tpl:
-                st.info(f"Khuôn **{sel_agg_tpl_ui}** chưa có hồ sơ nào được duyệt.")
+                st.info(f"Mẫu **{sel_agg_tpl_ui}** chưa có hồ sơ nào được duyệt.")
             else:
-                st.caption(f"**{len(jobs_for_tpl)}** hồ sơ đã duyệt thuộc khuôn **{sel_agg_tpl_ui}**")
+                st.caption(f"**{len(jobs_for_tpl)}** hồ sơ đã duyệt thuộc mẫu **{sel_agg_tpl_ui}**")
 
                 job_options = {}
                 for j in jobs_for_tpl:
@@ -118,7 +118,7 @@ def render_tab4():
                     key="e2_create_agg", type="primary",
                     disabled=not job_ids_to_agg,
                 ):
-                    with st.spinner("Đang chạy Map-Reduce…"):
+                    with st.spinner("Đang tổng hợp dữ liệu…"):
                         ok, data = post_json(
                             "/api/v1/extraction/aggregate",
                             {"template_id": sel_agg_tpl_id, "job_ids": job_ids_to_agg, "report_name": report_name},
@@ -139,7 +139,7 @@ def render_tab4():
     st.markdown("---")
     rh1, rh2 = st.columns([5, 1])
     with rh1:
-        st.markdown("#### 2️⃣ Danh sách bộ báo cáo")
+        st.markdown("#### 2️⃣ Danh sách báo cáo")
     with rh2:
         if st.button("🔄", key="t4_refresh", use_container_width=True, help="Làm mới"):
             invalidate_reports_cache()
@@ -147,7 +147,7 @@ def render_tab4():
 
     reports = load_reports()
     if not reports:
-        st.info("Chưa có bộ báo cáo nào. Tạo ở bước trên.")
+        st.info("Chưa có báo cáo nào. Tạo ở bước trên.")
         return
 
     # Xây index report
@@ -159,7 +159,7 @@ def render_tab4():
         report_options[f"📑 {rname}  ({count} hồ sơ · {ts})"] = r
 
     sel_report_lbl = st.selectbox(
-        "Chọn bộ báo cáo", list(report_options.keys()),
+        "Chọn báo cáo", list(report_options.keys()),
         key="e2_sel_report", label_visibility="collapsed",
     )
     sel_report = report_options[sel_report_lbl]
@@ -173,7 +173,7 @@ def render_tab4():
 
     # ── Info row ───────────────────────────────────────────────────────────────
     ic1, ic2, ic3, ic4 = st.columns(4)
-    ic1.metric("📋 Tổng hồ sơ gom", sel_report.get("total_jobs", 0))
+    ic1.metric("📋 Hồ sơ gom", sel_report.get("total_jobs", 0))
     ic2.metric("✅ Đã duyệt", sel_report.get("approved_jobs", 0))
     meta = (agg_data.get("_metadata") or {}) if ok_detail else {}
     ic3.metric("📐 Luật đã áp", meta.get("rules_applied", "—"))
@@ -181,7 +181,7 @@ def render_tab4():
 
     # ── Preview dữ liệu tổng hợp ──────────────────────────────────────────────
     if ok_detail and agg_data:
-        with st.expander("🔍 Xem nhanh dữ liệu tổng hợp", expanded=True):
+        with st.expander("🔍 Xem dữ liệu tổng hợp", expanded=True):
             _render_agg_preview(agg_data)
     elif not ok_detail:
         st.warning(f"Không tải được chi tiết: {detail}")
@@ -222,12 +222,12 @@ def render_tab4():
     # Word upload template
     with ex3:
         word_tpl_file = st.file_uploader(
-            "📎 Upload khuôn Word (.docx)", type=["docx"],
+            "📎 Upload mẫu Word (.docx)", type=["docx"],
             key="t4_word_tpl_upload", label_visibility="collapsed",
         )
-        if word_tpl_file and st.button("📝 Xuất Word (khuôn tự upload)", use_container_width=True, key="t4_exp_word_upload"):
+        if word_tpl_file and st.button("📝 Xuất Word (mẫu tự upload)", use_container_width=True, key="t4_exp_word_upload"):
             from api_client import post_form as _pf
-            with st.spinner("Đang render Word từ khuôn upload…"):
+            with st.spinner("Đang render Word từ mẫu upload…"):
                 ok_wu, content_wu = _pf(
                     f"/api/v1/extraction/aggregate/{sel_rid}/export-word",
                     data={"record_index": 0},
@@ -237,7 +237,7 @@ def render_tab4():
                 )
             if ok_wu and isinstance(content_wu, (bytes, bytearray)):
                 fname_wu = f"{sel_report.get('name', 'Report')}_custom.docx"
-                st.download_button("⬇️ Tải Word (khuôn upload)", content_wu, file_name=fname_wu, key="t4_dl_word_upload")
+                st.download_button("⬇️ Tải Word (mẫu upload)", content_wu, file_name=fname_wu, key="t4_dl_word_upload")
             elif ok_wu:
                 # API trả JSON thay vì bytes (lỗi soft)
                 st.error(str(content_wu))
@@ -259,8 +259,8 @@ def render_tab4():
 
     # ── Nguy hiểm: xoá báo cáo ───────────────────────────────────────────────
     st.markdown("---")
-    with st.expander("⚠️ Xoá bộ báo cáo này", expanded=False):
-        st.warning("Hành động **không thể hoàn tác**. Chỉ xoá báo cáo tổng hợp, không xoá hồ sơ gốc.")
+    with st.expander("⚠️ Xoá báo cáo này", expanded=False):
+        st.warning("Hành động **không thể hoàn tác**. Chỉ xoá báo cáo, không xoá hồ sơ gốc.")
         if st.button("🗑️ Xoá báo cáo", type="secondary", key="t4_del_report"):
             ok_d, _ = delete_req(f"/api/v1/extraction/aggregate/{sel_rid}", require_tenant=True)
             if ok_d:

@@ -246,64 +246,6 @@ LOG_FILE=app.log
 ### 3. Khởi Động Services (Docker Compose)
 
 ```bash
-<<<<<<< HEAD
-# Start all services
-docker compose up -d
-
-# Check status
-docker compose ps
-```
-
-Sau khi start xong:
-
-- API: http://localhost:8000
-- Streamlit UI: http://localhost:8501
-
-### 4. Database Migration
-
-```bash
-# Initialize Alembic (nếu chưa có)
-alembic init alembic
-
-# Generate migration
-alembic revision --autogenerate -m "Initial schema"
-
-# Apply migration
-alembic upgrade head
-```
-
-### 5. Run Application
-
-```bash
-# Development mode
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Production mode
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### 6. Start Celery Worker
-
-```bash
-# Start worker
-celery -A app.worker.celery_app worker --loglevel=info
-
-# Start with concurrency
-celery -A app.worker.celery_app worker --loglevel=info --concurrency=4
-```
-
-### Quick Start với Docker Compose (All-in-One)
-
-```bash
-# Build và chạy toàn bộ
-docker compose up --build -d
-
-# Xem logs
-docker compose logs -f api
-
-# Xem logs giao diện Streamlit
-docker compose logs -f streamlit
-=======
 # Build và start toàn bộ services
 docker-compose up --build -d
 
@@ -312,15 +254,11 @@ docker-compose ps
 
 # Xem logs API
 docker-compose logs -f api
->>>>>>> dad26b9c1df9bf44bfc09349a83f58b701c0ec33
 
 # Stop
 docker compose down
 ```
 
-<<<<<<< HEAD
-Với Docker Desktop trên Windows, cách này cho phép chạy luôn cả FastAPI và Streamlit trong container, không cần cài Python package vào máy local. Docker vẫn sẽ pull base image một lần đầu nếu máy chưa có.
-=======
 **Services được khởi động:**
 
 | Service | Port | Mô tả |
@@ -372,7 +310,6 @@ celery -A app.worker.celery_app worker --loglevel=info \
 # Start Celery Beat (terminal riêng)
 celery -A app.worker.celery_app beat --loglevel=info
 ```
->>>>>>> dad26b9c1df9bf44bfc09349a83f58b701c0ec33
 
 ---
 

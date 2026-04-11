@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     # Application
-    APP_NAME: str = "Enterprise RAG System"
+    APP_NAME: str = "IDP Extraction System"
     APP_ENV: str = "development"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -87,18 +87,10 @@ class Settings(BaseSettings):
     def MAX_FILE_SIZE(self) -> int:
         return self.MAX_FILE_SIZE_MB * 1024 * 1024
 
-    # Gemini
-    GEMINI_API_KEY: str = ""
-    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
-    GEMINI_CHAT_MODEL: str = "gemini-2.0-flash"
-    GEMINI_TIMEOUT: int = 15
-    GEMINI_MAX_RETRIES: int = 3
-
-    # Ollama (Hybrid extraction)
+    # Ollama (extraction LLM)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = "ollama"
-    OLLAMA_MODEL: str = "qwen3:8b"
+    OLLAMA_MODEL: str = "qwen2.5:7b-instruct"
     OLLAMA_TIMEOUT_SECONDS: float = 90.0
     OLLAMA_LOG_RAW_PRE_VALIDATE: bool = True
     OLLAMA_RAW_PREVIEW_CHARS: int = 1200
@@ -111,14 +103,6 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ]
 
-    # Chunking
-    CHUNK_SIZE: int = 500
-    CHUNK_OVERLAP: int = 50
-
-    # Embedding
-    EMBEDDING_DIMENSION: int = 768
-    EMBEDDING_BATCH_SIZE: int = 100
-
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_DEFAULT: str = "100/minute"
@@ -127,14 +111,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["*"]
 
     # ── Engine 2: Extraction ──────────────────────────────
-    # Gemini models for extraction (free API)
-    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash"    # standard + vision + block modes
-    GEMINI_PRO_MODEL: str = "gemini-2.5-flash"       # vision mode (alias → flash)
     EXTRACTION_MAX_TOKENS: int = 65536
     EXTRACTION_TEMPERATURE: float = 0.0
-
-    # Default extraction mode: standard | vision | block
-    DEFAULT_EXTRACTION_MODE: str = "standard"
 
     # Legacy / optional
     OPENAI_API_KEY: str = ""
@@ -145,16 +123,20 @@ class Settings(BaseSettings):
     EXTRACTION_TIMEOUT_MINUTES: int = 30
     EXTRACTION_BATCH_MAX_FILES: int = 20
 
-    # Extraction backend selection: 'ollama' or 'gemini'
-    EXTRACTION_BACKEND: str = "ollama"
-
-    # Hybrid extraction fallback
-    HYBRID_MAX_RETRIES: int = 3
-    HYBRID_MANUAL_REVIEW_DIR: str = "Needs_Manual_Review"
-
     # Confidence thresholds (for UI rendering)
     CONFIDENCE_HIGH: float = 0.85
     CONFIDENCE_MEDIUM: float = 0.50
+
+    # ── FileOperator: hot-folder polling ──────────────────
+    FILE_OPERATOR_ENABLED: bool = True
+    FILE_OPERATOR_POLL_SECONDS: int = 120          # Beat schedule interval
+    FILE_OPERATOR_INBOX_PREFIX: str = "inbox/"     # MinIO prefix to watch
+    FILE_OPERATOR_PROCESSED_PREFIX: str = "processed/"  # Move here after pickup
+
+    # ── BatchCloser: auto-close & aggregate ───────────────
+    BATCH_CLOSER_POLL_SECONDS: int = 180           # Beat schedule interval
+    BATCH_CLOSER_MAX_WAIT_MINUTES: int = 60        # Max idle time before force-close
+    BATCH_CLOSER_AUTO_AGGREGATE: bool = True        # Trigger aggregation on close
 
     # Logging
     LOG_LEVEL: str = "INFO"

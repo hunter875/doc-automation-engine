@@ -125,6 +125,33 @@ class TemplateCreate(BaseModel):
     schema_definition: SchemaDefinition
     aggregation_rules: Optional[AggregationRules] = None
     word_template_s3_key: Optional[str] = None
+    filename_pattern: Optional[str] = Field(
+        None, max_length=500,
+        description="Regex pattern to auto-match uploaded filenames to this template.",
+    )
+    extraction_mode: str = Field(
+        "block",
+        description="Pipeline to use: block (deterministic+enrichment).",
+    )
+
+    @field_validator("extraction_mode")
+    @classmethod
+    def validate_extraction_mode(cls, v: str) -> str:
+        if v not in ("block",):
+            raise ValueError("extraction_mode must be: block")
+        return v
+
+    @field_validator("filename_pattern")
+    @classmethod
+    def validate_filename_pattern(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        import re as _re
+        try:
+            _re.compile(v)
+        except _re.error as e:
+            raise ValueError(f"Invalid regex pattern: {e}")
+        return v.strip()
 
 
 class TemplateUpdate(BaseModel):
@@ -135,6 +162,37 @@ class TemplateUpdate(BaseModel):
     schema_definition: Optional[SchemaDefinition] = None
     aggregation_rules: Optional[AggregationRules] = None
     is_active: Optional[bool] = None
+    filename_pattern: Optional[str] = Field(
+        None, max_length=500,
+        description="Regex pattern to auto-match uploaded filenames.",
+    )
+    extraction_mode: Optional[str] = Field(
+        None,
+        description="Pipeline to use: block.",
+    )
+    word_template_s3_key: Optional[str] = Field(
+        None, max_length=500,
+        description="S3 key of the .docx Word template for export.",
+    )
+
+    @field_validator("extraction_mode")
+    @classmethod
+    def validate_extraction_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("block",):
+            raise ValueError("extraction_mode must be: block")
+        return v
+
+    @field_validator("filename_pattern")
+    @classmethod
+    def validate_filename_pattern(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        import re as _re
+        try:
+            _re.compile(v)
+        except _re.error as e:
+            raise ValueError(f"Invalid regex pattern: {e}")
+        return v.strip()
 
 
 class TemplateResponse(BaseModel):
@@ -147,6 +205,8 @@ class TemplateResponse(BaseModel):
     schema_definition: dict
     aggregation_rules: Optional[dict]
     word_template_s3_key: Optional[str] = None
+    filename_pattern: Optional[str] = None
+    extraction_mode: str = "standard"
     version: int
     is_active: bool
     created_by: Optional[uuid.UUID]
@@ -207,7 +267,7 @@ class JobResponse(BaseModel):
     batch_id: Optional[uuid.UUID]
     extraction_mode: str = "standard"
     status: str
-    extracted_data: Optional[dict]
+    extracted_data: Optional[dict] = Field(default=None, validation_alias="final_data")
     confidence_scores: Optional[dict]
     source_references: Optional[dict]
     reviewed_data: Optional[dict]
@@ -223,7 +283,7 @@ class JobResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class JobSummary(BaseModel):

@@ -52,9 +52,10 @@ header:
     - ngay_bao_cao
 
   report_number:
-    # Matches: "Số: 180/BC-KV30"
-    primary_pattern: "Số\\s*[:\\.]?\\s*(\\d{1,4}/BC[^\\n\\s]{1,30})"
-    fallback_pattern: "(\\d{1,4}/BC-[A-Z0-9]{1,20})"
+    # Matches: "Số: 180/BC-KV30" — allow spaces within the suffix (e.g. "KV 30"),
+    # they are collapsed to "" by re.sub(r"\s+", "", raw) in block_pipeline.py.
+    primary_pattern: "Số\\s*[:\\.]?\\s*(\\d{1,4}/BC[^\\n]{1,30})"
+    fallback_pattern: "(\\d{1,4}/BC-[A-Z0-9\\s]{1,20})"
     format_regex: "^\\d+/BC-.+"
 
   date:
@@ -156,6 +157,34 @@ table:
     - "TONGSOVUTAINAN"
     - "TONGSOVUCNCH"
     - "TAISUSUCO"
+
+  # Regex patterns used by _regex_fill_cnch_fields to recover empty fields
+  # from chi_tiet_cnch text after LLM extraction.
+  # All patterns use re.IGNORECASE | re.DOTALL. Group 1 = extracted value.
+  # All patterns below run on text that has already been normalized to
+  # single spaces (re.sub(r"\s+", " ", text)) by _regex_fill_cnch_fields.
+  # re.IGNORECASE | re.DOTALL are applied automatically by cnch_fill_patterns().
+  # Group 1 = extracted value.
+  cnch_fill_patterns:
+    noi_dung_tin_bao:
+      - "báo có\\s+([\\s\\S]{5,150}?)\\s+xảy ra"
+      - "nhận tin báo[^,]*,\\s*([\\s\\S]{5,120}?)(?:xảy ra|tại)"
+    luc_luong_tham_gia:
+      - "điều động\\s+([\\s\\S]{5,200}?)\\s+tham gia"
+    thong_tin_nan_nhan:
+      - "nạn nhân(?:\\s+(?:tên|là))?\\s+([\\s\\S]{10,300}?)(?=\\s*Đội|\\s*Hiện|\\.|$)"
+    ngay_xay_ra:
+      - "(?:lúc|vào lúc)[\\s\\S]{1,50}?ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+      - "(\\d{1,2}/\\d{2}/\\d{4})"
+    ket_qua_xu_ly:
+      - "[Hh]iện tại[\\s\\S]{0,100}?(?:đang|đã)\\s+([\\s\\S]{5,150}?)\\.(?:\\s*\\d|$)"
+      - "[Hh]iện tại[\\s\\S]{0,100}?(?:đang|đã)\\s+([\\s\\S]{5,150}?)\\."
+    incident_marker:
+      - "\\bxảy ra\\b|\\bsự cố\\b|\\btai nạn\\b|\\bcứu nạn\\b|\\bnạn nhân\\b"
+    incident_time:
+      - "(?:lúc|vào lúc)\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s+phút\\s+ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+    incident_location:
+      - "(?:xảy ra )?tại (?:địa chỉ:?\\s*)([\\s\\S]{10,200}?)(?:\\.|$)"
 
   incident_row_patterns:
     # Patterns matched against normalized text (spaced — after diacritics removed)

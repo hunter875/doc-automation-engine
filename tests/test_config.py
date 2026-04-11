@@ -26,10 +26,6 @@ class TestSettings:
 
         assert settings.ALGORITHM == "HS256"
         assert settings.ACCESS_TOKEN_EXPIRE_MINUTES == 30
-        assert settings.CHUNK_SIZE == 500
-        assert settings.CHUNK_OVERLAP == 50
-        assert settings.EMBEDDING_DIMENSION == 1536
-        assert settings.EMBEDDING_BATCH_SIZE == 100
 
     def test_database_url_format(self):
         """Test DATABASE_URL is properly formatted."""
@@ -38,13 +34,6 @@ class TestSettings:
         url = settings.DATABASE_URL
         assert url.startswith("postgresql://")
         assert "@" in url
-
-    def test_embedding_dimension_default(self):
-        """Test EMBEDDING_DIMENSION has a sensible default."""
-        from app.core.config import settings
-
-        assert settings.EMBEDDING_DIMENSION > 0
-        assert settings.EMBEDDING_DIMENSION == 1536
 
     def test_redis_url_format(self):
         """Test REDIS_URL is properly formatted."""

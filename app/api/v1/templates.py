@@ -85,10 +85,25 @@ async def scan_word_template(
             ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         result["word_template_s3_key"] = s3_key
-        logger.info("Saved word template to S3: %s", s3_key)
+        logger.info(
+            "SCAN_WORD_SAVED | key=%s bucket=%s filename=%s",
+            s3_key, settings.S3_BUCKET_NAME, file.filename,
+        )
     except Exception as exc:
-        logger.warning("Failed to save word template to S3: %s", exc)
-        result["word_template_s3_key"] = None
+        # Do NOT silently return None here. A scan result without an S3 key is
+        # unusable — the user would create a template that always fails on export.
+        logger.error(
+            "SCAN_WORD_S3_UPLOAD_FAILED | bucket=%s filename=%s error=%s",
+            settings.S3_BUCKET_NAME, file.filename, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"File Word đã được đọc thành công nhưng không thể lưu vào S3 "
+                f"(bucket={settings.S3_BUCKET_NAME}). "
+                f"Kiểm tra kết nối MinIO và thử lại. Chi tiết: {exc}"
+            ),
+        )
 
     return result
 
@@ -114,6 +129,8 @@ def create_template(
         description=body.description,
         aggregation_rules=body.aggregation_rules.model_dump() if body.aggregation_rules else None,
         word_template_s3_key=body.word_template_s3_key,
+        filename_pattern=body.filename_pattern,
+        extraction_mode=body.extraction_mode,
     )
 
 

@@ -20,7 +20,7 @@ from app.core.security import check_role_permission
 from app.infrastructure.db.session import get_db
 from app.domain.models.tenant import Tenant, UserTenantRole
 from app.domain.models.user import User
-from app.schemas.rag_schema import (
+from app.schemas.tenant_schema import (
     TenantCreate,
     TenantMemberAdd,
     TenantMemberResponse,

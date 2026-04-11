@@ -26,6 +26,7 @@ celery_app = Celery(
         "app.infrastructure.worker.tasks",
         "app.infrastructure.worker.extraction_tasks",
         "app.infrastructure.worker.enrichment_tasks",
+        "app.infrastructure.worker.operator_tasks",
     ],
 )
 
@@ -82,6 +83,14 @@ celery_app.conf.update(
         "cleanup-stuck-extraction-jobs": {
             "task": "app.infrastructure.worker.extraction_tasks.cleanup_stuck_extraction_jobs",
             "schedule": 1800.0,  # Every 30 minutes
+        },
+        "file-operator-poll-inbox": {
+            "task": "app.infrastructure.worker.operator_tasks.poll_inbox",
+            "schedule": float(settings.FILE_OPERATOR_POLL_SECONDS),
+        },
+        "batch-closer": {
+            "task": "app.infrastructure.worker.operator_tasks.close_completed_batches",
+            "schedule": float(settings.BATCH_CLOSER_POLL_SECONDS),
         },
     },
 )

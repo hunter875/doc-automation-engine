@@ -230,66 +230,6 @@ class TestDocSchemas:
 
 
 # ============================================================================
-# RAG Schema Validation Tests
-# ============================================================================
-
-
-class TestRAGSchemas:
-    """Tests for RAG request/response schema validation."""
-
-    def test_rag_query_request(self):
-        """Test valid RAG query request."""
-        from app.schemas.rag_schema import RAGQueryRequest
-
-        req = RAGQueryRequest(
-            question="What is machine learning?",
-            top_k=5,
-            temperature=0.7,
-        )
-
-        assert req.question == "What is machine learning?"
-        assert req.top_k == 5
-
-    def test_search_request(self):
-        """Test valid search request."""
-        from app.schemas.rag_schema import SearchRequest
-
-        req = SearchRequest(
-            query="machine learning algorithms",
-            top_k=10,
-        )
-
-        assert req.query == "machine learning algorithms"
-        assert req.top_k == 10
-
-    def test_tenant_create(self):
-        """Test tenant create schema."""
-        from app.schemas.rag_schema import TenantCreate
-
-        tenant = TenantCreate(
-            name="My Company",
-            description="Test company tenant",
-        )
-
-        assert tenant.name == "My Company"
-
-    def test_search_result_item(self):
-        """Test search result item schema."""
-        from app.schemas.rag_schema import SearchResultItem
-
-        result = SearchResultItem(
-            chunk_id="chunk_1",
-            document_id="doc_1",
-            content="Some relevant text",
-            score=0.95,
-            metadata={"chunk_index": 0},
-        )
-
-        assert result.score == 0.95
-        assert result.content == "Some relevant text"
-
-
-# ============================================================================
 # Password Change Schema Tests
 # ============================================================================
 

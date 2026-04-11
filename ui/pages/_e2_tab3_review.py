@@ -9,28 +9,10 @@ import pandas as pd
 
 from api_client import get_json, post_json
 from _e2_shared import (
-    STATUS_VI,
+    STATUS_VI, status_badge,
     load_jobs, load_templates,
     invalidate_jobs_cache,
 )
-
-# ── Badge màu theo trạng thái ──────────────────────────────────────────────────
-_STATUS_COLOR = {
-    "pending":    "#9e9e9e",
-    "processing": "#2196f3",
-    "extracted":  "#ff9800",
-    "enriching":  "#e040fb",
-    "ready_for_review": "#ff9800",
-    "approved":   "#4caf50",
-    "rejected":   "#ff5252",
-    "failed":     "#f44336",
-    "aggregated": "#9c27b0",
-}
-
-def _badge(status: str) -> str:
-    label = STATUS_VI.get(status, status)
-    color = _STATUS_COLOR.get(status, "#9e9e9e")
-    return f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:10px;font-size:0.8em;font-weight:600">{label}</span>'
 
 
 # ── Render extracted_data thông minh theo cấu trúc block ─────────────────────
@@ -135,16 +117,16 @@ def render_tab3():
     with tcol1:
         filter_status = st.selectbox(
             "Lọc trạng thái",
-            ["Tất cả", "⏳ Chờ duyệt (ready_for_review)", "✅ Đã duyệt (approved)", "❌ Lỗi (failed)"],
+            ["Tất cả", "✅ Sẵn sàng duyệt", "✅ Đã duyệt", "⚠️ Cần xem lại"],
             key="r3_filter_status",
         )
     with tcol2:
         templates = load_templates()
-        tpl_map = {"Tất cả template": ""}
+        tpl_map = {"Tất cả mẫu": ""}
         for t in templates:
             tpl_map[t.get("name", t["id"][:8])] = t["id"]
         filter_tpl = st.selectbox(
-            "Lọc khuôn mẫu",
+            "Lọc mẫu",
             list(tpl_map.keys()),
             key="r3_filter_tpl",
         )
@@ -168,9 +150,9 @@ def render_tab3():
 
     status_filter_map = {
         "Tất cả": None,
-        "⏳ Chờ duyệt (ready_for_review)": "ready_for_review",
-        "✅ Đã duyệt (approved)": "approved",
-        "❌ Lỗi (failed)": "failed",
+        "✅ Sẵn sàng duyệt": "ready_for_review",
+        "✅ Đã duyệt": "approved",
+        "⚠️ Cần xem lại": "failed",
     }
     wanted_status = status_filter_map.get(filter_status)
     wanted_tpl = tpl_map.get(filter_tpl, "")
@@ -198,10 +180,10 @@ def render_tab3():
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("📋 Tổng hồ sơ", len(jobs))
-    m2.metric("⏳ Chờ duyệt", status_counts.get("ready_for_review", 0))
+    m2.metric("✅ Sẵn sàng duyệt", status_counts.get("ready_for_review", 0))
     m3.metric("✅ Đã duyệt", status_counts.get("approved", 0))
-    m4.metric("🔄 Đang xử lý", status_counts.get("processing", 0) + status_counts.get("pending", 0) + status_counts.get("enriching", 0))
-    m5.metric("❌ Thất bại", status_counts.get("failed", 0))
+    m4.metric("🔄 Đang xử lý", status_counts.get("processing", 0) + status_counts.get("pending", 0) + status_counts.get("enriching", 0) + status_counts.get("extracted", 0))
+    m5.metric("⚠️ Cần xem lại", status_counts.get("failed", 0))
 
     st.divider()
 
@@ -216,14 +198,12 @@ def render_tab3():
         tpl_name = tpl_id_to_name.get(tpl_id, tpl_id[:8] if tpl_id else "—")
         status_str = STATUS_VI.get(j.get("status", ""), j.get("status", ""))
         created = str(j.get("created_at", ""))[:16].replace("T", " ")
-        mode = "Block" if j.get("extraction_mode", j.get("mode", "")) == "block" else "Chuẩn"
         label = f"{fname} | {created}"
         job_index_map[label] = j
         table_rows.append({
             "Tên file": fname[:55],
-            "Khuôn mẫu": tpl_name[:30],
+            "Mẫu": tpl_name[:30],
             "Trạng thái": status_str,
-            "Mode": mode,
             "Thời gian": created,
         })
 
@@ -259,47 +239,40 @@ def render_tab3():
     fname_display = job_detail.get("file_name", job_detail.get("display_name", "(no name)"))
     tpl_id = str(job_detail.get("template_id", ""))
     tpl_name = tpl_id_to_name.get(tpl_id, tpl_id[:8] or "—")
-    mode_display = "🧱 Block" if job_detail.get("extraction_mode", job_detail.get("mode", "")) == "block" else "⚙️ Chuẩn"
     proc_ms = job_detail.get("processing_time_ms")
     proc_str = f"{proc_ms/1000:.1f}s" if proc_ms else "—"
-    llm_model = job_detail.get("llm_model") or "—"
-    llm_tokens = job_detail.get("llm_tokens_used", 0)
 
     st.markdown("---")
-    hdr1, hdr2, hdr3 = st.columns([3, 2, 2])
+    hdr1, hdr2 = st.columns([4, 2])
     with hdr1:
         st.markdown(f"#### 📄 {fname_display}")
-        st.markdown(f"Khuôn: **{tpl_name}** &nbsp;|&nbsp; Mode: **{mode_display}**")
+        st.markdown(f"Mẫu: **{tpl_name}**")
     with hdr2:
-        st.markdown(unsafe_allow_html=True, body=f"Trạng thái: {_badge(cur_status)}")
+        st.markdown(unsafe_allow_html=True, body=f"Trạng thái: {status_badge(cur_status)}")
         st.caption(f"Thời gian xử lý: {proc_str}")
-    with hdr3:
-        st.caption(f"Model: {llm_model}")
-        st.caption(f"Tokens: {llm_tokens:,}" if isinstance(llm_tokens, int) else f"Tokens: {llm_tokens}")
 
     if job_detail.get("error_message"):
-        st.error(f"Lỗi pipeline: {job_detail['error_message']}")
+        st.warning(f"Ghi chú hệ thống: {job_detail['error_message'][:200]}")
 
     # ── Tabs nội dung ──────────────────────────────────────────────────────────
     data_to_show = reviewed_data if reviewed_data else extracted_data
 
-    tab_view, tab_edit, tab_raw = st.tabs([
+    tab_view, tab_edit = st.tabs([
         "👁️ Dữ liệu trích xuất",
         "✏️ Chỉnh sửa trước khi duyệt",
-        "🗂️ JSON thô",
     ])
 
     with tab_view:
         if reviewed_data:
-            st.info("ℹ️ Đang hiển thị **reviewed_data** (đã chỉnh sửa). Dữ liệu gốc xem ở tab JSON thô.")
+            st.info("ℹ️ Đang hiển thị bản đã chỉnh sửa.")
         _render_extracted_data(data_to_show)
 
     with tab_edit:
-        st.markdown("Dán hoặc sửa JSON bên dưới. Dữ liệu này sẽ được lưu vào **reviewed_data** khi bạn nhấn Duyệt.")
+        st.markdown("Sửa dữ liệu bên dưới. Nội dung sẽ được lưu khi bạn nhấn **Duyệt**.")
 
         edit_init = json.dumps(data_to_show, ensure_ascii=False, indent=2) if data_to_show else "{}"
         edited_json_str = st.text_area(
-            "JSON (reviewed_data)",
+            "Dữ liệu (JSON)",
             value=edit_init,
             height=500,
             key="r3_edit_json",
@@ -312,24 +285,17 @@ def render_tab3():
                 try:
                     parsed = json.loads(edited_json_str)
                     st.session_state["r3_parsed_json"] = parsed
-                    st.success(f"JSON hợp lệ — {len(parsed)} keys ở tầng trên cùng.")
+                    st.success(f"JSON hợp lệ — {len(parsed)} mục.")
                 except json.JSONDecodeError as e:
                     st.error(f"JSON lỗi: {e}")
                     st.session_state.pop("r3_parsed_json", None)
-
-    with tab_raw:
-        st.markdown("**extracted_data (gốc từ AI):**")
-        st.json(extracted_data or {})
-        if reviewed_data:
-            st.markdown("**reviewed_data (đã chỉnh sửa):**")
-            st.json(reviewed_data)
 
     # ── Panel duyệt / từ chối ──────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### 🛂 Xử lý hồ sơ")
 
     if cur_status == "approved":
-        st.success("✅ Hồ sơ này đã được duyệt rồi. Bạn vẫn có thể duyệt lại để cập nhật reviewed_data.")
+        st.success("✅ Hồ sơ này đã được duyệt. Bạn vẫn có thể duyệt lại để cập nhật nội dung.")
         if existing_notes:
             st.caption(f"Ghi chú trước: {existing_notes}")
 

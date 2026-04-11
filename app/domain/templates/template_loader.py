@@ -196,6 +196,21 @@ class DocumentTemplate:
     def cnch_fallback_patterns(self) -> list[str]:
         return self._get_list("table", "cnch_fallback_patterns")
 
+    def cnch_fill_patterns(self, field: str) -> list[re.Pattern]:
+        """Compiled regex patterns used to fill empty CNCHItem fields.
+
+        Each pattern has group 1 = the extracted value.
+        All patterns use IGNORECASE | DOTALL.
+        """
+        raw_list = self._get_list("table", "cnch_fill_patterns", field)
+        patterns: list[re.Pattern] = []
+        for p in raw_list:
+            try:
+                patterns.append(re.compile(p, re.IGNORECASE | re.DOTALL))
+            except re.error as exc:
+                logger.warning("Invalid cnch_fill_pattern for %r: %s", field, exc)
+        return patterns
+
     # ── validation ────────────────────────────────────────────────────
     @property
     def year_range(self) -> tuple[int, int]:

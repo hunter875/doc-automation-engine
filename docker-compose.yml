@@ -25,7 +25,7 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
       - EXTRACTION_MAX_TOKENS=65536
       - SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-key-change-in-production}
       - DEBUG=true
@@ -87,7 +87,7 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - EXTRACTION_MAX_TOKENS=65536
     extra_hosts:
@@ -134,7 +134,7 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - EXTRACTION_MAX_TOKENS=65536
     extra_hosts:
@@ -180,7 +180,7 @@ services:
       - GEMINI_FLASH_MODEL=${GEMINI_FLASH_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}
       - EXTRACTION_BACKEND=${EXTRACTION_BACKEND:-ollama}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - EXTRACTION_MAX_TOKENS=65536
     extra_hosts:

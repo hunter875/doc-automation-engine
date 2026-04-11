@@ -30,7 +30,6 @@ from app.schemas.doc_schema import (
     UploadResponse,
 )
 from app.application.doc_service import DocumentService
-from app.infrastructure.worker.tasks import process_document_task
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -88,15 +87,6 @@ async def upload_document(
             file_content=content,
             tags=tag_list,
         )
-
-        # Queue background processing
-        try:
-            process_document_task.delay(
-                document_id=str(document.id),
-                tenant_id=ctx.tenant_id,
-            )
-        except Exception as _task_err:
-            logger.warning(f"Failed to queue document processing task: {_task_err}")
 
         return UploadResponse(
             id=str(document.id),
@@ -374,12 +364,6 @@ def reprocess_document(
         document = doc_service.update_document_status(
             document_id=document_id,
             status=DocumentStatus.PENDING,
-        )
-
-        # Queue background processing
-        process_document_task.delay(
-            document_id=str(document.id),
-            tenant_id=ctx.tenant_id,
         )
 
         return DocumentResponse.model_validate(document)

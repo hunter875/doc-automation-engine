@@ -1,8 +1,10 @@
-"""Pydantic schema for hybrid incident extraction output."""
+"""Extraction schemas: Pydantic output models and pipeline result dataclass."""
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -202,3 +204,20 @@ class BlockExtractionOutput(BaseModel):
     danh_sach_cnch: list[CNCHItem] = Field(default_factory=list)
     danh_sach_phuong_tien_hu_hong: list[PhuongTienHuHongItem] = Field(default_factory=list)
     danh_sach_cong_van_tham_muu: list[CongVanItem] = Field(default_factory=list)
+
+
+@dataclass
+class PipelineResult:
+    """Final result returned by any extraction pipeline."""
+
+    status: str
+    attempts: int
+    output: BaseModel | None = None
+    errors: list[str] = field(default_factory=list)
+    manual_review_path: str | None = None
+    manual_review_metadata_path: str | None = None
+    business_data: dict | None = None
+    metrics: dict | None = None
+    # Stage-1 carries the raw CNCH subsection text so the enrichment worker
+    # can call the LLM in Stage 2 without re-running PDF extraction.
+    chi_tiet_cnch: str = ""

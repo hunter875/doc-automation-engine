@@ -5,7 +5,7 @@ sys.path.insert(0, str(_here.parent))       # ui/        — for api_client, _e2
 
 import streamlit as st
 
-from api_client import init_state, render_sidebar, require_login
+from api_client import init_state, render_sidebar, require_login, get_json
 from _e2_tab1_templates import render_tab1
 from _e2_tab2_jobs import render_tab2
 from _e2_tab3_review import render_tab3
@@ -27,35 +27,40 @@ render_sidebar()
 require_login()
 
 # ── Page header ───────────────────────────────────────────────────────────────
-st.title("⚙️ Luồng Bóc tách Dữ liệu Tự động")
-st.caption("Thiết lập khuôn mẫu → Đẩy tài liệu vào AI → Rà soát sửa lỗi → Tổng hợp và tải báo cáo.")
+st.title("⚙️ Trích xuất Dữ liệu")
+st.caption("Nạp tài liệu → AI xử lý tự động → Duyệt kết quả → Tải báo cáo.")
 
-# ── Mode selector ─────────────────────────────────────────────────────────────
-mode_map = {"📄 Chuẩn (Standard)": "standard", "🧩 Chia block (Block)": "block"}
-mode_labels = list(mode_map.keys())
-current_mode_value = st.session_state.get("engine2_mode", "standard")
-if current_mode_value not in {"standard", "block"}:
-    current_mode_value = "block"
-current_mode_label = next((k for k, v in mode_map.items() if v == current_mode_value), mode_labels[0])
-sel_mode = st.radio("Chế độ xử lý thuật toán", mode_labels, index=mode_labels.index(current_mode_label), horizontal=True)
-st.session_state.engine2_mode = mode_map[sel_mode]
+# ── Report-ready notification banner ──────────────────────────────────────────
+ok_dash, dash = get_json("/api/v1/extraction/dashboard", require_tenant=True)
+if ok_dash and isinstance(dash, dict):
+    _jobs = dash.get("jobs_by_status", {})
+    _awaiting = _jobs.get("awaiting_review", 0)
+    _recent = dash.get("recent_reports", [])
+    _new_reports = [r for r in _recent if r.get("status") != "finalized"]
+    if _new_reports:
+        _rname = _new_reports[0].get("name", "Báo cáo")
+        st.success(
+            f"📊 **Báo cáo mới:** {_rname} ({_new_reports[0].get('total_jobs', 0)} hồ sơ) — "
+            f"chuyển sang **📊 Báo cáo** để tải về.",
+            icon="🔔",
+        )
+    if _awaiting > 0:
+        st.info(f"📋 **{_awaiting} hồ sơ** chờ duyệt bên dưới.", icon="⏳")
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
-    "1️⃣ Cấu hình Mẫu",
-    "2️⃣ Bơm Dữ liệu",
-    "3️⃣ Bàn Mổ (Review)",
-    "4️⃣ Đóng gói & Xuất",
+# ── 3-View UX: Inbox / Reports / Settings ────────────────────────────────────
+tab_inbox, tab_reports, tab_settings = st.tabs([
+    "📥 Hồ sơ",
+    "📊 Báo cáo",
+    "⚙️ Cài đặt mẫu",
 ])
 
-with tab1:
-    render_tab1()
-
-with tab2:
+with tab_inbox:
     render_tab2()
-
-with tab3:
+    st.divider()
     render_tab3()
 
-with tab4:
+with tab_reports:
     render_tab4()
+
+with tab_settings:
+    render_tab1()

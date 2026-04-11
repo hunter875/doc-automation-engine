@@ -35,16 +35,16 @@ router = APIRouter()
 async def create_job(
     file: UploadFile = File(...),
     template_id: str = Form(...),
-    mode: str = Form("standard"),
     ctx: TenantContext = Depends(get_tenant_context),
     role: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if mode not in ("standard", "vision", "block"):
-        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
-
     from app.application.doc_service import DocumentService
+    from app.application.template_service import TemplateManager
     from app.infrastructure.worker.extraction_tasks import extract_document_task
+
+    tpl = TemplateManager(db).get_template(template_id, ctx.tenant_id)
+    mode = tpl.extraction_mode or "block"
 
     content = await file.read()
 
@@ -76,13 +76,13 @@ async def create_job(
 async def create_batch_jobs(
     files: list[UploadFile] = File(...),
     template_id: str = Form(...),
-    mode: str = Form("standard"),
     ctx: TenantContext = Depends(get_tenant_context),
     role: None = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if mode not in ("standard", "vision", "block"):
-        raise HTTPException(status_code=400, detail="mode must be: standard, vision, or block")
+    from app.application.template_service import TemplateManager
+    tpl = TemplateManager(db).get_template(template_id, ctx.tenant_id)
+    mode = tpl.extraction_mode or "block"
 
     max_files = settings.EXTRACTION_BATCH_MAX_FILES
     if len(files) > max_files:
@@ -140,19 +140,146 @@ def create_job_from_document(
     db: Session = Depends(get_db),
 ):
     from app.application.doc_service import DocumentService
+    from app.application.template_service import TemplateManager
     from app.infrastructure.worker.extraction_tasks import extract_document_task
 
     DocumentService(db).get_document(str(body.document_id), ctx.tenant_id)
+    tpl = TemplateManager(db).get_template(str(body.template_id), ctx.tenant_id)
+    mode = body.mode or tpl.extraction_mode or "block"
 
     job = JobManager(db).create_job(
         tenant_id=ctx.tenant_id,
         template_id=str(body.template_id),
         document_id=str(body.document_id),
         user_id=str(ctx.user.id),
-        mode=body.mode,
+        mode=mode,
     )
     extract_document_task.delay(str(job.id))
     return job
+
+
+# ── Helper ────────────────────────────────────────────────────────────────────
+
+
+def _extract_first_page_text(content: bytes) -> str:
+    """Extract text from the first page for template matching."""
+    try:
+        import io
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            if pdf.pages:
+                return (pdf.pages[0].extract_text() or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+@router.post(
+    "/jobs/smart-upload",
+    response_model=BatchCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Smart upload: auto-detect template & mode, auto-trigger extraction",
+    description=(
+        "Upload one or more PDFs. The system automatically:\n"
+        "1. Detects the best template via filename pattern / field coverage\n"
+        "2. Uses template's extraction_mode (block by default)\n"
+        "3. Creates jobs and triggers extraction immediately\n\n"
+        "If template_id is provided, it overrides auto-detection."
+    ),
+)
+async def smart_upload(
+    files: list[UploadFile] = File(...),
+    template_id: Optional[str] = Form(None),
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from app.application.doc_service import DocumentService
+    from app.application.template_service import TemplateManager
+    from app.infrastructure.worker.extraction_tasks import extract_document_task
+
+    max_files = settings.EXTRACTION_BATCH_MAX_FILES
+    if len(files) > max_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Max {max_files} files per batch",
+        )
+
+    batch_id = uuid.uuid4()
+    doc_service = DocumentService(db)
+    job_manager = JobManager(db)
+    tpl_manager = TemplateManager(db)
+    jobs_created: list[JobSummary] = []
+
+    for file in files:
+        try:
+            content = await file.read()
+            filename = file.filename or "unknown.pdf"
+
+            # 1. Resolve template
+            resolved_template_id = template_id
+            resolved_tpl = None
+            if not resolved_template_id:
+                first_page_text = _extract_first_page_text(content)
+                matched_tpl = tpl_manager.detect_template(
+                    tenant_id=ctx.tenant_id,
+                    filename=filename,
+                    first_page_text=first_page_text,
+                )
+                if not matched_tpl:
+                    jobs_created.append(
+                        JobSummary(
+                            job_id=uuid.uuid4(),
+                            file_name=filename,
+                            status="error: no matching template found",
+                        )
+                    )
+                    continue
+                resolved_template_id = str(matched_tpl.id)
+                resolved_tpl = matched_tpl
+            else:
+                resolved_tpl = tpl_manager.get_template(resolved_template_id, ctx.tenant_id)
+
+            # 2. Use template's extraction_mode — default to block
+            mode = getattr(resolved_tpl, "extraction_mode", None) or "block"
+
+            # 3. Create document + job
+            document = doc_service.create_document(
+                tenant_id=ctx.tenant_id,
+                owner_id=str(ctx.user.id),
+                filename=filename,
+                file_content=content,
+            )
+            job = job_manager.create_job(
+                tenant_id=ctx.tenant_id,
+                template_id=resolved_template_id,
+                document_id=str(document.id),
+                user_id=str(ctx.user.id),
+                batch_id=str(batch_id),
+                mode=mode,
+            )
+
+            # 4. Auto-trigger extraction
+            extract_document_task.delay(str(job.id))
+            jobs_created.append(
+                JobSummary(job_id=job.id, file_name=filename, status="pending")
+            )
+
+        except Exception as exc:
+            jobs_created.append(
+                JobSummary(
+                    job_id=uuid.uuid4(),
+                    file_name=file.filename or "unknown",
+                    status=f"error: {str(exc)[:100]}",
+                )
+            )
+
+    return BatchCreateResponse(
+        batch_id=batch_id,
+        total_files=len(files),
+        jobs=jobs_created,
+    )
 
 
 @router.get(
@@ -297,6 +424,127 @@ def get_extraction_metrics(
     """Return global pipeline extraction metrics."""
     from app.utils.metrics import global_metrics
     return global_metrics.to_dict()
+
+
+@router.get(
+    "/dashboard",
+    status_code=status.HTTP_200_OK,
+    summary="Business observability dashboard metrics",
+)
+def get_dashboard(
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_viewer),
+    db: Session = Depends(get_db),
+):
+    """Return 6 business metrics for the admin dashboard.
+
+    1. total_documents — documents uploaded
+    2. jobs_by_status — breakdown (processing, awaiting_review, approved, failed)
+    3. avg_processing_minutes — mean time from PENDING → READY_FOR_REVIEW
+    4. reports_count — aggregation reports created
+    5. approval_rate — approved / (approved + rejected) %
+    6. recent_reports — last 5 reports (id, name, created_at, total_jobs)
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import func, case, and_
+
+    from app.domain.models.extraction_job import (
+        ExtractionJob,
+        ExtractionJobStatus,
+        ExtractionTemplate,
+        AggregationReport,
+    )
+    from app.domain.models.document import Document
+
+    tid = ctx.tenant_id
+
+    # 1. Total documents
+    total_docs = (
+        db.query(func.count(Document.id))
+        .filter(Document.tenant_id == tid)
+        .scalar()
+    ) or 0
+
+    # 2. Jobs by status
+    status_counts = (
+        db.query(ExtractionJob.status, func.count(ExtractionJob.id))
+        .filter(ExtractionJob.tenant_id == tid)
+        .group_by(ExtractionJob.status)
+        .all()
+    )
+    sc = dict(status_counts)
+    processing = sum(
+        sc.get(s, 0) for s in (
+            ExtractionJobStatus.PENDING,
+            ExtractionJobStatus.PROCESSING,
+            ExtractionJobStatus.EXTRACTED,
+            ExtractionJobStatus.ENRICHING,
+        )
+    )
+    jobs_by_status = {
+        "processing": processing,
+        "awaiting_review": sc.get(ExtractionJobStatus.READY_FOR_REVIEW, 0),
+        "approved": sc.get(ExtractionJobStatus.APPROVED, 0),
+        "aggregated": sc.get(ExtractionJobStatus.AGGREGATED, 0),
+        "rejected": sc.get(ExtractionJobStatus.REJECTED, 0),
+        "failed": sc.get(ExtractionJobStatus.FAILED, 0),
+        "total": sum(sc.values()),
+    }
+
+    # 3. Average processing time (jobs completed in last 30 days)
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    avg_ms = (
+        db.query(func.avg(ExtractionJob.processing_time_ms))
+        .filter(
+            ExtractionJob.tenant_id == tid,
+            ExtractionJob.processing_time_ms.isnot(None),
+            ExtractionJob.processing_time_ms > 0,
+            ExtractionJob.created_at >= thirty_days_ago,
+        )
+        .scalar()
+    )
+    avg_processing_minutes = round((avg_ms or 0) / 60000, 1)
+
+    # 4. Reports count
+    reports_count = (
+        db.query(func.count(AggregationReport.id))
+        .filter(AggregationReport.tenant_id == tid)
+        .scalar()
+    ) or 0
+
+    # 5. Approval rate
+    approved_count = sc.get(ExtractionJobStatus.APPROVED, 0) + sc.get(ExtractionJobStatus.AGGREGATED, 0)
+    rejected_count = sc.get(ExtractionJobStatus.REJECTED, 0)
+    reviewed_total = approved_count + rejected_count
+    approval_rate = round(approved_count / reviewed_total * 100, 1) if reviewed_total > 0 else 0.0
+
+    # 6. Recent reports (last 5)
+    recent_reports_q = (
+        db.query(AggregationReport)
+        .filter(AggregationReport.tenant_id == tid)
+        .order_by(AggregationReport.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    recent_reports = [
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "total_jobs": r.total_jobs,
+            "status": r.status,
+        }
+        for r in recent_reports_q
+    ]
+
+    return {
+        "total_documents": total_docs,
+        "jobs_by_status": jobs_by_status,
+        "avg_processing_minutes": avg_processing_minutes,
+        "reports_count": reports_count,
+        "approval_rate": approval_rate,
+        "recent_reports": recent_reports,
+    }
 
 
 @router.post(

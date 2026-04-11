@@ -42,6 +42,13 @@ class ExtractionTemplate(Base):
     # S3 key for the original Word template (.docx) used to create this template
     word_template_s3_key = Column(String(500), nullable=True)
 
+    # Regex pattern to auto-match uploaded filenames to this template.
+    # E.g. r"PCCC.*\d{4}" or r"BC_CHAY.*".  NULL means no auto-matching.
+    filename_pattern = Column(String(500), nullable=True)
+
+    # Extraction pipeline to use: standard (hybrid LLM), block (deterministic+enrichment), vision
+    extraction_mode = Column(String(20), default="standard", nullable=False, server_default="standard")
+
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True, index=True)
 

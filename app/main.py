@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import auth, document, rag, tenant
+from app.api.v1 import auth, document, tenant
 from app.api.v1.jobs import router as extraction_jobs_router
 from app.api.v1.aggregation import router as extraction_reports_router
 from app.api.v1.templates import router as extraction_templates_router
@@ -32,58 +32,35 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    logger.info("Starting RAG API server...")
+    logger.info("Starting IDP Extraction API server...")
 
-    # Initialize pgvector extension FIRST (before creating tables)
-    from app.infrastructure.db.session import SessionLocal
-    from app.engines.rag.vector_search import ensure_pgvector_extension, create_vector_index
-    db = SessionLocal()
-    try:
-        ensure_pgvector_extension(db)
-        logger.info("pgvector extension initialized")
-    except Exception as e:
-        logger.warning(f"pgvector extension warning: {e}")
-    finally:
-        db.close()
-
-    # Create database tables (after extension is enabled)
+    # Create database tables
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
 
-    # Create vector indexes
-    db = SessionLocal()
-    try:
-        create_vector_index(db)
-        logger.info("Vector indexes created/verified")
-    except Exception as e:
-        logger.warning(f"Vector index warning: {e}")
-    finally:
-        db.close()
-    
     yield
-    
+
     # Shutdown
-    logger.info("Shutting down RAG API server...")
+    logger.info("Shutting down IDP Extraction API server...")
 
 
 # Create FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="""
-## Enterprise Multi-Tenant RAG System
+## IDP Extraction System
 
-A production-ready Retrieval-Augmented Generation (RAG) system with multi-tenant support.
+A production-ready Intelligent Document Processing (IDP) platform.
 
 ### Features
-- 📄 **Document Management**: Upload, process, and manage documents
-- 🔍 **Semantic Search**: Vector similarity search with hybrid BM25
-- 🤖 **RAG Queries**: AI-powered Q&A based on your documents
+- 📄 **Document Management**: Upload and manage documents
+- ⚙️ **Engine 2 Extraction**: Block-based deterministic extraction + LLM enrichment
+- 📊 **Aggregation**: Merge extraction results into reports
 - 👥 **Multi-Tenant**: Full data isolation between organizations
 - 🔐 **RBAC**: Role-based access control (Owner, Admin, Viewer)
 
 ### Authentication
 All endpoints require JWT Bearer token authentication.
-Include `Authorization: Bearer <token>` header.
 
 ### Tenant Context
 Most endpoints require `X-Tenant-ID` header to specify the tenant context.
@@ -158,7 +135,6 @@ async def general_exception_handler(request: Request, exc: Exception):
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(document.router, prefix="/api/v1")
-app.include_router(rag.router, prefix="/api/v1")
 app.include_router(extraction_templates_router, prefix="/api/v1/extraction", tags=["Extraction Templates"])
 app.include_router(extraction_jobs_router, prefix="/api/v1/extraction", tags=["Extraction Jobs"])
 app.include_router(extraction_reports_router, prefix="/api/v1/extraction", tags=["Extraction Reports"])
@@ -198,23 +174,11 @@ def readiness_check():
         db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)}"
-    
-    # Check pgvector connection
-    try:
-        from app.engines.rag.vector_search import check_pgvector_connection, ensure_pgvector_extension
-        db_session = SessionLocal()
-        ensure_pgvector_extension(db_session)
-        pgvector_ok = check_pgvector_connection(db_session)
-        db_session.close()
-        vector_status = "connected" if pgvector_ok else "extension not installed"
-    except Exception as e:
-        vector_status = f"error: {str(e)}"
-    
+
     return {
         "status": "ready",
         "checks": {
             "database": db_status,
-            "pgvector": vector_status,
         },
     }
 

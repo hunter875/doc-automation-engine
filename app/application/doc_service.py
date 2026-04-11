@@ -22,7 +22,6 @@ from app.core.exceptions import (
     S3Error,
     StorageError,
 )
-from app.engines.rag.vector_search import delete_document_chunks
 from app.domain.models.document import Document, DocumentStatus
 from app.schemas.doc_schema import (
     DocumentCreate,
@@ -486,12 +485,6 @@ class DocumentService:
             self.delete_from_s3(document.s3_key)
         except S3Error as e:
             logger.warning(f"Failed to delete S3 object: {e}")
-
-        # Delete vector chunks from PostgreSQL
-        try:
-            delete_document_chunks(self.db, document_id, tenant_id)
-        except Exception as e:
-            logger.warning(f"Failed to delete vector chunks: {e}")
 
         # Delete database record
         self.db.delete(document)

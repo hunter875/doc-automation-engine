@@ -1,4 +1,4 @@
-"""Tab 1 — Cấu hình Khuôn Mẫu Bóc tách."""
+"""Settings — Quản lý Mẫu Trích xuất."""
 
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -46,7 +46,7 @@ def _init_scan_config(scan_result: dict):
         field_rows.append({
             "Chọn": True,
             "Tên trường": name,
-            "Lỗ gốc": var.get("original_name", name),
+            "Biỏu mẫu gốc": var.get("original_name", name),
             "Loại": field.get("type", "string"),
             "Bắt buộc": field.get("required", True),
             "Tổng hợp": agg_rules.get(name, {}).get("method", _default_agg_method(field.get("type", "string"), name)),
@@ -63,7 +63,7 @@ def _init_scan_config(scan_result: dict):
     st.session_state["e2_scan_config_arrays"] = array_items
 
 
-def _build_template_payload(template_name: str, field_rows: list[dict], array_map: dict) -> dict:
+def _build_template_payload(template_name: str, field_rows: list[dict], array_map: dict, filename_pattern: str = "", extraction_mode: str = "block") -> dict:
     schema_fields, agg_rules = [], []
     for row in field_rows:
         if not row.get("Chọn"):
@@ -102,29 +102,32 @@ def _build_template_payload(template_name: str, field_rows: list[dict], array_ma
     }
     if st.session_state.get("e2_word_template_s3_key"):
         payload["word_template_s3_key"] = st.session_state["e2_word_template_s3_key"]
+    if filename_pattern:
+        payload["filename_pattern"] = filename_pattern
+    payload["extraction_mode"] = extraction_mode or "block"
     return payload
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def render_tab1():
-    st.markdown("### 📐 Quản lý Khuôn Mẫu Trích xuất")
+    st.markdown("### ⚙️ Quản lý Mẫu")
     st.markdown(
-        "Tạo khuôn bằng cách **quét file Word** mẫu (tự nhận diện `{{lỗ}}`) hoặc **nhập thủ công**. "
-        "Mỗi khuôn định nghĩa schema JSON và luật tổng hợp (SUM, CONCAT…)."
+        "Tạo mẫu bằng cách **quét file Word** mẫu (tự nhận diện các trường) hoặc **nhập thủ công**. "
+        "Mỗi mẫu xác định cấu trúc dữ liệu và cách tổng hợp."
     )
 
     # ── Header row: đếm + refresh ──────────────────────────────────────────────
     templates = load_templates()
     hcol1, hcol2 = st.columns([5, 1])
     with hcol1:
-        st.markdown(f"#### 📚 Khuôn hiện có &nbsp;`{len(templates)}`")
+        st.markdown(f"#### 📚 Mẫu hiện có &nbsp;`{len(templates)}`")
     with hcol2:
         if st.button("🔄", key="t1_refresh", use_container_width=True, help="Làm mới danh sách"):
             invalidate_templates_cache()
             st.rerun()
 
     if not templates:
-        st.info("Chưa có khuôn nào. Tạo mới ở phần phía dưới.")
+        st.info("Chưa có mẫu nào. Tạo mới ở phần phía dưới.")
     else:
         for t in templates:
             tpl_id = str(t.get("id", ""))
@@ -134,7 +137,10 @@ def render_tab1():
             agg_count = len((t.get("aggregation_rules") or {}).get("rules", []))
             created = str(t.get("created_at", ""))[:10]
             has_word = bool(t.get("word_template_s3_key"))
-            meta = f"{len(fields)} field · {agg_count} luật · tạo {created}" + (" · 📝 Word" if has_word else "")
+            has_pattern = bool(t.get("filename_pattern"))
+            tpl_mode = t.get("extraction_mode", "block")
+            mode_badge = {"block": " · ⚡ Block"}.get(tpl_mode, "")
+            meta = f"{len(fields)} trường · {agg_count} luật · tạo {created}" + (" · 📝 Word" if has_word else "") + (" · 🎯 Auto" if has_pattern else "") + mode_badge
 
             with st.expander(f"**{tpl_name}** — {meta}", expanded=False):
                 if fields:
@@ -154,7 +160,7 @@ def render_tab1():
                         ok, _ = delete_req(f"/api/v1/extraction/templates/{tpl_id}", require_tenant=True)
                         if ok:
                             invalidate_templates_cache()
-                            st.success("Đã xoá khuôn.")
+                            st.success("Đã xoá mẫu.")
                             st.rerun()
                         else:
                             st.error("Xoá thất bại.")
@@ -162,13 +168,52 @@ def render_tab1():
                     if st.button("🪪 ID", key=f"t1_id_{tpl_id}", use_container_width=True, help="Hiện UUID"):
                         st.code(tpl_id, language=None)
 
+                # ── Gắn / thay Word template ──────────────────────────────
+                if not has_word:
+                    st.caption("⚠️ Chưa có Word template — chưa thể export Word")
+                with st.expander("📎 Gắn / Thay file Word template (.docx)", expanded=False):
+                    attach_file = st.file_uploader(
+                        "Chọn file .docx", type=["docx"], key=f"t1_attach_{tpl_id}",
+                        label_visibility="collapsed",
+                    )
+                    if attach_file and st.button("📤 Upload & Gắn", key=f"t1_attach_btn_{tpl_id}", type="primary"):
+                        with st.spinner("Đang scan & upload…"):
+                            ok_s, scan_data = post_form(
+                                "/api/v1/extraction/templates/scan-word",
+                                data={},
+                                files={"file": (
+                                    attach_file.name,
+                                    attach_file.getvalue(),
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                )},
+                                require_tenant=True,
+                            )
+                        if not ok_s:
+                            st.error(f"Scan thất bại: {scan_data}")
+                        else:
+                            new_key = scan_data.get("word_template_s3_key")
+                            if not new_key:
+                                st.error("S3 upload thất bại, không lấy được key.")
+                            else:
+                                ok_p, _ = patch_json(
+                                    f"/api/v1/extraction/templates/{tpl_id}",
+                                    {"word_template_s3_key": new_key},
+                                    require_tenant=True,
+                                )
+                                if ok_p:
+                                    invalidate_templates_cache()
+                                    st.success("✅ Đã gắn Word template!")
+                                    st.rerun()
+                                else:
+                                    st.error("PATCH template thất bại.")
+
     st.divider()
 
     # ── Tạo mới ───────────────────────────────────────────────────────────────
-    st.markdown("#### ➕ Tạo khuôn mới")
+    st.markdown("#### ➕ Tạo mẫu mới")
     create_method = st.radio(
         "Chọn cách tạo",
-        ["🔍 Quét từ file Word (.docx)", "✏️ Nhập thủ công (JSON)"],
+        ["🔍 Quét từ file Word (.docx)", "✏️ Nhập thủ công (nâng cao)"],
         horizontal=True,
         key="e2_create_method",
     )
@@ -176,9 +221,8 @@ def render_tab1():
     # ──────────────────────────────── SCAN WORD ───────────────────────────────
     if create_method == "🔍 Quét từ file Word (.docx)":
         st.markdown(
-            "Upload file Word chứa biến Jinja2 dạng `{{ten_truong}}`, "
-            "`{% for item in danh_sach %}…{% endfor %}`. "
-            "Hệ thống tự phát hiện schema."
+            "Upload file Word chứa các trường dạng `{{tên_trường}}`. "
+            "Hệ thống tự phát hiện cấu trúc dữ liệu."
         )
 
         uc1, uc2 = st.columns([4, 1])
@@ -194,12 +238,17 @@ def render_tab1():
                 ok, data = post_form(
                     "/api/v1/extraction/templates/scan-word",
                     data={},
-                    files={"file": (docx_file.name, docx_file.getvalue())},
+                    files={"file": (
+                        docx_file.name,
+                        docx_file.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )},
                     require_tenant=True,
                 )
             if ok:
                 st.session_state["scan_result"] = data
                 _init_scan_config(data)
+                st.session_state["e2_word_template_s3_key"] = data.get("word_template_s3_key")
                 st.success(f"✅ Scan xong **{docx_file.name}**")
                 st.rerun()
             else:
@@ -210,14 +259,14 @@ def render_tab1():
             stats = scan_result.get("stats", {})
 
             s1, s2, s3, s4 = st.columns(4)
-            s1.metric("🔡 Biến đơn", stats.get("unique_variables", 0))
-            s2.metric("📋 Mảng (for)", stats.get("array_with_object_schema", 0))
-            s3.metric("🕳️ Tổng lỗ", stats.get("total_holes", 0))
+            s1.metric("🔡 Trường đơn", stats.get("unique_variables", 0))
+            s2.metric("📋 Danh sách", stats.get("array_with_object_schema", 0))
+            s3.metric("🕳️ Tổng trường", stats.get("total_holes", 0))
             s4.metric("🔁 Vòng lặp", stats.get("loop_count", 0))
 
             st.divider()
-            st.markdown("##### ✏️ Tinh chỉnh schema")
-            st.caption("Tick bỏ field không cần · Đổi Loại & Phương thức tổng hợp · Điền Mô tả nếu cần.")
+            st.markdown("##### ✏️ Tinh chỉnh cấu trúc")
+            st.caption("Tick bỏ trường không cần · Đổi loại & Phương thức tổng hợp · Điền mô tả nếu cần.")
 
             field_rows_df = pd.DataFrame(st.session_state.get("e2_scan_config_fields", []))
             edited_df = st.data_editor(
@@ -227,7 +276,7 @@ def render_tab1():
                 column_config={
                     "Chọn":      st.column_config.CheckboxColumn(width="small"),
                     "Tên trường": st.column_config.TextColumn(disabled=True),
-                    "Lỗ gốc":    st.column_config.TextColumn(disabled=True, width="medium"),
+                    "Biểu mẫu gốc":    st.column_config.TextColumn(disabled=True, width="medium"),
                     "Loại":      st.column_config.SelectboxColumn(options=FIELD_TYPE_OPTIONS, width="small"),
                     "Bắt buộc":  st.column_config.CheckboxColumn(width="small"),
                     "Tổng hợp":  st.column_config.SelectboxColumn(options=AGGREGATION_OPTIONS, width="small"),
@@ -240,10 +289,10 @@ def render_tab1():
             arr_fields = [r for r in st.session_state["e2_scan_config_fields"]
                           if r.get("Loại") == "array" and r.get("Chọn")]
             if arr_fields:
-                st.markdown("##### 🗂️ Sub-field của mảng")
+                st.markdown("##### 🗂️ Trường con của danh sách")
                 for arr_row in arr_fields:
                     arr_name = arr_row.get("Tên trường", "")
-                    with st.expander(f"Mảng `{arr_name}`", expanded=False):
+                    with st.expander(f"Danh sách `{arr_name}`", expanded=False):
                         arr_df = pd.DataFrame(
                             st.session_state.get("e2_scan_config_arrays", {}).get(arr_name, _default_array_items())
                         )
@@ -261,30 +310,46 @@ def render_tab1():
                         st.session_state.setdefault("e2_scan_config_arrays", {})[arr_name] = edited_arr.to_dict("records")
 
             st.divider()
-            st.markdown("##### 💾 Lưu khuôn")
+            st.markdown("##### 💾 Lưu mẫu")
             sv1, sv2 = st.columns([4, 1])
             with sv1:
                 tpl_name_input = st.text_input(
-                    "Tên khuôn mẫu", placeholder="VD: Báo cáo PCCC tuần…", key="t1_tpl_name",
+                    "Tên mẫu", placeholder="VD: Báo cáo PCCC tuần…", key="t1_tpl_name",
                     label_visibility="collapsed",
                 )
             with sv2:
                 save_btn = st.button("💾 Lưu", type="primary", use_container_width=True, key="t1_save_btn")
 
+            fn_pattern_input = st.text_input(
+                "Mẫu tên file (regex, tuỳ chọn)",
+                placeholder="VD: (?i)pccc.*tuần|bao_cao_pccc",
+                key="t1_fn_pattern",
+                help="Regex để tự nhận diện mẫu khi upload. Bỏ trống nếu không cần.",
+            )
+            mode_input = st.selectbox(
+                "Pipeline trích xuất",
+                options=["block"],
+                index=0,
+                key="t1_mode",
+                help="block = tách bảng tất định + LLM enrich (nhanh, phù hợp file PCCC).",
+            )
+
             if save_btn:
                 if not tpl_name_input.strip():
-                    st.error("Phải nhập tên khuôn mẫu.")
+                    st.error("Phải nhập tên mẫu.")
                 else:
                     payload = _build_template_payload(
                         tpl_name_input,
                         st.session_state.get("e2_scan_config_fields", []),
                         st.session_state.get("e2_scan_config_arrays", {}),
+                        filename_pattern=fn_pattern_input.strip(),
+                        extraction_mode=mode_input,
                     )
-                    with st.spinner("Đang lưu khuôn…"):
+                    with st.spinner("Đang lưu mẫu…"):
                         ok, data = post_json("/api/v1/extraction/templates", payload, require_tenant=True)
                     if ok:
                         invalidate_templates_cache()
-                        st.success(f"✅ Đã tạo khuôn **{tpl_name_input}**!")
+                        st.success(f"✅ Đã tạo mẫu **{tpl_name_input}**!")
                         for k in ("scan_result", "e2_scan_config_fields", "e2_scan_config_arrays"):
                             st.session_state.pop(k, None)
                         st.rerun()
@@ -292,44 +357,60 @@ def render_tab1():
                         st.error(f"Lưu thất bại: {data}")
 
             if st.button("🗑️ Huỷ / Quét lại", key="t1_reset_scan"):
-                for k in ("scan_result", "e2_scan_config_fields", "e2_scan_config_arrays"):
+                for k in ("scan_result", "e2_scan_config_fields", "e2_scan_config_arrays", "e2_word_template_s3_key"):
                     st.session_state.pop(k, None)
                 st.rerun()
 
     # ──────────────────────────────── MANUAL ──────────────────────────────────
     else:
-        st.markdown("Dán trực tiếp JSON cho `schema_definition` và `aggregation_rules`. Dành cho người dùng nâng cao.")
+        st.markdown("Dán trực tiếp JSON cho cấu trúc dữ liệu và luật tổng hợp. Dành cho người dùng nâng cao.")
         mc1, mc2 = st.columns(2)
         with mc1:
             schema_str = st.text_area(
-                "schema_definition",
+                "Cấu trúc dữ liệu",
                 value='{\n  "fields": [\n    {"name": "ten_truong", "type": "string", "description": "", "required": true}\n  ]\n}',
                 height=280, key="t1_manual_schema",
             )
         with mc2:
             agg_str = st.text_area(
-                "aggregation_rules",
+                "Luật tổng hợp",
                 value='{\n  "rules": [\n    {"output_field": "ten_truong", "source_field": "ten_truong", "method": "LAST"}\n  ]\n}',
                 height=280, key="t1_manual_agg",
             )
 
-        tpl_name_m = st.text_input("Tên khuôn mẫu", placeholder="VD: Báo cáo tuần…", key="t1_manual_name")
+        tpl_name_m = st.text_input("Tên mẫu", placeholder="VD: Báo cáo tuần…", key="t1_manual_name")
+        fn_pattern_m = st.text_input(
+            "Mẫu tên file (regex, tuỳ chọn)",
+            placeholder="VD: (?i)pccc.*tuần|bao_cao_pccc",
+            key="t1_manual_fn_pattern",
+            help="Regex để tự nhận diện mẫu khi upload. Bỏ trống nếu không cần.",
+        )
+        mode_m = st.selectbox(
+            "Pipeline trích xuất",
+            options=["block"],
+            index=0,
+            key="t1_manual_mode",
+            help="block = tách bảng tất định + LLM enrich.",
+        )
 
-        if st.button("💾 Lưu khuôn", type="primary", key="t1_manual_save"):
+        if st.button("💾 Lưu mẫu", type="primary", key="t1_manual_save"):
             if not tpl_name_m.strip():
-                st.error("Phải nhập tên khuôn.")
+                st.error("Phải nhập tên mẫu.")
             else:
                 try:
                     payload = {
                         "name": tpl_name_m.strip(),
                         "schema_definition": json.loads(schema_str),
                         "aggregation_rules": json.loads(agg_str),
+                        "extraction_mode": mode_m,
                     }
+                    if fn_pattern_m.strip():
+                        payload["filename_pattern"] = fn_pattern_m.strip()
                     with st.spinner("Đang lưu…"):
                         ok, data = post_json("/api/v1/extraction/templates", payload, require_tenant=True)
                     if ok:
                         invalidate_templates_cache()
-                        st.success(f"✅ Đã tạo khuôn **{tpl_name_m}**!")
+                        st.success(f"✅ Đã tạo mẫu **{tpl_name_m}**!")
                         st.rerun()
                     else:
                         st.error(f"Lưu thất bại: {data}")

@@ -28,14 +28,38 @@ from app.engines.extraction.schemas import (
     BlockNghiepVu,
     CongVanItem,
     PhuongTienHuHongItem,
+    PipelineResult,
 )
 from app.domain.rules.engine import run_business_rules
 from app.domain.rules.normalizers import _restore_vn_word_spacing, _collapse_whitespace
 from app.domain.templates.template_loader import DocumentTemplate, get_default_template
 from app.engines.extraction.extractors import OllamaInstructorExtractor
-from app.engines.extraction.hybrid_pipeline import PipelineResult
 
 logger = logging.getLogger(__name__)
+
+
+def _inject_computed_bang_thong_ke_rows(items: list) -> list:
+    """Insert rows that pdfplumber drops at PDF page breaks using known formulas.
+
+    STT 33 (Kiểm tra đột xuất theo chuyên đề) = STT 31 (tổng) − STT 32 (định kỳ).
+    Inserted in sorted STT order so downstream consumers see a complete sequence.
+    """
+    by_stt = {item.stt: item for item in items}
+    insertions = []
+
+    if "33" not in by_stt and "31" in by_stt and "32" in by_stt:
+        kq31 = int(by_stt["31"].ket_qua or 0)
+        kq32 = int(by_stt["32"].ket_qua or 0)
+        insertions.append(
+            ChiTieu(stt="33", noi_dung="Kiểm tra đột xuất theo chuyên đề", ket_qua=max(0, kq31 - kq32))
+        )
+
+    if not insertions:
+        return items
+
+    merged = list(items) + insertions
+    merged.sort(key=lambda x: int(x.stt) if str(x.stt).isdigit() else 9999)
+    return merged
 
 
 class BlockExtractionPipeline:
@@ -651,8 +675,14 @@ class BlockExtractionPipeline:
 
                 stt_match = re.search(r"^\s*(\d{1,3})\b", joined)
                 if not stt_match:
-                    continue
-                stt = stt_match.group(1).strip()
+                    # STT cell may be empty (merged with row above) — check by column position
+                    stt_cell = cleaned[col_stt].strip() if col_stt < len(cleaned) else ""
+                    if re.match(r"^\d{1,3}$", stt_cell):
+                        stt = stt_cell
+                    else:
+                        continue
+                else:
+                    stt = stt_match.group(1).strip()
 
                 # Use detected column indices when table has enough columns;
                 # fall back to trailing-number in joined for narrow layouts.
@@ -684,6 +714,10 @@ class BlockExtractionPipeline:
                     continue
                 seen.add(stt)
                 items.append(ChiTieu(stt=stt, noi_dung=noi_dung, ket_qua=ket_qua))
+
+        # Post-process: inject computed rows that fall on PDF page breaks.
+        # STT 33 (Kiểm tra đột xuất) = STT 31 (tổng) - STT 32 (định kỳ) when missing.
+        items = _inject_computed_bang_thong_ke_rows(items)
 
         return BlockBangThongKe(danh_sach_chi_tieu=items)
 
@@ -874,25 +908,35 @@ class BlockExtractionPipeline:
         # receives a short, targeted input — avoids context overflow and gives
         # better accuracy than sending the full narrative.
         if chi_tiet_cnch.strip():
+            # Normalize OCR artifacts before LLM and regex (same as Stage-2 path)
+            cnch_norm = re.sub(r"\s+", " ", chi_tiet_cnch).strip()
+
             cnch_prompt = (
-                "Trích xuất danh sách các vụ tai nạn / sự cố CNCH từ đoạn văn bản dưới đây.\n"
-                "Với mỗi vụ, điền đầy đủ các trường:\n"
-                "  - stt: số thứ tự (integer)\n"
-                "  - thoi_gian: giờ:phút ngày dd/mm/yyyy hoặc 'HH giờ MM phút ngày dd/mm/yyyy'\n"
-                "  - ngay_xay_ra: ngày xảy ra (dd/mm/yyyy)\n"
-                "  - dia_diem: địa chỉ đầy đủ nơi xảy ra sự cố\n"
-                "  - noi_dung_tin_bao: nội dung tin báo / loại sự cố (ngắn gọn, ví dụ 'người dân nhảy sông')\n"
-                "  - luc_luong_tham_gia: lực lượng, phương tiện được điều động (ví dụ '01 xe, 06 CBCS')\n"
-                "  - ket_qua_xu_ly: kết quả xử lý sự cố\n"
-                "  - thong_tin_nan_nhan: họ tên, năm sinh, địa chỉ nạn nhân nếu có\n"
-                "Nếu không có vụ nào thì trả về items = []."
+                "Bạn là công cụ trích xuất dữ liệu có cấu trúc từ báo cáo nghiệp vụ PCCC Việt Nam.\n"
+                "Nhiệm vụ: đọc đoạn văn bản dưới đây và trả về danh sách các vụ CNCH.\n\n"
+                "QUY TẮC BẮT BUỘC:\n"
+                "1. Mỗi vụ PHẢI có đủ 8 trường sau — không được bỏ sót trường nào.\n"
+                "2. Nếu thông tin không có trong văn bản, trả về chuỗi rỗng \"\".\n"
+                "3. Không thêm trường ngoài schema, không giải thích, chỉ JSON.\n\n"
+                "SCHEMA MỖI VỤ:\n"
+                "{\n"
+                "  \"stt\": <số thứ tự, integer>,\n"
+                "  \"thoi_gian\": \"HH:MM ngày dd/mm/yyyy\",        // ví dụ: \"16:33 ngày 20/03/2026\"\n"
+                "  \"ngay_xay_ra\": \"dd/mm/yyyy\",                  // ví dụ: \"20/03/2026\"\n"
+                "  \"dia_diem\": \"<địa chỉ đầy đủ nơi xảy ra>\",\n"
+                "  \"noi_dung_tin_bao\": \"<loại sự cố>\",            // ví dụ: \"người dân nhảy sông\"\n"
+                "  \"luc_luong_tham_gia\": \"<lực lượng + phương tiện>\", // ví dụ: \"01 xe phương tiện, 06 CBCS\"\n"
+                "  \"ket_qua_xu_ly\": \"<kết quả / tình trạng xử lý>\",\n"
+                "  \"thong_tin_nan_nhan\": \"<họ tên, năm sinh, địa chỉ thường trú>\"\n"
+                "}\n\n"
+                "Nếu không có vụ nào, trả về: {\"items\": []}"
             )
             try:
                 self.metrics.inc("llm_calls")
                 result: CNCHListOutput = self.extractor.extract(
                     messages=[
                         {"role": "system", "content": cnch_prompt},
-                        {"role": "user", "content": chi_tiet_cnch},
+                        {"role": "user", "content": cnch_norm},
                     ],
                     response_model=CNCHListOutput,
                     model=self.model,
@@ -903,6 +947,7 @@ class BlockExtractionPipeline:
                     # Re-number stt sequentially; LLM sometimes outputs 0 or duplicates
                     for i, item in enumerate(result.items, 1):
                         item.stt = i
+                        self._regex_fill_cnch_fields(item, cnch_norm)
                     cnch_list = result.items
                     self.metrics.inc("cnch_llm_extracted")
                     logger.info(
@@ -991,6 +1036,9 @@ class BlockExtractionPipeline:
             else:
                 bien_so = clean
                 tinh_trang = ""
+            # Balance unmatched opening parentheses (e.g. PDF splits "hết kiểm định (chờ thanh lý)")
+            if tinh_trang.count('(') > tinh_trang.count(')'):
+                tinh_trang += ')'
             return PhuongTienHuHongItem(bien_so=bien_so, tinh_trang=tinh_trang)
 
         pt_hu_hong: list[PhuongTienHuHongItem] = []
@@ -1043,6 +1091,37 @@ class BlockExtractionPipeline:
     # Stage 2 — LLM enrichment (called asynchronously from Celery)
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # CNCH field-level regex fallback
+    # ------------------------------------------------------------------
+
+    def _regex_fill_cnch_fields(self, item: CNCHItem, text: str) -> None:
+        """Fill empty CNCHItem fields from chi_tiet_cnch text using regex.
+
+        Patterns are read from table.cnch_fill_patterns in the YAML template
+        (pccc.yaml).  Applied after LLM extraction to recover fields the model
+        left blank — the source text is identical so all data is present.
+        """
+        # Collapse ALL whitespace (newlines, repeated spaces, PDF padding) to a
+        # single space so patterns don't need to account for layout artifacts.
+        flat = re.sub(r"\s+", " ", text).strip()
+
+        for field in ("noi_dung_tin_bao", "luc_luong_tham_gia", "thong_tin_nan_nhan", "ket_qua_xu_ly", "ngay_xay_ra"):
+            if getattr(item, field):
+                continue  # already populated — skip
+            for pat in self.tpl.cnch_fill_patterns(field):
+                m = pat.search(flat)
+                if m:
+                    setattr(item, field, re.sub(r"\s+", " ", m.group(1)).strip().rstrip(",."))
+                    break
+
+        # Fallback: derive ngay_xay_ra from thoi_gian if still empty
+        # thoi_gian is typically "16:33 ngày 20/03/2026" — extract the date part
+        if not item.ngay_xay_ra and item.thoi_gian:
+            m = re.search(r"(\d{1,2}/\d{2}/\d{4})", item.thoi_gian)
+            if m:
+                item.ngay_xay_ra = m.group(1)
+
     def _llm_enrich_cnch(self, chi_tiet_cnch: str) -> list[CNCHItem]:
         """Run the CNCHListOutput LLM call and return enriched CNCHItem list.
 
@@ -1050,31 +1129,46 @@ class BlockExtractionPipeline:
         from the enrichment worker (Stage 2), never from the synchronous
         extraction path (Stage 1).
 
+        After the LLM call, any fields still empty are filled by
+        _regex_fill_cnch_fields() so critical CNCH data is never lost.
+
         Returns an empty list when chi_tiet_cnch is blank or when the call
         fails, so the caller can fall back to the Stage-1 regex results.
         """
         if not chi_tiet_cnch.strip():
             return []
 
+        # Normalize OCR artifacts before sending to LLM and regex.
+        # Collapsing whitespace removes multi-space padding, hard newlines and
+        # layout gaps that cause the model to miss multi-line field values.
+        normalized_text = re.sub(r"\s+", " ", chi_tiet_cnch).strip()
+
         cnch_prompt = (
-            "Trích xuất danh sách các vụ tai nạn / sự cố CNCH từ đoạn văn bản dưới đây.\n"
-            "Với mỗi vụ, điền đầy đủ các trường:\n"
-            "  - stt: số thứ tự (integer)\n"
-            "  - thoi_gian: giờ:phút ngày dd/mm/yyyy hoặc 'HH giờ MM phút ngày dd/mm/yyyy'\n"
-            "  - ngay_xay_ra: ngày xảy ra (dd/mm/yyyy)\n"
-            "  - dia_diem: địa chỉ đầy đủ nơi xảy ra sự cố\n"
-            "  - noi_dung_tin_bao: nội dung tin báo / loại sự cố (ngắn gọn, ví dụ 'người dân nhảy sông')\n"
-            "  - luc_luong_tham_gia: lực lượng, phương tiện được điều động (ví dụ '01 xe, 06 CBCS')\n"
-            "  - ket_qua_xu_ly: kết quả xử lý sự cố\n"
-            "  - thong_tin_nan_nhan: họ tên, năm sinh, địa chỉ nạn nhân nếu có\n"
-            "Nếu không có vụ nào thì trả về items = []."
+            "Bạn là công cụ trích xuất dữ liệu có cấu trúc từ báo cáo nghiệp vụ PCCC Việt Nam.\n"
+            "Nhiệm vụ: đọc đoạn văn bản dưới đây và trả về danh sách các vụ CNCH.\n\n"
+            "QUY TẮC BẮT BUỘC:\n"
+            "1. Mỗi vụ PHẢI có đủ 8 trường sau — không được bỏ sót trường nào.\n"
+            "2. Nếu thông tin không có trong văn bản, trả về chuỗi rỗng \"\".\n"
+            "3. Không thêm trường ngoài schema, không giải thích, chỉ JSON.\n\n"
+            "SCHEMA MỖI VỤ:\n"
+            "{\n"
+            "  \"stt\": <số thứ tự, integer>,\n"
+            "  \"thoi_gian\": \"HH:MM ngày dd/mm/yyyy\",        // ví dụ: \"16:33 ngày 20/03/2026\"\n"
+            "  \"ngay_xay_ra\": \"dd/mm/yyyy\",                  // ví dụ: \"20/03/2026\"\n"
+            "  \"dia_diem\": \"<địa chỉ đầy đủ nơi xảy ra>\",\n"
+            "  \"noi_dung_tin_bao\": \"<loại sự cố>\",            // ví dụ: \"người dân nhảy sông\"\n"
+            "  \"luc_luong_tham_gia\": \"<lực lượng + phương tiện>\", // ví dụ: \"01 xe phương tiện, 06 CBCS\"\n"
+            "  \"ket_qua_xu_ly\": \"<kết quả / tình trạng xử lý>\",\n"
+            "  \"thong_tin_nan_nhan\": \"<họ tên, năm sinh, địa chỉ thường trú>\"\n"
+            "}\n\n"
+            "Nếu không có vụ nào, trả về: {\"items\": []}"
         )
         try:
             self.metrics.inc("llm_calls")
             result: CNCHListOutput = self.extractor.extract(
                 messages=[
                     {"role": "system", "content": cnch_prompt},
-                    {"role": "user", "content": chi_tiet_cnch},
+                    {"role": "user", "content": normalized_text},
                 ],
                 response_model=CNCHListOutput,
                 model=self.model,
@@ -1084,6 +1178,8 @@ class BlockExtractionPipeline:
             if result.items:
                 for i, item in enumerate(result.items, 1):
                     item.stt = i
+                    # Fill any fields the LLM left blank using deterministic regex
+                    self._regex_fill_cnch_fields(item, normalized_text)
                 self.metrics.inc("cnch_llm_extracted")
                 logger.info(
                     "CNCH LLM enrichment: %s incident(s) extracted", len(result.items)
@@ -1092,8 +1188,58 @@ class BlockExtractionPipeline:
         except Exception as exc:
             self.metrics.inc("cnch_llm_fallback")
             logger.warning(
-                "CNCH LLM enrichment failed (%s); Stage-1 regex results will be used", exc
+                "CNCH LLM enrichment failed (%s); attempting regex-only enrichment", exc
             )
+
+        # ── Regex-only fallback: build one CNCHItem entirely from chi_tiet_cnch ──
+        # This path runs when the LLM call fails or returns [].
+        # normalized_text already collapsed to single spaces above.
+        flat = normalized_text
+
+        # Check whether there is any incident content at all
+        marker_patterns = self.tpl.cnch_fill_patterns("incident_marker")
+        incident_markers = any(p.search(flat) for p in marker_patterns) if marker_patterns else re.search(
+            r"\bxảy ra\b|\bsự cố\b", flat, re.IGNORECASE
+        )
+        if not incident_markers:
+            return []
+
+        # Try to extract thoi_gian (e.g. "lúc 16 giờ 33 phút ngày 20/03/2026")
+        thoi_gian = ""
+        ngay_xay_ra = ""
+        for time_pat in self.tpl.cnch_fill_patterns("incident_time"):
+            time_m = time_pat.search(flat)
+            if time_m:
+                thoi_gian = f"{int(time_m.group(1)):02d}:{time_m.group(2)} ngày {time_m.group(3)}"
+                ngay_xay_ra = time_m.group(3)
+                break
+
+        # dia_diem — text after "xảy ra tại địa chỉ:" or "tại địa chỉ:"
+        dia_diem = ""
+        for loc_pat in self.tpl.cnch_fill_patterns("incident_location"):
+            dia_diem_m = loc_pat.search(flat)
+            if dia_diem_m:
+                dia_diem = re.sub(r"\s+", " ", dia_diem_m.group(1)).strip()
+                break
+
+        fallback_item = CNCHItem(
+            stt=1,
+            thoi_gian=thoi_gian,
+            ngay_xay_ra=ngay_xay_ra,
+            dia_diem=dia_diem,
+        )
+        self._regex_fill_cnch_fields(fallback_item, chi_tiet_cnch)
+
+        # Only return an item if we extracted something meaningful
+        has_data = any([
+            fallback_item.thoi_gian,
+            fallback_item.dia_diem,
+            fallback_item.noi_dung_tin_bao,
+        ])
+        if has_data:
+            logger.info("CNCH regex-only fallback: 1 incident extracted from chi_tiet_cnch")
+            self.metrics.inc("cnch_regex_fallback")
+            return [fallback_item]
         return []
 
     # ------------------------------------------------------------------
