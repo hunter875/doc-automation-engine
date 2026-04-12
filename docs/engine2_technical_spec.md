@@ -428,12 +428,13 @@ def final_data(self) -> dict | None:
 ### 5.7 Persistence — JobManager
 
 **`persist_stage1_result(job, result, llm_model, processing_time_ms)`**
-- Ghi `job.extracted_data = flatten_block_output(result.output.model_dump())`
+- Ghi `job.extracted_data = result.output.model_dump()` — **canonical nested JSON, 7 top-level keys, không có flat key nào**
 - Set `job.status = EXTRACTED`
 - Set `job.enrichment_status = PENDING` nếu `result.chi_tiet_cnch` không rỗng, else `SKIPPED`
 - **Không đụng vào** `enriched_data`
+- **Lưu ý (Plan A):** `flatten_block_output()` **không được gọi** tại đây. Flattening chỉ diễn ra in-memory trong `AggregationService.aggregate()` khi chuẩn bị context cho Word export. `extracted_data` luôn giữ nguyên dạng nested canonical.
 
-**`persist_enrichment_result(job_id, enriched_cnch, error)`**
+**`persist_enrichment_result(job_id, enriched_cnch, error)`** (thực thi bởi `enrich_job_task`)
 - Ghi `job.enriched_data = {"danh_sach_cnch": [...]}`
 - Set `job.enrichment_status = ENRICHED | FAILED | SKIPPED`
 - **Tuyệt đối không đụng vào** `job.extracted_data`

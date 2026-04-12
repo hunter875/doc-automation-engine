@@ -66,12 +66,14 @@ MinIO (inbox/) → FileOperator → ExtractionJob → BlockPipeline (Stage 1, no
 - **Ground truth cho dữ liệu báo cáo**: `extraction_jobs.final_data` = `reviewed_data` > `(extracted_data + enriched_data merged)` > `extracted_data`. Human review luôn thắng LLM.
 - **Regex/pattern nghiệp vụ**: `app/domain/templates/pccc.yaml` — file duy nhất, không hardcode trong code.
 - **LLM (Ollama)**: chỉ là optimization layer cho Stage 2 (danh sách CNCH). Mất Ollama → Stage 1 data vẫn đủ dùng.
+- **Canonical storage (Plan A)**: `extracted_data` chỉ lưu 7 canonical nested key (`header`, `phan_I_va_II_chi_tiet_nghiep_vu`, `bang_thong_ke`, `danh_sach_cnch`, `danh_sach_phuong_tien_hu_hong`, `danh_sach_cong_van_tham_muu`, `danh_sach_cong_tac_khac`). Flat key chỉ tồn tại in-memory khi aggregate và trong `aggregated_data`.
 
 ## 7. System Characteristics
 
 - **Two-stage extraction**: Stage 1 deterministic (không LLM, trả kết quả ngay), Stage 2 LLM async (enrichment).
 - **LLM not on critical path**: Ollama chết → job vẫn EXTRACTED, aggregate vẫn chạy được.
 - **Enrichment settlement gate**: Aggregate bị block khi bất kỳ job nào còn PENDING/RUNNING enrichment.
+- **Canonical JSON storage (Plan A)**: `extracted_data` được lưu dưới dạng nested 7 key — không flat. `flatten_block_output()` chỉ chạy in-memory trong `AggregationService.aggregate()` khi đối xuất Word.
 - **Multi-tenant**: mọi query đều scoped theo `tenant_id`.
 - **YAML-driven patterns**: 55+ regex/pattern nằm ngoài code, trong `pccc.yaml`.
 - **Hot-folder automation**: FileOperator poll MinIO inbox/ mỗi 120s, tự match template theo `filename_pattern` regex.

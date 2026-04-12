@@ -255,6 +255,8 @@ Block pipeline Stage 1 (`run_stage1_from_bytes`) does not call any LLM. All extr
 
 ### 4.3 `BlockExtractionOutput` — Stage 1 output model
 
+**7 canonical top-level keys** — đây là toàn bộ nội dung được lưu vào `extracted_data`. Không có flat key nào (flattening chỉ diễn ra in-memory tại bước aggregation).
+
 ```json
 {
   "header": {
@@ -267,10 +269,13 @@ Block pipeline Stage 1 (`run_stage1_from_bytes`) does not call any LLM. All extr
     "tong_so_vu_chay": 0,
     "tong_so_vu_no": 0,
     "tong_so_vu_cnch": 0,
-    "chi_tiet_cnch": "raw text — passed to Stage 2, not persisted in extracted_data",
+    "chi_tiet_cnch": "raw narrative text — lưu vào DB để Stage 2 đọc, không dùng trong UI",
     "quan_so_truc": 0,
     "tong_chi_vien": 0,
     "tong_cong_van": 0,
+    "tong_bao_cao": 0,
+    "tong_ke_hoach": 0,
+    "cong_tac_an_ninh": "string",
     "tong_xe_hu_hong": 0
   },
   "bang_thong_ke": [
@@ -282,11 +287,14 @@ Block pipeline Stage 1 (`run_stage1_from_bytes`) does not call any LLM. All extr
   ],
   "danh_sach_cong_van_tham_muu": [
     { "so_ky_hieu": "string", "noi_dung": "string" }
-  ]
+  ],
+  "danh_sach_cong_tac_khac": ["string"]
 }
 ```
 
 **Model config:** `extra="forbid"` on `BlockHeader`, `BlockNghiepVu`, `BlockBangThongKe`, `ChiTieu`. Unknown keys from extraction raise `ValidationError`.
+
+**Note `chi_tiet_cnch`:** Được lưu vào `extracted_data` (bên trong `phan_I_va_II_chi_tiet_nghiep_vu`) để enrichment worker (Stage 2) đọc mà không cần parse lại PDF. Không hiển thị trong review UI.
 
 ---
 
@@ -356,16 +364,17 @@ Applied by `model_validator(mode="after")` at schema parse time:
 |---|---|
 | `PipelineResult` dataclass | In-memory only; never written to DB as-is |
 | `chi_tiet_cnch` on `PipelineResult` | Passed from Stage 1 worker to enrichment task via Celery args; not directly persisted |
-| `flatten_block_output()` expansion | Computed at aggregation time; flat keys stored in `aggregated_data` but not in `extracted_data` |
+| `flatten_block_output()` expansion | Computed **in-memory** at aggregation time only. Flat keys (`stt_02_tong_chay`, `tu_ngay`, `ngay_xuat`, v.v.) xuất hiện trong `aggregated_data` và context render Word, nhưng **tuyệt đối không** lưu vào `extracted_data` hay `enriched_data` |
 | `job.final_data` | Computed property; not a DB column |
 | Celery task result backend | Redis, TTL 3600s |
 
 ### 6.3 Write isolation rules
 
-- `extracted_data`: written exactly once by `persist_stage1_result()`. Never modified thereafter.
-- `enriched_data`: written exactly once by `persist_enrichment_result()`. Never overwrites `extracted_data`.
+- `extracted_data`: written exactly once by `persist_stage1_result()`. Chứa **canonical nested JSON** với đúng 7 top-level keys (`header`, `phan_I_va_II_chi_tiet_nghiep_vu`, `bang_thong_ke`, `danh_sach_cnch`, `danh_sach_phuong_tien_hu_hong`, `danh_sach_cong_van_tham_muu`, `danh_sach_cong_tac_khac`) cộng `template_warnings` nếu có. **Không có flat key.** Never modified thereafter.
+- `enriched_data`: written exactly once by `enrich_job_task`. Chứa chỉ `{"danh_sach_cnch": [...]}`. Never overwrites `extracted_data`.
 - `reviewed_data`: written by reviewer approval. If `reviewed_data` is set, `final_data` ignores AI output entirely.
 - Merge at read time only — `job.final_data` property merges in memory; merged result is not stored back.
+- Flat expansion (`flatten_block_output()`) chỉ chạy in-memory trong `AggregationService.aggregate()` — kết quả ghi vào `aggregated_data`, không ghi ngược lại `extracted_data`.
 
 ---
 

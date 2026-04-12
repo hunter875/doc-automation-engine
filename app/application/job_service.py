@@ -13,7 +13,6 @@ from app.core.exceptions import ProcessingError
 from app.domain.models.extraction_job import ExtractionJob, ExtractionJobStatus, EnrichmentStatus
 from app.domain.workflow import JobStatus, transition_job_state
 from app.engines.extraction.schemas import PipelineResult
-from app.application.aggregation_service import flatten_block_output
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +183,6 @@ class JobManager:
 
         if result.status == "ok" and result.output:
             model_payload = result.output.model_dump() if isinstance(result.output, BaseModel) else result.output
-            model_payload = flatten_block_output(model_payload)
             job.extracted_data = model_payload
             job.confidence_scores = {
                 "_validation_attempts": result.attempts,

@@ -506,12 +506,12 @@ class BlockExtractionPipeline:
         tong_so_vu_cnch = extract_after_keyword(self.tpl.narrative_count_patterns("tong_so_vu_cnch"))
         quan_so_truc = extract_after_keyword(self.tpl.narrative_count_patterns("quan_so_truc"))
 
-        # ── chi_tiet_cnch: extract from "3. Tình hình cứu nạn" subsection ──
-        # Keyword-scanning all lines captures garbled content from other sections
-        # (right-column header text). Instead extract the CNCH subsection directly.
+        # ── chi_tiet_cnch: extract from section 3-5 of narrative ────────
+        # Section 3 = "Tình hình cứu nạn" (rescue incidents)
+        # Section 5 = "Tình hình khác có liên quan đến công tác PCCC" (fire incidents)
+        # We need BOTH because fire incidents live in section 5, not section 3.
         # Prefer layout_text (from page.extract_text(layout=True)) which preserves
-        # spatial reading order and keeps narrative paragraphs intact, avoiding
-        # fragmentation from the word-level 2-column merge.
+        # spatial reading order and keeps narrative paragraphs intact.
         cnch_source = layout_text if layout_text.strip() else joined
         chi_tiet_cnch = ""
         cnch_sub_m = re.search(
@@ -520,9 +520,10 @@ class BlockExtractionPipeline:
         )
         if cnch_sub_m:
             start = cnch_sub_m.start()
-            # End at next numbered item "4. " or roman section "II."
-            next_m = re.search(r'\n4\.\s|\nII[\.\s]|\nIII[\.\s]', cnch_source[start:])
-            end = start + (next_m.start() if next_m else min(len(cnch_source) - start, 1500))
+            # End at roman section "II." / "III." — NOT at "4." or "5." because
+            # fire incidents are in section 5 and we need to capture them.
+            next_m = re.search(r'\n\s*II[\.\s]|\n\s*III[\.\s]', cnch_source[start:])
+            end = start + (next_m.start() if next_m else min(len(cnch_source) - start, 3000))
             chi_tiet_cnch = cnch_source[start:end].strip()
         else:
             # Fallback: keyword line scan
@@ -535,12 +536,48 @@ class BlockExtractionPipeline:
                     chi_tiet_lines.append(line)
             chi_tiet_cnch = "\n".join(chi_tiet_lines[:max_detail]).strip()
 
+        # ── Phần II: tong_bao_cao, tong_ke_hoach, cong_tac_an_ninh ────
+        # Extract from the flat joined text (layout not needed — these are counts/sentences).
+        flat_joined = re.sub(r"\s+", " ", joined)
+        tong_bao_cao = 0
+        tong_ke_hoach = 0
+        cong_tac_an_ninh = ""
+
+        # Tổng báo cáo: "X báo cáo" or "báo cáo: X" after tham mưu context
+        _bc_m = re.search(
+            r"(?:tham\s*mưu|ban\s*hành|gửi)\s+(?P<n>\d+)\s+b[áa]o\s*c[áa]o"
+            r"|b[áa]o\s*c[áa]o[:\s]+(?P<n2>\d+)",
+            flat_joined, re.IGNORECASE
+        )
+        if _bc_m:
+            tong_bao_cao = int(_bc_m.group("n") or _bc_m.group("n2") or 0)
+
+        # Tổng kế hoạch: "X kế hoạch" or "kế hoạch: X"
+        _kh_m = re.search(
+            r"(?:tham\s*mưu|ban\s*hành|gửi)\s+(?P<n>\d+)\s+k[eế]\s*ho[aạ]ch"
+            r"|k[eế]\s*ho[aạ]ch[:\s]+(?P<n2>\d+)",
+            flat_joined, re.IGNORECASE
+        )
+        if _kh_m:
+            tong_ke_hoach = int(_kh_m.group("n") or _kh_m.group("n2") or 0)
+
+        # Công tác an ninh: extract the sentence/clause after "an ninh" keyword
+        _an_ninh_m = re.search(
+            r"[Aa]n\s+ninh[^.;:]*[:：]?\s*([^.\n]{10,200})",
+            flat_joined, re.IGNORECASE
+        )
+        if _an_ninh_m:
+            cong_tac_an_ninh = re.sub(r"\s+", " ", _an_ninh_m.group(1)).strip().rstrip(",")
+
         return BlockNghiepVu(
             tong_so_vu_chay=tong_so_vu_chay,
             tong_so_vu_no=tong_so_vu_no,
             tong_so_vu_cnch=tong_so_vu_cnch,
             chi_tiet_cnch=chi_tiet_cnch,
             quan_so_truc=quan_so_truc,
+            tong_bao_cao=tong_bao_cao,
+            tong_ke_hoach=tong_ke_hoach,
+            cong_tac_an_ninh=cong_tac_an_ninh,
         )
 
     @trace_step("block_stage3_table_agent")
@@ -561,6 +598,19 @@ class BlockExtractionPipeline:
 
         if merged_items:
             logger.info("Block table parser collected %s rows from %s tables", len(merged_items), len(table_stream or []))
+            # Supplement from text-grid parser for rows lost at page breaks
+            if table_text and len(merged_items) < 60:
+                grid_parsed = self._parse_bang_thong_ke_from_text_grid(table_text)
+                grid_added = 0
+                for g_item in grid_parsed.danh_sach_chi_tieu:
+                    key = (g_item.stt or "").strip()
+                    if key and key not in seen_stt:
+                        seen_stt.add(key)
+                        merged_items.append(g_item)
+                        grid_added += 1
+                if grid_added:
+                    logger.info("Text-grid supplement added %s rows missing from table parser", grid_added)
+            merged_items = _inject_computed_bang_thong_ke_rows(merged_items)
             return BlockBangThongKe(danh_sach_chi_tieu=merged_items)
 
         self.metrics.inc("table_grid_fallback")
@@ -588,10 +638,20 @@ class BlockExtractionPipeline:
         normalized_text = re.sub(r"([0-9])([A-Za-zÀ-ỹ])", r"\1 \2", normalized_text)
 
         # Row shape: STT + content + last numeric result.
+        # Use [ \t] instead of \s to prevent matching across newlines
+        # (page numbers like "4\n25 ..." would otherwise merge into one match).
         rows = re.findall(
-            r"(?m)^\s*(\d{1,3})\s+(.+?)\s+(-?\d+)\s*$",
+            r"(?m)^[ \t]*(\d{1,3})[ \t]+(.+?)[ \t]+(-?\d+)[ \t]*$",
             normalized_text,
         )
+
+        # Secondary pass: find inline STT sequences on the same line
+        # (handles page-break rows like "24 text 0 25 text 0 26")
+        inline_rows = re.findall(
+            r"(?<!\d)(\d{1,3})\s+([\wÀ-ỹ][\wÀ-ỹ\s,./(){}&-]{3,80}?)\s+(-?\d+)(?=\s+\d{1,3}\s+[\wÀ-ỹ]|\s*$)",
+            re.sub(r"\s+", " ", normalized_text),
+        )
+        rows = list(rows) + list(inline_rows)
 
         items: list[ChiTieu] = []
         seen_stt: set[str] = set()
@@ -947,7 +1007,7 @@ class BlockExtractionPipeline:
                     # Re-number stt sequentially; LLM sometimes outputs 0 or duplicates
                     for i, item in enumerate(result.items, 1):
                         item.stt = i
-                        self._regex_fill_cnch_fields(item, cnch_norm)
+                        self._regex_fill_cnch_fields(item, cnch_norm, total_items=len(result.items))
                     cnch_list = result.items
                     self.metrics.inc("cnch_llm_extracted")
                     logger.info(
@@ -995,7 +1055,12 @@ class BlockExtractionPipeline:
             loc_max = self.tpl.incident_location_max_chars
             desc_re = self.tpl.incident_description_re
             for m in time_re.finditer(joined_for_cnch):
-                thoi_gian = f"{int(m.group(1)):02d}:{m.group(2)} ngày {m.group(3)}"
+                # Zero-pad date components (e.g. 02/4/2026 → 02/04/2026)
+                raw_date = m.group(3)
+                dp = raw_date.split("/")
+                if len(dp) == 3:
+                    raw_date = f"{dp[0].zfill(2)}/{dp[1].zfill(2)}/{dp[2]}"
+                thoi_gian = f"{int(m.group(1)):02d}:{m.group(2)} ngày {raw_date}"
                 context = joined_for_cnch[m.start(): m.start() + ctx_chars]
                 loc_m = loc_re.search(context)
                 dia_diem = (
@@ -1071,21 +1136,59 @@ class BlockExtractionPipeline:
                 ):
                     pt_hu_hong.append(_parse_vehicle_part(m.group(0).strip()))
 
+            # ── Propagate tinh_trang backwards within "và" clause groups ──
+            # Vietnamese lists: "Xe A, xe B xe C hư hỏng và xe D hết kiểm định"
+            # → A, B, C share "hư hỏng, đang sửa chữa"; D has its own status.
+            # Split was done at "và xe" boundaries, so find the first item with
+            # a status in each group and back-fill to preceding empty items.
+            if pt_hu_hong:
+                # The split by "và xe" creates implicit groups.
+                # Find "và" boundary indices by checking original sentence parts.
+                # Simpler approach: walk backwards; if empty, copy from next non-empty.
+                last_status = ""
+                for i in range(len(pt_hu_hong) - 1, -1, -1):
+                    if pt_hu_hong[i].tinh_trang:
+                        last_status = pt_hu_hong[i].tinh_trang
+                    elif last_status:
+                        pt_hu_hong[i].tinh_trang = last_status
+
         # ── Regex: công văn tham mưu → CongVanItem ───────────────────
         cong_van: list[CongVanItem] = []
         if narrative_text:
+            # Join lines so multi-line entries are captured as one
+            joined_cv = " ".join(line for line in narrative_text.splitlines() if line.strip())
+            # Split by semicolons or "Công văn" boundaries, then parse each
             for m in re.finditer(
-                r"(?:Công văn|CV|Tờ trình)\s*(?:số\s*)?([\d/]+[^\n]{0,80})",
-                narrative_text,
-                re.IGNORECASE,
+                r"(?:Công văn|CV|Tờ trình)\s*(?:số\s*)?([\d/\-A-Za-z]+)(.*?)(?=;\s*(?:Công văn|CV|Tờ trình)|\d+\.\s*Công tác|$)",
+                joined_cv,
+                re.IGNORECASE | re.DOTALL,
             ):
-                full = m.group(0).strip()
-                so_m = re.match(r"(?:Công văn|CV|Tờ trình)\s*(?:số\s*)?([\d/\-A-Z]+)", full, re.IGNORECASE)
-                so_ky_hieu = so_m.group(1).strip() if so_m else ""
-                noi_dung = full[so_m.end():].strip().lstrip(':').strip() if so_m else full
+                so_ky_hieu = m.group(1).strip()
+                noi_dung = m.group(2).strip().lstrip(':').strip()
+                # Strip leading date "ngày dd/m/yyyy " from noi_dung
+                noi_dung = re.sub(r"^ngày\s+\d{1,2}/\d{1,2}/\d{4}\s*", "", noi_dung).strip()
                 cong_van.append(CongVanItem(so_ky_hieu=so_ky_hieu, noi_dung=noi_dung))
 
-        return cnch_list, pt_hu_hong, cong_van
+        # ── Regex: công tác khác → danh_sach_cong_tac_khac ──────────
+        # Pattern: numbered items "1. Nội dung" or bullet items after "Công tác khác:"
+        cong_tac_khac: list[str] = []
+        if narrative_text:
+            joined_ct = " ".join(line for line in narrative_text.splitlines() if line.strip())
+            # Find the "công tác khác" block
+            _ct_block_m = re.search(
+                r"[Cc]ông\s+t[áa]c\s+kh[áa]c\s*[:：]\s*(.{10,600}?)(?=\d+\.\s*[A-ZĐÁÀẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬ]|\Z)",
+                joined_ct, re.IGNORECASE | re.DOTALL
+            )
+            if _ct_block_m:
+                block = _ct_block_m.group(1).strip()
+                # Split by semicolons or numbered items
+                items_raw = re.split(r";\s*|\d+\)\s*|\d+\.\s*(?=[A-Za-zÀ-ỹĐ])", block)
+                for raw in items_raw:
+                    clean = re.sub(r"\s+", " ", raw).strip().rstrip(",;.")
+                    if clean and len(clean) > 5:
+                        cong_tac_khac.append(clean)
+
+        return cnch_list, pt_hu_hong, cong_van, cong_tac_khac
 
     # ------------------------------------------------------------------
     # Stage 2 — LLM enrichment (called asynchronously from Celery)
@@ -1095,16 +1198,47 @@ class BlockExtractionPipeline:
     # CNCH field-level regex fallback
     # ------------------------------------------------------------------
 
-    def _regex_fill_cnch_fields(self, item: CNCHItem, text: str) -> None:
+    def _regex_fill_cnch_fields(self, item: CNCHItem, text: str, total_items: int = 1) -> None:
         """Fill empty CNCHItem fields from chi_tiet_cnch text using regex.
 
         Patterns are read from table.cnch_fill_patterns in the YAML template
         (pccc.yaml).  Applied after LLM extraction to recover fields the model
         left blank — the source text is identical so all data is present.
+
+        When multiple incidents exist, splits text by incident sub-section
+        markers (5.1, 5.2, ...) and searches only the matching chunk.
         """
         # Collapse ALL whitespace (newlines, repeated spaces, PDF padding) to a
         # single space so patterns don't need to account for layout artifacts.
         flat = re.sub(r"\s+", " ", text).strip()
+
+        # ── Split text per incident if multiple incidents ─────────────
+        # Incident sub-sections are marked "5.1 ...", "5.2 ...", etc.
+        # or sometimes just by "Vào lúc" time markers.
+        if total_items > 1 and item.stt >= 1:
+            # Split by sub-section numbers: 5.1, 5.2, etc.
+            chunks = re.split(r"(?=\b5\.\d\b)", flat)
+            # Remove leading text before first 5.x
+            if chunks and not re.match(r"\b5\.\d", chunks[0]):
+                chunks = chunks[1:]  # drop preamble
+            if item.stt <= len(chunks):
+                flat = chunks[item.stt - 1]
+            else:
+                # Fallback: split by "Vào lúc" time markers
+                time_chunks = re.split(r"(?=(?:Vào lúc|vào lúc)\s+\d)", flat)
+                time_chunks = [c for c in time_chunks if re.search(r"(?:lúc|giờ)", c)]
+                if item.stt <= len(time_chunks):
+                    flat = time_chunks[item.stt - 1]
+
+        # ── Quality gate: LLM sometimes returns garbage for certain fields ──
+        # noi_dung_tin_bao should be short (type of incident, e.g. "cháy cỏ")
+        _ndtb = item.noi_dung_tin_bao or ""
+        if _ndtb and (len(_ndtb) > 80 or re.search(r"tại\s+(?:địa chỉ|số|đường)", _ndtb)):
+            item.noi_dung_tin_bao = ""  # clear for regex retry
+        # ket_qua_xu_ly should contain result keywords, not deployment details
+        _kqxl = item.ket_qua_xu_ly or ""
+        if _kqxl and not re.search(r"(?:hại|Không|cứu|dập|an toàn|chết|thương|ổn)", _kqxl, re.IGNORECASE):
+            item.ket_qua_xu_ly = ""  # clear for regex retry
 
         for field in ("noi_dung_tin_bao", "luc_luong_tham_gia", "thong_tin_nan_nhan", "ket_qua_xu_ly", "ngay_xay_ra"):
             if getattr(item, field):
@@ -1115,12 +1249,32 @@ class BlockExtractionPipeline:
                     setattr(item, field, re.sub(r"\s+", " ", m.group(1)).strip().rstrip(",."))
                     break
 
+        # ── Post-process: fix common LLM typos ──
+        if item.ket_qua_xu_ly:
+            item.ket_qua_xu_ly = item.ket_qua_xu_ly.replace("Thất hại", "Thiệt hại")
+
+        # ── Split thiet_hai out of ket_qua_xu_ly ──
+        # Pattern: "...; Thiệt hại: X." or "Thiệt hại: X." standalone clause
+        if item.ket_qua_xu_ly and not item.thiet_hai:
+            _th_m = re.search(
+                r"Thi[eệ]t\s*h[aạ]i\s*[:：]\s*([^.;\n]{0,120})",
+                item.ket_qua_xu_ly, re.IGNORECASE
+            )
+            if _th_m:
+                item.thiet_hai = re.sub(r"\s+", " ", _th_m.group(1)).strip().rstrip(",.")
+
         # Fallback: derive ngay_xay_ra from thoi_gian if still empty
         # thoi_gian is typically "16:33 ngày 20/03/2026" — extract the date part
         if not item.ngay_xay_ra and item.thoi_gian:
             m = re.search(r"(\d{1,2}/\d{2}/\d{4})", item.thoi_gian)
             if m:
                 item.ngay_xay_ra = m.group(1)
+
+        # Normalize ngay_xay_ra: zero-pad single-digit day/month
+        if item.ngay_xay_ra:
+            dp = item.ngay_xay_ra.split("/")
+            if len(dp) == 3:
+                item.ngay_xay_ra = f"{dp[0].zfill(2)}/{dp[1].zfill(2)}/{dp[2]}"
 
     def _llm_enrich_cnch(self, chi_tiet_cnch: str) -> list[CNCHItem]:
         """Run the CNCHListOutput LLM call and return enriched CNCHItem list.
@@ -1179,7 +1333,7 @@ class BlockExtractionPipeline:
                 for i, item in enumerate(result.items, 1):
                     item.stt = i
                     # Fill any fields the LLM left blank using deterministic regex
-                    self._regex_fill_cnch_fields(item, normalized_text)
+                    self._regex_fill_cnch_fields(item, normalized_text, total_items=len(result.items))
                 self.metrics.inc("cnch_llm_extracted")
                 logger.info(
                     "CNCH LLM enrichment: %s incident(s) extracted", len(result.items)
@@ -1191,7 +1345,7 @@ class BlockExtractionPipeline:
                 "CNCH LLM enrichment failed (%s); attempting regex-only enrichment", exc
             )
 
-        # ── Regex-only fallback: build one CNCHItem entirely from chi_tiet_cnch ──
+        # ── Regex-only fallback: build CNCHItems entirely from chi_tiet_cnch ──
         # This path runs when the LLM call fails or returns [].
         # normalized_text already collapsed to single spaces above.
         flat = normalized_text
@@ -1204,43 +1358,157 @@ class BlockExtractionPipeline:
         if not incident_markers:
             return []
 
-        # Try to extract thoi_gian (e.g. "lúc 16 giờ 33 phút ngày 20/03/2026")
-        thoi_gian = ""
-        ngay_xay_ra = ""
-        for time_pat in self.tpl.cnch_fill_patterns("incident_time"):
-            time_m = time_pat.search(flat)
-            if time_m:
-                thoi_gian = f"{int(time_m.group(1)):02d}:{time_m.group(2)} ngày {time_m.group(3)}"
-                ngay_xay_ra = time_m.group(3)
-                break
+        # Split text into per-incident chunks by sub-section markers (5.1, 5.2,...)
+        # or by time markers ("Vào lúc...")
+        chunks = re.split(r"(?=\b5\.\d\b)", flat)
+        # Remove preamble before first 5.x
+        if chunks and not re.match(r"\b5\.\d", chunks[0]):
+            chunks = chunks[1:]
 
-        # dia_diem — text after "xảy ra tại địa chỉ:" or "tại địa chỉ:"
-        dia_diem = ""
-        for loc_pat in self.tpl.cnch_fill_patterns("incident_location"):
-            dia_diem_m = loc_pat.search(flat)
-            if dia_diem_m:
-                dia_diem = re.sub(r"\s+", " ", dia_diem_m.group(1)).strip()
-                break
+        # Fallback: split by "Vào lúc" time markers
+        if not chunks:
+            chunks = re.split(r"(?=(?:Vào lúc|vào lúc)\s+\d)", flat)
+            chunks = [c for c in chunks if re.search(r"(?:lúc|giờ)", c)]
 
-        fallback_item = CNCHItem(
-            stt=1,
-            thoi_gian=thoi_gian,
-            ngay_xay_ra=ngay_xay_ra,
-            dia_diem=dia_diem,
-        )
-        self._regex_fill_cnch_fields(fallback_item, chi_tiet_cnch)
+        # If still no chunks, treat entire text as one chunk
+        if not chunks:
+            chunks = [flat]
 
-        # Only return an item if we extracted something meaningful
-        has_data = any([
-            fallback_item.thoi_gian,
-            fallback_item.dia_diem,
-            fallback_item.noi_dung_tin_bao,
-        ])
-        if has_data:
-            logger.info("CNCH regex-only fallback: 1 incident extracted from chi_tiet_cnch")
+        fallback_items: list[CNCHItem] = []
+        for idx, chunk in enumerate(chunks, 1):
+            # Try to extract thoi_gian from this chunk
+            thoi_gian = ""
+            ngay_xay_ra = ""
+            for time_pat in self.tpl.cnch_fill_patterns("incident_time"):
+                time_m = time_pat.search(chunk)
+                if time_m:
+                    # Zero-pad date components (e.g. 02/4/2026 → 02/04/2026)
+                    raw_date = time_m.group(3)
+                    date_parts = raw_date.split("/")
+                    if len(date_parts) == 3:
+                        raw_date = f"{date_parts[0].zfill(2)}/{date_parts[1].zfill(2)}/{date_parts[2]}"
+                    thoi_gian = f"{int(time_m.group(1)):02d}:{time_m.group(2)} ngày {raw_date}"
+                    ngay_xay_ra = raw_date
+                    break
+
+            # dia_diem
+            dia_diem = ""
+            for loc_pat in self.tpl.cnch_fill_patterns("incident_location"):
+                dia_diem_m = loc_pat.search(chunk)
+                if dia_diem_m:
+                    dia_diem = re.sub(r"\s+", " ", dia_diem_m.group(1)).strip()
+                    break
+
+            try:
+                item = CNCHItem(
+                    stt=idx,
+                    thoi_gian=thoi_gian,
+                    ngay_xay_ra=ngay_xay_ra,
+                    dia_diem=dia_diem,
+                )
+            except Exception as item_exc:
+                logger.warning("CNCH regex fallback: failed to create CNCHItem %d: %s", idx, item_exc)
+                continue
+            # Fill other fields from this chunk only
+            self._regex_fill_cnch_fields(item, chunk)
+
+            # Only keep if we extracted something meaningful
+            if item.thoi_gian or item.dia_diem or item.noi_dung_tin_bao:
+                fallback_items.append(item)
+
+        if fallback_items:
+            logger.info("CNCH regex-only fallback: %s incident(s) extracted from chi_tiet_cnch", len(fallback_items))
             self.metrics.inc("cnch_regex_fallback")
-            return [fallback_item]
-        return []
+        return fallback_items
+
+    # ------------------------------------------------------------------
+    # Template field completeness checker — human-in-loop warnings
+    # ------------------------------------------------------------------
+
+    def _check_template_fields(self, output: "BlockExtractionOutput") -> list[dict]:
+        """Return human-review warnings for template fields that cannot be auto-extracted.
+
+        Each warning is a dict:
+          {field, file_hint, message, severity}
+        where severity is 'error' (required and missing) or 'warning' (optional but suspicious).
+        """
+        warnings = []
+        narrative = output.phan_I_va_II_chi_tiet_nghiep_vu
+
+        # danh_sach_chay: required when tong_so_vu_chay > 0
+        if narrative.tong_so_vu_chay > 0 and not getattr(output, "danh_sach_chay", []):
+            warnings.append({
+                "field": "danh_sach_chay",
+                "message": (
+                    f"Có {narrative.tong_so_vu_chay} vụ cháy nhưng chưa trích xuất được "
+                    f"chi tiết danh sách — cần nhập thủ công."
+                ),
+                "severity": "error",
+            })
+
+        # danh_sach_no: required when tong_so_vu_no > 0
+        if narrative.tong_so_vu_no > 0 and not getattr(output, "danh_sach_no", []):
+            warnings.append({
+                "field": "danh_sach_no",
+                "message": (
+                    f"Có {narrative.tong_so_vu_no} vụ nổ nhưng chưa trích xuất được "
+                    f"chi tiết danh sách — cần nhập thủ công."
+                ),
+                "severity": "error",
+            })
+
+        # danh_sach_chi_vien: required when tong_chi_vien > 0
+        if narrative.tong_chi_vien > 0 and not getattr(output, "danh_sach_chi_vien", []):
+            warnings.append({
+                "field": "danh_sach_chi_vien",
+                "message": (
+                    f"Có {narrative.tong_chi_vien} lượt chi viện được ghi nhận nhưng "
+                    f"chưa trích xuất được danh sách chi tiết — cần nhập thủ công."
+                ),
+                "severity": "error",
+            })
+
+        # danh_sach_cnch: warn if tong_so_vu_cnch > 0 but list empty
+        if narrative.tong_so_vu_cnch > 0 and not output.danh_sach_cnch:
+            warnings.append({
+                "field": "danh_sach_cnch",
+                "message": (
+                    f"Có {narrative.tong_so_vu_cnch} vụ CNCH nhưng danh sách rỗng — "
+                    f"kiểm tra lại nội dung chi tiết section 3."
+                ),
+                "severity": "warning",
+            })
+
+        # cong_tac_an_ninh: warn if empty (expected in every report)
+        if not narrative.cong_tac_an_ninh:
+            warnings.append({
+                "field": "cong_tac_an_ninh",
+                "message": (
+                    "Không trích xuất được nội dung công tác an ninh trật tự — "
+                    "kiểm tra Phần II của báo cáo."
+                ),
+                "severity": "warning",
+            })
+
+        # bang_thong_ke row count check — expected 60
+        expected_rows = 60
+        actual_rows = len(output.bang_thong_ke)
+        if actual_rows < expected_rows:
+            missing_stts = sorted(
+                set(str(i) for i in range(2, 62))
+                - {str(item.stt).strip() for item in output.bang_thong_ke},
+                key=lambda x: int(x),
+            )
+            warnings.append({
+                "field": "bang_thong_ke",
+                "message": (
+                    f"Bảng thống kê chỉ có {actual_rows}/{expected_rows} dòng. "
+                    f"STT còn thiếu: {missing_stts[:10]}{'...' if len(missing_stts) > 10 else ''}."
+                ),
+                "severity": "warning" if actual_rows >= 55 else "error",
+            })
+
+        return warnings
 
     # ------------------------------------------------------------------
     # Stage 1 — deterministic extraction (NO LLM call)
@@ -1284,7 +1552,7 @@ class BlockExtractionPipeline:
             # Stage 1 narrative arrays — regex + business-rules ONLY (no LLM)
             with self.metrics.timer("stage_narrative_arrays"):
                 narrative_for_arrays = layout_text if layout_text.strip() else blocks["phan_nghiep_vu"]
-                cnch_list, pt_hu_hong, cong_van = self._extract_narrative_arrays(
+                cnch_list, pt_hu_hong, cong_van, cong_tac_khac = self._extract_narrative_arrays(
                     narrative_for_arrays,
                     business_data,
                     chi_tiet_cnch="",  # intentionally empty → skips LLM call
@@ -1321,9 +1589,13 @@ class BlockExtractionPipeline:
                 danh_sach_cnch=cnch_list,
                 danh_sach_phuong_tien_hu_hong=pt_hu_hong,
                 danh_sach_cong_van_tham_muu=cong_van,
+                danh_sach_cong_tac_khac=cong_tac_khac,
             )
 
             self._validate_output(final_output)
+            template_warnings = self._check_template_fields(final_output)
+            if template_warnings:
+                business_data.setdefault("template_warnings", template_warnings)
             self.metrics.inc("pipeline_success")
             global_metrics.merge(self.metrics)
 
@@ -1379,7 +1651,7 @@ class BlockExtractionPipeline:
             # as it preserves spatial reading order for incident details.
             with self.metrics.timer("stage_narrative_arrays"):
                 narrative_for_arrays = layout_text if layout_text.strip() else blocks["phan_nghiep_vu"]
-                cnch_list, pt_hu_hong, cong_van = self._extract_narrative_arrays(
+                cnch_list, pt_hu_hong, cong_van, cong_tac_khac = self._extract_narrative_arrays(
                     narrative_for_arrays,
                     business_data,
                     chi_tiet_cnch=phan_nghiep_vu_data.chi_tiet_cnch,
@@ -1422,9 +1694,13 @@ class BlockExtractionPipeline:
                 danh_sach_cnch=cnch_list,
                 danh_sach_phuong_tien_hu_hong=pt_hu_hong,
                 danh_sach_cong_van_tham_muu=cong_van,
+                danh_sach_cong_tac_khac=cong_tac_khac,
             )
 
             self._validate_output(final_output)
+            template_warnings = self._check_template_fields(final_output)
+            if template_warnings:
+                business_data.setdefault("template_warnings", template_warnings)
 
             # Merge per-run metrics into global aggregator
             self.metrics.inc("pipeline_success")

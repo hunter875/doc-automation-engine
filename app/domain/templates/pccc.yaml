@@ -6,7 +6,7 @@
 
 template_id: pccc
 template_name: "Báo cáo PCCC định kỳ"
-version: "2.1"
+version: "2.2"
 language: vi
 
 # ==========================================================
@@ -18,8 +18,8 @@ block_detection:
   # Matches "I." at the start of the narrative section
   narrative_start_pattern: "^I\\."
   narrative_start_fallback_lines: 30
-  # Matches "BIỂU MẪU THỐNG KÊ" (table anchor on page 4)
-  table_anchor_pattern: "BIEU\\s*MAU\\s*THONG\\s*KE"
+  # Matches "BIỂU MẪU THỐNG KÊ" or "BẢNG THỐNG KÊ" (table anchor)
+  table_anchor_pattern: "BIEU\\s*MAU\\s*THONG\\s*KE|BANG\\s*THONG\\s*KE"
   section_split_pattern: "^[IVX]+\\."
 
 # ==========================================================
@@ -91,18 +91,20 @@ narrative:
   summary_max_lines: 15
 
   counts:
-    # Applied to: BlockExtractionPipeline._normalize(text) → uppercase, no diacritics
+    # ĐÃ SỬA: Giữ NGUYÊN các rule gốc + Bổ sung rule bắt chữ KHONG
     tong_so_vu_chay:
+      - "TINH HINH CHAY[:\\s]+(KHONG|\\d+)"
       - "XAY RA (\\d+) VU CHAY"
       - "TONG SO VU CHAY[:\\s]+(\\d+)"
       - "(\\d+) VU CHAY"
     tong_so_vu_no:
+      - "TINH HINH NO[:\\s]+(KHONG|\\d+)"
       - "XAY RA (\\d+) VU NO"
       - "TONG SO VU NO[:\\s]+(\\d+)"
       - "(\\d+) VU NO"
     tong_so_vu_cnch:
-      # layout_text: "xảy ra 01 sự cố liên quan đến công tác CNCH"
-      - "XAY RA (\\d+) SU CO"
+      # ĐÃ SỬA: Bỏ "XAY RA (\d+) SU CO" để tránh nhầm cháy cỏ. Giữ NGUYÊN các rule còn lại + rule KHONG
+      - "TINH HINH CONG TAC CUU NAN, CUU HO[:\\s]+(KHONG|\\d+)"
       - "XAY RA (\\d+) VU TAI NAN"
       - "TONG SO VU TAI NAN[:\\s]+(\\d+)"
       - "(\\d+) SU CO LIEN QUAN"
@@ -110,6 +112,20 @@ narrative:
       # layout_text: "+ Quân số trực: 25 đồng chí."
       - "QUAN SO TRUC[:\\s]+(\\d+)"
       - "QUAN SO TRUC LA (\\d+)"
+
+  # MỚI BỔ SUNG: Khối array cho Stage 1 trích xuất Phương tiện & Công văn
+  arrays:
+    phuong_tien_hu_hong:
+      # Quét tìm các biển số xe đi kèm với trạng thái hư hỏng/kiểm định
+      plate_pattern: "([0-9]{2}[A-Z]{1,2}-[0-9]{3}\\.[0-9]{2})"
+      status_keywords: 
+        - "hư hỏng"
+        - "đang sửa chữa"
+        - "hết kiểm định"
+        - "chờ thanh lý"
+    cong_van_tham_muu:
+      # Group 1: Số ký hiệu, Group 2: Nội dung
+      pattern: "(?:Công văn|Báo cáo|Kế hoạch)\\s+(?:số\\s+)?([0-9]+/[A-Z0-9\\-]+)\\s+ngày\\s+\\d{1,2}/\\d{1,2}/\\d{4}\\s*(?:V/v\\s*)?([^;\\n]+)"
 
   # Fallback keyword scan when section regex fails
   detail_keywords:
@@ -119,13 +135,13 @@ narrative:
     - "CUU NAN"
   detail_max_lines: 20
 
-  # Matches: "lúc 16 giờ 33 phút ngày 20/03/2026"
-  # Groups: (1)=hour, (2)=minute, (3)=date dd/mm/yyyy
-  incident_time_pattern: "lúc\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s*phút?\\s+ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+  # Matches: "lúc 16 giờ 33 phút ngày 20/03/2026" or "20/3/2026" (1-digit month)
+  # Groups: (1)=hour, (2)=minute, (3)=date dd/mm/yyyy or dd/m/yyyy
+  incident_time_pattern: "lúc\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s*phút?\\s+ngày\\s+(\\d{1,2}/\\d{1,2}/\\d{4})"
 
-  # Matches: "tại địa chỉ: Bờ sông Sài Gòn, phường Chánh Hiệp, Thành phố Hồ Chí Minh"
-  # Group (1) = địa điểm text
-  incident_location_pattern: "tại(?:\\s+địa\\s+chỉ)?[:\\-]?\\s*(.+?)(?:\\.|Thông tin|nạn nhân)"
+  # Matches: "tại địa chỉ: ..." or "xảy ra tại khu đất..." (with or without "địa chỉ")
+  # Group (1) = địa điểm text. Ends at ". Đội" or " Đội" or ". Thiệ" or EOL.
+  incident_location_pattern: "(?:xảy ra\\s+)?tại\\s+(?:địa\\s+chỉ:?\\s*)?(.+?)(?:\\.\\s*Đội|\\s+Đội|\\.\\s*Thiệ|$)"
 
   # Matches description sentence after incident trigger keywords
   incident_description_pattern: "(?:người dân|nạn nhân)[^.]{0,300}"
@@ -169,22 +185,32 @@ table:
     noi_dung_tin_bao:
       - "báo có\\s+([\\s\\S]{5,150}?)\\s+xảy ra"
       - "nhận tin báo[^,]*,\\s*([\\s\\S]{5,120}?)(?:xảy ra|tại)"
+      - "báo\\s+(cháy[\\s\\S]{2,100}?)\\s+tại\\s+(?:địa chỉ)"
+      - "báo\\s+(cháy[\\s\\S]{2,80}?)\\s+tại"
+      - "có\\s+(cháy[\\s\\S]{2,100}?)\\s+xảy ra"
+      - "tin báo từ[\\s\\S]{5,60}?(?:báo|có)\\s+([\\s\\S]{3,100}?)\\s+(?:xảy ra|tại)"
     luc_luong_tham_gia:
       - "điều động\\s+([\\s\\S]{5,200}?)\\s+tham gia"
+      - "xuất\\s+(\\d+\\s+xe[\\s\\S]{5,200}?)\\s*(?:Thiệ|\\.\\s|$)"
+      - "(?:Đội[\\s\\S]{5,50}?)\\s+xuất\\s+(\\d+\\s+xe[\\s\\S]{5,150}?CBCS)"
+      - "điều động\\s+([\\s\\S]{5,200}?)\\s+đến"
+      - "(Đội\\s+(?:Chữa cháy|CC&CNCH|Công tác)[\\s\\S]{5,200}?(?:CBCS|Hồ Chí Minh))(?:\\.\\s|\\s*Thiệ|$)"
     thong_tin_nan_nhan:
       - "nạn nhân(?:\\s+(?:tên|là))?\\s+([\\s\\S]{10,300}?)(?=\\s*Đội|\\s*Hiện|\\.|$)"
     ngay_xay_ra:
-      - "(?:lúc|vào lúc)[\\s\\S]{1,50}?ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
-      - "(\\d{1,2}/\\d{2}/\\d{4})"
+      - "(?:lúc|vào lúc)[\\s\\S]{1,50}?ngày\\s+(\\d{1,2}/\\d{1,2}/\\d{4})"
+      - "(\\d{1,2}/\\d{1,2}/\\d{4})"
     ket_qua_xu_ly:
+      - "Thi(?:ệ|ấ)t hại:\\s*(Không|[\\s\\S]{3,100}?)\\."
       - "[Hh]iện tại[\\s\\S]{0,100}?(?:đang|đã)\\s+([\\s\\S]{5,150}?)\\.(?:\\s*\\d|$)"
       - "[Hh]iện tại[\\s\\S]{0,100}?(?:đang|đã)\\s+([\\s\\S]{5,150}?)\\."
+      - "tham gia[\\s\\S]{0,30}?(?:cứu chữa|chữa cháy|xử lý)[\\s\\S]{0,20}?(?:\\(([^)]{3,100})\\))"
     incident_marker:
       - "\\bxảy ra\\b|\\bsự cố\\b|\\btai nạn\\b|\\bcứu nạn\\b|\\bnạn nhân\\b"
     incident_time:
-      - "(?:lúc|vào lúc)\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s+phút\\s+ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+      - "(?:lúc|vào lúc)\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s+phút\\s+ngày\\s+(\\d{1,2}/\\d{1,2}/\\d{4})"
     incident_location:
-      - "(?:xảy ra )?tại (?:địa chỉ:?\\s*)([\\s\\S]{10,200}?)(?:\\.|$)"
+      - "(?:xảy ra\\s+)?tại\\s+(?:địa chỉ:?\\s*)?([\\s\\S]{10,200}?)(?:\\.\\s*Đội|\\s+Đội|\\.\\s*Thiệ|$)"
 
   incident_row_patterns:
     # Patterns matched against normalized text (spaced — after diacritics removed)

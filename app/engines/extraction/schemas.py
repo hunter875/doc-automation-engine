@@ -33,6 +33,7 @@ class CNCHItem(BaseModel):
     noi_dung_tin_bao: str = Field(default="", description="Nội dung tin báo / loại sự cố")
     luc_luong_tham_gia: str = Field(default="", description="Lực lượng, phương tiện xuất động")
     ket_qua_xu_ly: str = Field(default="", description="Kết quả xử lý sự cố")
+    thiet_hai: str = Field(default="", description="Thiệt hại về người / tài sản")
     thong_tin_nan_nhan: str = Field(default="", description="Thông tin nạn nhân")
     # Internal use only — kept for backward compat with business-rules path
     mo_ta: str = Field(default="")
@@ -52,11 +53,17 @@ class CNCHItem(BaseModel):
             value = f"{hh}:{mm}"
             self.thoi_gian = value
 
+        # Normalize single-digit day/month to zero-padded (e.g. 2/4/2026 → 02/04/2026)
+        def _zero_pad_date(m: re.Match) -> str:
+            return f"{m.group(1).zfill(2)}/{m.group(2).zfill(2)}/{m.group(3)}"
+        value = re.sub(r"(\d{1,2})/(\d{1,2})/(\d{4})", _zero_pad_date, value)
+        self.thoi_gian = value
+
         patterns = [
             r"^\d{2}/\d{2}/\d{4}$",
             r"^\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}$",
             r"^\d{2}:\d{2}\s+\d{2}/\d{2}/\d{4}$",
-            r"^\d{2}:\d{2}\s+ngày\s+\d{1,2}/\d{2}/\d{4}$",
+            r"^\d{2}:\d{2}\s+ngày\s+\d{2}/\d{2}/\d{4}$",
             r"^\d{2}:\d{2}$",
             r"^\d{1,2}\s*giờ\s*\d{1,2}\s*phút\s*ngày\s*\d{2}/\d{2}/\d{4}$",
         ]
@@ -135,6 +142,9 @@ class BlockNghiepVu(BaseModel):
     quan_so_truc: int = Field(default=0)
     tong_chi_vien: int = Field(default=0, description="Tổng số lượt chi viện")
     tong_cong_van: int = Field(default=0, description="Tổng số công văn tham mưu")
+    tong_bao_cao: int = Field(default=0, description="Tổng số báo cáo tham mưu")
+    tong_ke_hoach: int = Field(default=0, description="Tổng số kế hoạch tham mưu")
+    cong_tac_an_ninh: str = Field(default="", description="Nội dung công tác an ninh trật tự")
     tong_xe_hu_hong: int = Field(default=0, description="Tổng số phương tiện hư hỏng")
 
 
@@ -204,6 +214,7 @@ class BlockExtractionOutput(BaseModel):
     danh_sach_cnch: list[CNCHItem] = Field(default_factory=list)
     danh_sach_phuong_tien_hu_hong: list[PhuongTienHuHongItem] = Field(default_factory=list)
     danh_sach_cong_van_tham_muu: list[CongVanItem] = Field(default_factory=list)
+    danh_sach_cong_tac_khac: list[str] = Field(default_factory=list)
 
 
 @dataclass

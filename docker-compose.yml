@@ -43,7 +43,7 @@ services:
       - rag-network
     restart: unless-stopped
 
-  # Streamlit UI
+  # Streamlit UI (legacy — kept for reference, disable if using Next.js)
   streamlit:
     build:
       context: .
@@ -55,6 +55,25 @@ services:
     environment:
       - DOC_API_BASE_URL=http://api:8000
       - PYTHONPATH=/app:/app/ui:/app/ui/pages
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - rag-network
+    restart: unless-stopped
+    profiles:
+      - legacy
+
+  # Next.js Frontend (replaces Streamlit)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rag-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://rag-api:8000
     depends_on:
       api:
         condition: service_started

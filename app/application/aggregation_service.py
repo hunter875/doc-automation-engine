@@ -103,7 +103,7 @@ def _expand_header_subfields(context: dict[str, Any]) -> None:
     for k, v in header.items():
         context.setdefault(k, v)
 
-    # Parse ngay_bao_cao → ngay_xuat / thang_xuat / nam_xuat
+    # Parse ngay_bao_cao → ngay_xuat / thang_xuat / nam_xuat 
     ngay = str(header.get("ngay_bao_cao") or "").strip()
     m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", ngay)
     if m:
@@ -142,6 +142,17 @@ def _expand_nghiep_vu_subfields(context: dict[str, Any]) -> None:
             for k, v in nghiep_vu.items():
                 context.setdefault(k, v)
             break
+
+    # tong_su_co: computed = chay + no + cnch (silently skip if any missing)
+    if not context.get("tong_su_co"):
+        try:
+            context["tong_su_co"] = (
+                int(context.get("tong_so_vu_chay") or 0)
+                + int(context.get("tong_so_vu_no") or 0)
+                + int(context.get("tong_so_vu_cnch") or 0)
+            )
+        except (TypeError, ValueError):
+            pass
 
 
 def _expand_bang_thong_ke_fields(context: dict[str, Any]) -> None:
@@ -514,6 +525,7 @@ class AggregationService:
                 fd = job.extracted_data
             row = fd
             if row:
+                row = flatten_block_output(row)
                 data_rows.append(row)
             # Record which data source was used for this job
             if job.reviewed_data and not (
