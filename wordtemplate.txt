@@ -1,0 +1,164 @@
+PHÒNG CẢNH SÁT PCCC&CNCH
+ĐỘI CC&CNCH KHU VỰC 30
+Số: {{so_bao_cao}}	CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+Độc lập - Tự do - Hạnh phúc
+───────────────────────────
+Thành phố Hồ Chí Minh, ngày {{ngay_xuat}} tháng {{thang_xuat}} năm {{nam_xuat}}
+
+BÁO CÁO TUẦN {{tuan_so}}
+Từ ngày {{tu_ngay}} đến ngày {{den_ngay}}
+I. TÌNH HÌNH CHÁY, NỔ, CỨU NẠN VÀ CỨU HỘ
+1. Tình hình cháy:
+{% if tong_so_vu_chay == 0 %}Không.{% else %}Trong tuần xảy ra {{tong_so_vu_chay}} vụ cháy:{% endif %}
+{% for vu in danh_sach_chay %}
+{{loop.index}}. Vào lúc {{vu.thoi_gian}} nhận tin báo cháy tại {{vu.dia_diem}}.
+Lực lượng và phương tiện tham gia: {{vu.luc_luong_tham_gia}}.
+Kết quả xử lý: {{vu.ket_qua_xu_ly}}. Thiệt hại: {{vu.thiet_hai | default('Không')}}.
+{% endfor %}
+2. Tình hình nổ:
+{% if tong_so_vu_no == 0 %}Không.{% else %}Trong tuần xảy ra {{tong_so_vu_no}} vụ nổ:{% endif %}
+{% for vu in danh_sach_no %}
+{{loop.index}}. Vào lúc {{vu.thoi_gian}} tại {{vu.dia_diem}}. Lực lượng: {{vu.luc_luong_tham_gia}}. Thiệt hại: {{vu.thiet_hai | default('Không')}}.
+{% endfor %}
+3. Tình hình cứu nạn, cứu hộ:
+{% if tong_so_vu_cnch == 0 %}Không.{% else %}Trong tuần xảy ra {{tong_so_vu_cnch}} vụ CNCH:{% endif %}
+{% for vu in danh_sach_cnch_that %}
+{{loop.index}}. Vào lúc {{vu.thoi_gian}} nhận tin báo {{vu.noi_dung_tin_bao}} tại địa chỉ: {{vu.dia_diem}}.
+{% if vu.thong_tin_nan_nhan %}Thông tin nạn nhân: {{vu.thong_tin_nan_nhan}}.{% endif %}
+Lực lượng tham gia: {{vu.luc_luong_tham_gia}}. Kết quả: {{vu.ket_qua_xu_ly}}.
+{% endfor %}
+4. Tình hình chi viện chữa cháy:
+{% if tong_chi_vien == 0 %}Không.{% else %}Trong tuần Đội CC&CNCH khu vực 30 chi viện {{tong_chi_vien}} vụ:{% endif %}
+{% for vu in danh_sach_chi_vien %}
+{{loop.index}}. Vào lúc {{vu.thoi_gian}} tại {{vu.dia_diem}}. Lực lượng: {{vu.luc_luong_tham_gia}}. Thiệt hại: {{vu.thiet_hai | default('Không')}}.
+{% endfor %}
+5. Tình hình khác có liên quan đến công tác PCCC:
+{% set so_su_co = danh_sach_su_co_pccc | length %}{% if so_su_co == 0 %}Không.{% else %}Trong tuần xảy ra {{so_su_co}} sự cố liên quan đến công tác PCCC, cụ thể:{% endif %}
+{% for vu in danh_sach_su_co_pccc %}
+5.{{loop.index}}. Vào lúc {{vu.thoi_gian}} nhận tin báo {{vu.noi_dung_tin_bao}} tại địa chỉ: {{vu.dia_diem}}.
+Lực lượng tham gia: {{vu.luc_luong_tham_gia}}. Thiệt hại: {{vu.thiet_hai | default('Không')}}.
+{% endfor %}
+II. KẾT QUẢ CÔNG TÁC TRONG TUẦN
+1. Công tác đảm bảo an ninh chính trị, an toàn PCCC:
+{% if cong_tac_an_ninh %}{{cong_tac_an_ninh}}{% else %}Không.{% endif %}
+2. Công tác tham mưu:
+{% if tong_bao_cao == 0 and tong_cong_van == 0 and tong_ke_hoach == 0 %}Không.{% else %}Trong tuần đơn vị tham mưu, ban hành {{tong_bao_cao}} báo cáo, {{tong_cong_van}} công văn, {{tong_ke_hoach}} kế hoạch, cụ thể:{% endif %}
+{% for cv in danh_sach_cong_van_tham_muu %}
++ {{cv.so_ky_hieu}} V/v {{cv.noi_dung}}.
+{% endfor %}
+3. Công tác kiểm tra PCCC:
+Trong tuần tổ chức hướng dẫn, kiểm tra an toàn PCCC&CNCH đối với {{kiem_tra_tong}} lượt (trong đó kiểm tra định kỳ: {{kiem_tra_dinh_ky}} cơ sở; kiểm tra chuyên đề, đột xuất: {{kiem_tra_dot_xuat}} cơ sở) với {{vi_pham_phat_hien}} vi phạm phát hiện.
+Công tác số hóa biên bản kiểm tra: 100% biên bản.
+4. Công tác xử phạt vi phạm hành chính:
+{% if xu_phat_tong == 0 %}Không.{% else %}Trong tuần lập biên bản vi phạm hành chính về lĩnh vực PCCC&CNCH đối với {{xu_phat_tong}} cơ sở (tổ chức) với số tiền dự phạt {{xu_phat_so_tien}} triệu đồng.{% endif %}
+5. Công tác tuyên truyền:
+- Tổ chức {{tt_so_cuoc}} buổi tuyên truyền pháp luật về PCCC cho {{tt_so_nguoi}} người tham gia.
+- Phát tờ rơi, cẩm nang về kỹ năng thoát nạn, xử lý sự cố về PCCC: {{tt_to_roi}} lượt.
+6. Công tác huấn luyện nghiệp vụ PCCC:
+- Tổ chức huấn luyện nghiệp vụ PCCC&CNCH cho {{huan_luyen_tong}} CBCS tham gia (chỉ huy Đội: {{huan_luyen_chi_huy_doi}}, cán bộ tiểu đội: {{huan_luyen_can_bo}}, chiến sỹ: {{huan_luyen_chien_sy}}, lái xe: {{huan_luyen_lai_xe}}).
+- Tổ chức huấn luyện nghiệp vụ PCCC và CNCH cho cán bộ, chiến sĩ theo Kế hoạch về việc huấn luyện nghiệp vụ CC&CNCH thường xuyên.
+7. Công tác xây dựng và thực tập PACC&PA CNCH:
+- Hướng dẫn {{pa_co_so_duyet}} cơ sở xây dựng, chỉnh lý phương án chữa cháy và cứu nạn, cứu hộ theo quy định.
+- Xây dựng và phê duyệt phương án chữa cháy và cứu nạn, cứu hộ của cơ quan Công an: {{pa_cong_an_duyet}} phương án.
+- Thực tập phương án chữa cháy và cứu nạn, cứu hộ: {{pa_cong_an_thuc_tap}} lượt.
+8. Công tác thẩm duyệt, nghiệm thu: Không.
+9. Công tác xây dựng lực lượng: Không.
+10. Công tác chữa cháy và CNCH:
+- Cán bộ, chiến sĩ đảm bảo chế độ thường trực sẵn sàng chiến đấu 24/24 tại đơn vị theo quy định.
+- Kịp thời tiếp nhận và xử lý các tình huống cháy, nổ, sự cố tai nạn hoặc yêu cầu phối hợp tham gia giải quyết các vấn đề về ANTT trên địa bàn. Thường xuyên kiểm tra, quản lý, bảo quản, bảo dưỡng các trang thiết bị, phương tiện chữa cháy và cứu nạn, cứu hộ.
+- Tổ chức huấn luyện và bồi dưỡng nghiệp vụ cán bộ chiến sĩ tham gia tập nghiệp vụ chữa cháy và cứu nạn, cứu hộ.
+11. Công tác tiếp nhận thủ tục hành chính: Không.
+12. Công tác khác:
+{% if danh_sach_cong_tac_khac | length == 0 %}Không.{% endif %}
+{% for ct in danh_sach_cong_tac_khac %}
+- {{ct}}
+{% endfor %}
+III. PHƯƠNG HƯỚNG CÔNG TÁC TUẦN TỚI
+Chủ động thực hiện các mặt công tác về PCCC&CNCH, cụ thể:
+1. Tiếp tục tham mưu Ban Chỉ huy phòng ban hành những văn bản chỉ đạo tăng cường công tác tuyên truyền, xây dựng phong trào toàn dân PCCC thiết thực, phù hợp với đặc điểm kinh tế xã hội trên địa bàn quản lý.
+2. Làm tốt công tác giáo dục chính trị tư tưởng, quán triệt cán bộ, chiến sĩ thực hiện nghiêm các quy định trong thực hiện các nhiệm vụ được giao. Đảm bảo các chế độ, chính sách cho cán bộ, chiến sỹ.
+3. Tiếp tục tổ chức quán triệt và tuyên truyền sâu rộng Luật PCCC số 55/2024/QH15; Nghị định số 105/2025/NĐ-CP ngày 15/05/2025 của Chính phủ.
+4. Thường xuyên duy trì chế độ về quản lý, bảo quản, bảo dưỡng, phương tiện phòng cháy, chữa cháy theo Thông tư 36/2025/TT-BCA; rà soát bổ sung đủ nhiên liệu, foam cho các xe và máy bơm.
+5. Tăng cường kiểm tra, kiên quyết xử lý nghiêm những trường hợp vi phạm về PCCC.
+6. Nâng cao công tác tuyên truyền, phổ biến, giáo dục pháp luật, kiến thức về PCCC&CNCH. Tập trung chỉ đạo xây dựng phong trào toàn dân tham gia PCCC sâu rộng, với phương châm "bốn tại chỗ".
+7. Tổ chức cho cán bộ chiến sĩ tập luyện nghiệp vụ chữa cháy và cứu nạn cứu hộ theo quy định tại Thông tư 37/2025/TT-BCA.
+8. Tổ chức cho CBCS tập luyện, kiểm tra điều lệnh, quân sự, võ thuật CAND năm 2026.
+9. Tiếp tục thực hiện tốt công tác điều tra cơ bản, nắm tình hình về công tác PCCC và CNCH trên địa bàn được phân công quản lý.
+10. Tổ chức tuyên truyền và hướng dẫn cơ sở về lắp đặt thiết bị truyền tin báo cháy theo Văn bản số 7203/PC07-Đ2 ngày 04/11/2025.
+11. Thực hiện tốt chế độ thông tin, báo cáo về trên kịp thời đúng quy định.
+12. Thực hiện các nhiệm vụ khác khi có yêu cầu của cấp trên./.
+Trên đây là báo cáo tuần từ ngày {{tu_ngay}} đến ngày {{den_ngay}} của Đội chữa cháy và Cứu nạn cứu hộ Khu vực 30, kính báo cáo Ban Chỉ huy Phòng PC07 (qua Đội Tham mưu) theo dõi, chỉ đạo./.
+Nơi nhận:
+- Đ/c Trưởng phòng;
+- Đ/c Thượng tá Bùi Trung Hiếu - PTP;
+- Đội 1;
+- Lưu: KV30(Nh).	KT. ĐỘI TRƯỞNG
+PHÓ ĐỘI TRƯỞNG
+
+{{nguoi_ky}}
+
+
+BIỂU MẪU THỐNG KÊ TUẦN {{tuan_so}}
+(Ban hành kèm theo Báo cáo số {{so_bao_cao}} ngày {{ngay_bao_cao}} của Đội CC&CNCH KV30)
+STT	DANH MỤC, CHỈ TIÊU THỐNG KÊ	KẾT QUẢ	GHI CHÚ
+I. TÌNH HÌNH CHÁY, NỔ, SỰ CỐ TAI NẠN
+2	1. Tổng số vụ cháy	{{chay_tong}}	
+3	Số người chết	{{chay_chet}}	
+4	Số người bị thương	{{chay_thuong}}	
+5	Số người cứu được	{{chay_cuu_nguoi}}	
+6	Tài sản thiệt hại (ước tính triệu đồng)	{{chay_thiet_hai}}	
+7	Tài sản cứu được (ước tính triệu đồng)	{{chay_cuu_tai_san}}	
+8	2. Tổng số vụ nổ	{{no_tong}}	
+9	Số người chết	{{no_chet}}	
+10	Số người bị thương	{{no_thuong}}	
+11	Số người cứu được	{{no_cuu_nguoi}}	
+12	Tài sản thiệt hại (ước tính triệu đồng)	{{no_thiet_hai}}	
+13	Tài sản cứu được (ước tính triệu đồng)	{{no_cuu_tai_san}}	
+14	3. Tổng số vụ tai nạn, sự cố	{{cnch_tong}}	
+15	Số người cứu được (=STT16+STT17)	{{cnch_cuu_nguoi}}	
+16	Trong đó, số người trực tiếp cứu được	{{cnch_truc_tiep}}	
+17	Trong đó, số người tổ chức hướng dẫn tự thoát nạn	{{cnch_tu_thoat}}	
+18	Số thi thể nạn nhân tìm được	{{cnch_thi_the}}	
+19	Số tài sản cứu được (ước tính triệu đồng)	{{cnch_cuu_tai_san}}	
+II. KẾT QUẢ CÔNG TÁC PCCC VÀ CNCH
+1. Tuyên truyền về PCCC và CNCH
+1.1. Tuyên truyền qua các phương tiện thông tin truyền thông và nền tảng trực tuyến MXH (zalo, facebook, youtube, Website)
+23	Số tin, bài đã đăng phát	{{tt_mxh_tin_bai}}	
+24	Số hình ảnh được đăng tải	{{tt_mxh_hinh_anh}}	
+25	Số video clip phóng sự, chuyên đề	{{tt_mxh_video}}	
+1.2. Tuyên truyền trực tiếp tại cơ sở, doanh nghiệp, các khu dân cư
+27	Số cuộc	{{tt_so_cuoc}}	
+28	Số người tham dự	{{tt_so_nguoi}}	
+29	Số khuyến cáo, tờ rơi đã phát hành	{{tt_to_roi}}	
+2. Hướng dẫn, kiểm tra về PCCC và CNCH
+31	Số cơ sở được kiểm tra an toàn PCCC (=STT32+STT33)	{{kiem_tra_tong}}	
+32	Kiểm tra định kỳ	{{kiem_tra_dinh_ky}}	
+33	Kiểm tra đột xuất theo chuyên đề	{{kiem_tra_dot_xuat}}	
+34	Số vi phạm được phát hiện	{{vi_pham_phat_hien}}	
+35	Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT36+...+STT39)	{{xu_phat_tong}}	
+36	Trong đó, phạt cảnh cáo	{{xu_phat_canh_cao}}	
+37	Trong đó, tạm đình chỉ hoạt động	{{xu_phat_tam_dinh_chi}}	
+38	Trong đó, đình chỉ hoạt động	{{xu_phat_dinh_chi}}	
+39	Trong đó, phạt tiền	{{xu_phat_tien_mat}}	
+40	Số tiền phạt thu được (triệu đồng)	{{xu_phat_so_tien}}	
+3. Xây dựng, thực tập phương án chữa cháy, CNCH
+3.1. Phương án CC, CNCH của cơ sở theo Mẫu số PC06 kèm theo Nghị định số 105/2025/NĐ-CP
+43	Số phương án được xây dựng và phê duyệt	{{pa_co_so_duyet}}	
+44	Số phương án được thực tập	{{pa_co_so_thuc_tap}}	
+3.2. Phương án CC, CNCH của phương tiện giao thông (Mẫu số PC07)
+46	Số phương án được xây dựng và phê duyệt	{{pa_giao_thong_duyet}}	
+47	Số phương án được thực tập	{{pa_giao_thong_thuc_tap}}	
+3.3. Phương án CC, CNCH của cơ quan Công an (Mẫu số PC08)
+49	Số phương án được xây dựng và phê duyệt	{{pa_cong_an_duyet}}	
+50	Số phương án được thực tập	{{pa_cong_an_thuc_tap}}	
+3.4. Phương án CNCH của cơ quan Công an (Mẫu số PC09)
+52	Số phương án được xây dựng và phê duyệt	{{pa_cnch_duyet}}	
+53	Số phương án được thực tập	{{pa_cnch_thuc_tap}}	
+4. Công tác huấn luyện nghiệp vụ chữa cháy và CNCH thường xuyên
+55	Tổng số CBCS tham gia huấn luyện (=STT56+...+STT61)	{{huan_luyen_tong}}	
+56	Chỉ huy phòng	{{huan_luyen_chi_huy_phong}}	
+57	Chỉ huy Đội	{{huan_luyen_chi_huy_doi}}	
+58	Cán bộ tiểu đội	{{huan_luyen_can_bo}}	
+59	Chiến sỹ CC và CNCH	{{huan_luyen_chien_sy}}	
+60	Lái xe CC và CNCH	{{huan_luyen_lai_xe}}	
+61	Lái tàu CC và CNCH	{{huan_luyen_lai_tau}}	
