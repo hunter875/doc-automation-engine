@@ -82,7 +82,7 @@ celery_app.conf.update(
         },
         "cleanup-stuck-extraction-jobs": {
             "task": "app.infrastructure.worker.extraction_tasks.cleanup_stuck_extraction_jobs",
-            "schedule": 1800.0,  # Every 30 minutes
+            "schedule": float(settings.STUCK_JOB_CLEANUP_POLL_SECONDS),
         },
         "file-operator-poll-inbox": {
             "task": "app.infrastructure.worker.operator_tasks.poll_inbox",

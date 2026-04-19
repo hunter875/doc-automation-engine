@@ -41,18 +41,42 @@ logger = logging.getLogger(__name__)
 def _inject_computed_bang_thong_ke_rows(items: list) -> list:
     """Insert rows that pdfplumber drops at PDF page breaks using known formulas.
 
+    STT 32 (Kiểm tra định kỳ) = STT 31 (tổng) − STT 33 (đột xuất).
     STT 33 (Kiểm tra đột xuất theo chuyên đề) = STT 31 (tổng) − STT 32 (định kỳ).
+    STT 60 (lực lượng khác) = STT 55 − (STT 56 + STT 57 + STT 58 + STT 59 + STT 61).
     Inserted in sorted STT order so downstream consumers see a complete sequence.
     """
-    by_stt = {item.stt: item for item in items}
+    by_stt = {str(item.stt).strip(): item for item in items if getattr(item, "stt", None) is not None}
     insertions = []
 
+    def _kq(stt: str) -> int:
+        raw = getattr(by_stt.get(stt), "ket_qua", 0)
+        try:
+            return int(raw or 0)
+        except Exception:
+            return 0
+
+    if "32" not in by_stt and "31" in by_stt and "33" in by_stt:
+        kq31 = _kq("31")
+        kq33 = _kq("33")
+        insertions.append(
+            ChiTieu(stt="32", noi_dung="Kiểm tra định kỳ", ket_qua=max(0, kq31 - kq33))
+        )
+
     if "33" not in by_stt and "31" in by_stt and "32" in by_stt:
-        kq31 = int(by_stt["31"].ket_qua or 0)
-        kq32 = int(by_stt["32"].ket_qua or 0)
+        kq31 = _kq("31")
+        kq32 = _kq("32")
         insertions.append(
             ChiTieu(stt="33", noi_dung="Kiểm tra đột xuất theo chuyên đề", ket_qua=max(0, kq31 - kq32))
         )
+
+    required_for_60 = {"55", "56", "57", "58", "59", "61"}
+    if "60" not in by_stt and required_for_60.issubset(by_stt):
+        kq60 = _kq("55") - (_kq("56") + _kq("57") + _kq("58") + _kq("59") + _kq("61"))
+        if kq60 >= 0:
+            insertions.append(
+                ChiTieu(stt="60", noi_dung="Chiến sĩ nghĩa vụ (hợp đồng lao động)", ket_qua=kq60)
+            )
 
     if not insertions:
         return items
@@ -485,6 +509,53 @@ class BlockExtractionPipeline:
         self.emit("block_stage3_narrative_agent")
         return self._parse_phan_nghiep_vu_fallback(narrative_text, layout_text=layout_text)
 
+    @staticmethod
+    def _clean_cong_tac_an_ninh_text(text: str) -> str:
+        """Normalize noisy prefixes like 'CCC:' in an ninh field."""
+        cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not cleaned:
+            return ""
+        for _ in range(3):
+            before = cleaned
+            cleaned = re.sub(r"^(?:P?CCC)\s*:\s*", "", cleaned, flags=re.IGNORECASE).strip()
+            if cleaned == before:
+                break
+        return cleaned
+
+    @staticmethod
+    def _extract_tham_muu_block_text(narrative_text: str) -> str:
+        """Return text of section 2 (Cong tac tham muu), if present."""
+        joined = re.sub(r"\s+", " ", str(narrative_text or "")).strip()
+        if not joined:
+            return ""
+
+        m = re.search(
+            r"\b2\.\s*Công\s*tác\s*tham\s*mưu\s*:?\s*(?P<body>.*?)(?=\b3\.\s*Công\s*tác\b|\bIII\.|$)",
+            joined,
+            re.IGNORECASE,
+        )
+        if m:
+            return m.group("body").strip()
+        return ""
+
+    @staticmethod
+    def _count_cong_van_types(items: list[CongVanItem]) -> dict[str, int]:
+        """Split counters by type instead of grouping all into tong_cong_van."""
+        counters = {
+            "tong_cong_van": 0,
+            "tong_bao_cao": 0,
+            "tong_ke_hoach": 0,
+        }
+        for item in items or []:
+            code = re.sub(r"\s+", "", str(getattr(item, "so_ky_hieu", "") or "")).upper()
+            if re.search(r"(^|/)BC(?:[-/]|$)", code):
+                counters["tong_bao_cao"] += 1
+            elif re.search(r"(^|/)KH(?:[-/]|$)", code):
+                counters["tong_ke_hoach"] += 1
+            else:
+                counters["tong_cong_van"] += 1
+        return counters
+
     def _parse_phan_nghiep_vu_fallback(self, text: str, layout_text: str = "") -> BlockNghiepVu:
         self.metrics.inc("narrative_fallback")
         lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
@@ -539,7 +610,10 @@ class BlockExtractionPipeline:
         # ── Phần II: tong_bao_cao, tong_ke_hoach, cong_tac_an_ninh ────
         # Extract from the flat joined text (layout not needed — these are counts/sentences).
         flat_joined = re.sub(r"\s+", " ", joined)
+        tham_muu_text = self._extract_tham_muu_block_text(flat_joined)
+        tham_muu_source = tham_muu_text or flat_joined
         tong_bao_cao = 0
+        tong_cong_van = 0
         tong_ke_hoach = 0
         cong_tac_an_ninh = ""
 
@@ -547,27 +621,52 @@ class BlockExtractionPipeline:
         _bc_m = re.search(
             r"(?:tham\s*mưu|ban\s*hành|gửi)\s+(?P<n>\d+)\s+b[áa]o\s*c[áa]o"
             r"|b[áa]o\s*c[áa]o[:\s]+(?P<n2>\d+)",
-            flat_joined, re.IGNORECASE
+            tham_muu_source, re.IGNORECASE
         )
+        if not _bc_m:
+            _bc_m = re.search(r"(?<!/)(?P<n>\d+)\s+b[áa]o\s*c[áa]o", tham_muu_source, re.IGNORECASE)
         if _bc_m:
             tong_bao_cao = int(_bc_m.group("n") or _bc_m.group("n2") or 0)
+
+        # Tổng công văn: "X công văn" or "công văn: X"
+        _cv_m = re.search(
+            r"(?:tham\s*mưu|ban\s*hành|gửi)\s+(?P<n>\d+)\s+c[ôo]ng\s*v[aă]n"
+            r"|c[ôo]ng\s*v[aă]n[:\s]+(?P<n2>\d+)",
+            tham_muu_source,
+            re.IGNORECASE,
+        )
+        if not _cv_m:
+            _cv_m = re.search(r"(?<!/)(?P<n>\d+)\s+c[ôo]ng\s*v[aă]n", tham_muu_source, re.IGNORECASE)
+        if _cv_m:
+            tong_cong_van = int(_cv_m.group("n") or _cv_m.group("n2") or 0)
 
         # Tổng kế hoạch: "X kế hoạch" or "kế hoạch: X"
         _kh_m = re.search(
             r"(?:tham\s*mưu|ban\s*hành|gửi)\s+(?P<n>\d+)\s+k[eế]\s*ho[aạ]ch"
             r"|k[eế]\s*ho[aạ]ch[:\s]+(?P<n2>\d+)",
-            flat_joined, re.IGNORECASE
+            tham_muu_source, re.IGNORECASE
         )
+        if not _kh_m:
+            _kh_m = re.search(r"(?<!/)(?P<n>\d+)\s+k[eế]\s*ho[aạ]ch", tham_muu_source, re.IGNORECASE)
         if _kh_m:
             tong_ke_hoach = int(_kh_m.group("n") or _kh_m.group("n2") or 0)
 
-        # Công tác an ninh: extract the sentence/clause after "an ninh" keyword
-        _an_ninh_m = re.search(
-            r"[Aa]n\s+ninh[^.;:]*[:：]?\s*([^.\n]{10,200})",
-            flat_joined, re.IGNORECASE
+        # Công tác an ninh: prefer section-1 block, then fallback keyword capture.
+        _an_ninh_block_m = re.search(
+            r"\b1\.\s*Công\s*tác\s*đảm\s*bảo\s*an\s*ninh[^:：]*[:：]\s*(?P<body>.*?)(?=\b2\.\s*Công\s*tác\s*tham\s*mưu\b|$)",
+            flat_joined,
+            re.IGNORECASE,
         )
-        if _an_ninh_m:
-            cong_tac_an_ninh = re.sub(r"\s+", " ", _an_ninh_m.group(1)).strip().rstrip(",")
+        if _an_ninh_block_m:
+            cong_tac_an_ninh = self._clean_cong_tac_an_ninh_text(_an_ninh_block_m.group("body"))
+        else:
+            _an_ninh_m = re.search(
+                r"[Aa]n\s+ninh[^.;:]*[:：]?\s*([^.\n]{1,200})",
+                flat_joined,
+                re.IGNORECASE,
+            )
+            if _an_ninh_m:
+                cong_tac_an_ninh = self._clean_cong_tac_an_ninh_text(_an_ninh_m.group(1).rstrip(","))
 
         return BlockNghiepVu(
             tong_so_vu_chay=tong_so_vu_chay,
@@ -575,6 +674,7 @@ class BlockExtractionPipeline:
             tong_so_vu_cnch=tong_so_vu_cnch,
             chi_tiet_cnch=chi_tiet_cnch,
             quan_so_truc=quan_so_truc,
+            tong_cong_van=tong_cong_van,
             tong_bao_cao=tong_bao_cao,
             tong_ke_hoach=tong_ke_hoach,
             cong_tac_an_ninh=cong_tac_an_ninh,
@@ -620,11 +720,14 @@ class BlockExtractionPipeline:
         grid_parsed = self._parse_bang_thong_ke_from_text_grid(table_text)
         if grid_parsed.danh_sach_chi_tieu:
             logger.info("Block text-grid parser collected %s rows", len(grid_parsed.danh_sach_chi_tieu))
-            return grid_parsed
+            injected_items = _inject_computed_bang_thong_ke_rows(grid_parsed.danh_sach_chi_tieu)
+            return BlockBangThongKe(danh_sach_chi_tieu=injected_items)
 
         self.metrics.inc("table_line_fallback")
         logger.warning("Block table parser found no rows from table_stream and text-grid parser, fallback to loose line parser")
-        return self._parse_bang_thong_ke_fallback(table_text)
+        line_parsed = self._parse_bang_thong_ke_fallback(table_text)
+        injected_items = _inject_computed_bang_thong_ke_rows(line_parsed.danh_sach_chi_tieu)
+        return BlockBangThongKe(danh_sach_chi_tieu=injected_items)
 
     def _parse_bang_thong_ke_from_text_grid(self, table_text: str) -> BlockBangThongKe:
         """Parse fake tables represented as plain text rows (Word-exported PDF)."""
@@ -934,6 +1037,64 @@ class BlockExtractionPipeline:
 
         return run_business_rules(sections, tables, llm_fallback, full_text=reconstructed_text, tpl=self.tpl)
 
+    @staticmethod
+    def _normalize_cong_van_parts(so_ky_hieu_raw: str, noi_dung_raw: str) -> tuple[str, str]:
+        """Normalize document code/content and repair OCR-split code suffixes."""
+        so_ky_hieu = re.sub(r"\s+", " ", so_ky_hieu_raw or "").strip().strip(" ,:;.-")
+        noi_dung = re.sub(r"\s+", " ", noi_dung_raw or "").strip()
+
+        # Merge patterns like "75/KV 30" -> "75/KV30"
+        so_ky_hieu = re.sub(r"\s+(?=\d{1,4}$)", "", so_ky_hieu)
+
+        noi_dung = noi_dung.lstrip(" :;,-.").strip()
+        spill = re.match(r"^(?P<num>\d{1,4})\s+(?=ngày\b)", noi_dung, flags=re.IGNORECASE)
+        if spill and re.search(r"/[A-Za-z]+$", so_ky_hieu):
+            so_ky_hieu = f"{so_ky_hieu}{spill.group('num')}"
+            noi_dung = noi_dung[spill.end():].strip()
+
+        # Keep only semantic content after leading date prefix.
+        noi_dung = re.sub(
+            r"^ngày\s+\d{1,2}/\d{1,2}/\d{4}\s*",
+            "",
+            noi_dung,
+            flags=re.IGNORECASE,
+        ).strip()
+        noi_dung = noi_dung.lstrip(" :;,-.").strip()
+        return so_ky_hieu, noi_dung
+
+    @classmethod
+    def _extract_cong_van_items_from_text(cls, narrative_text: str) -> list[CongVanItem]:
+        """Extract official document list from narrative text.
+
+        Supports Công văn/CV/Tờ trình/Báo cáo/Kế hoạch entries and protects
+        document code integrity in OCR-split cases.
+        """
+        if not narrative_text:
+            return []
+
+        joined_cv = " ".join(line for line in narrative_text.splitlines() if line.strip())
+        joined_cv = re.sub(r"\s+", " ", joined_cv).strip()
+
+        doc_type_re = r"(?:Công\s*văn|CV|Tờ\s*trình|Báo\s*cáo|Kế\s*hoạch)"
+        item_re = re.compile(
+            rf"(?P<loai>{doc_type_re})\s*(?:s(?:ố|o)\s*[:.]?\s*)?"
+            rf"(?P<so>[0-9A-Za-zĐđ][0-9A-Za-zĐđ/\-]*(?:\s+\d{{1,4}})?)\s*"
+            rf"(?P<nd>.*?)(?=(?:;\s*|,\s*|\.\s*-\s*|\.\s*|\bvà\s+)(?:{doc_type_re})\b|\d+\.\s*Công\s+tác|$)",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        cong_van: list[CongVanItem] = []
+        for m in item_re.finditer(joined_cv):
+            so_ky_hieu, noi_dung = cls._normalize_cong_van_parts(
+                m.group("so"),
+                m.group("nd"),
+            )
+            if not so_ky_hieu or not re.search(r"\d", so_ky_hieu):
+                continue
+            cong_van.append(CongVanItem(so_ky_hieu=so_ky_hieu, noi_dung=noi_dung))
+
+        return cong_van
+
     # ------------------------------------------------------------------
     # Narrative array extraction — uses a second LLM call with
     # LLMVanXuoiOutput to pull structured arrays (danh_sach_cnch,
@@ -1152,22 +1313,11 @@ class BlockExtractionPipeline:
                     elif last_status:
                         pt_hu_hong[i].tinh_trang = last_status
 
-        # ── Regex: công văn tham mưu → CongVanItem ───────────────────
-        cong_van: list[CongVanItem] = []
-        if narrative_text:
-            # Join lines so multi-line entries are captured as one
-            joined_cv = " ".join(line for line in narrative_text.splitlines() if line.strip())
-            # Split by semicolons or "Công văn" boundaries, then parse each
-            for m in re.finditer(
-                r"(?:Công văn|CV|Tờ trình)\s*(?:số\s*)?([\d/\-A-Za-z]+)(.*?)(?=;\s*(?:Công văn|CV|Tờ trình)|\d+\.\s*Công tác|$)",
-                joined_cv,
-                re.IGNORECASE | re.DOTALL,
-            ):
-                so_ky_hieu = m.group(1).strip()
-                noi_dung = m.group(2).strip().lstrip(':').strip()
-                # Strip leading date "ngày dd/m/yyyy " from noi_dung
-                noi_dung = re.sub(r"^ngày\s+\d{1,2}/\d{1,2}/\d{4}\s*", "", noi_dung).strip()
-                cong_van.append(CongVanItem(so_ky_hieu=so_ky_hieu, noi_dung=noi_dung))
+        # ── Regex: công văn/báo cáo/kế hoạch tham mưu → CongVanItem ──
+        # Restrict to section 2 to avoid picking plan references from
+        # "công tác khác" and other non-tham-mưu sections.
+        tham_muu_text = self._extract_tham_muu_block_text(narrative_text)
+        cong_van = self._extract_cong_van_items_from_text(tham_muu_text or narrative_text)
 
         # ── Regex: công tác khác → danh_sach_cong_tac_khac ──────────
         # Pattern: numbered items "1. Nội dung" or bullet items after "Công tác khác:"
@@ -1559,8 +1709,17 @@ class BlockExtractionPipeline:
                 )
                 if not phan_nghiep_vu_data.tong_xe_hu_hong and pt_hu_hong:
                     phan_nghiep_vu_data.tong_xe_hu_hong = len(pt_hu_hong)
-                if not phan_nghiep_vu_data.tong_cong_van and cong_van:
-                    phan_nghiep_vu_data.tong_cong_van = len(cong_van)
+                if cong_van:
+                    doc_counts = self._count_cong_van_types(cong_van)
+                    phan_nghiep_vu_data.tong_cong_van = doc_counts["tong_cong_van"]
+                    if doc_counts["tong_bao_cao"] > 0 or not phan_nghiep_vu_data.tong_bao_cao:
+                        phan_nghiep_vu_data.tong_bao_cao = doc_counts["tong_bao_cao"]
+                    if doc_counts["tong_ke_hoach"] > 0 or not phan_nghiep_vu_data.tong_ke_hoach:
+                        phan_nghiep_vu_data.tong_ke_hoach = doc_counts["tong_ke_hoach"]
+
+                phan_nghiep_vu_data.cong_tac_an_ninh = self._clean_cong_tac_an_ninh_text(
+                    phan_nghiep_vu_data.cong_tac_an_ninh
+                )
 
             _stt_map = {
                 str(item.stt).strip(): item.ket_qua
@@ -1659,9 +1818,17 @@ class BlockExtractionPipeline:
                 # Derive tong_xe_hu_hong from list length if LLM missed it
                 if not phan_nghiep_vu_data.tong_xe_hu_hong and pt_hu_hong:
                     phan_nghiep_vu_data.tong_xe_hu_hong = len(pt_hu_hong)
-                # Derive tong_cong_van from list length if LLM missed it
-                if not phan_nghiep_vu_data.tong_cong_van and cong_van:
-                    phan_nghiep_vu_data.tong_cong_van = len(cong_van)
+                if cong_van:
+                    doc_counts = self._count_cong_van_types(cong_van)
+                    phan_nghiep_vu_data.tong_cong_van = doc_counts["tong_cong_van"]
+                    if doc_counts["tong_bao_cao"] > 0 or not phan_nghiep_vu_data.tong_bao_cao:
+                        phan_nghiep_vu_data.tong_bao_cao = doc_counts["tong_bao_cao"]
+                    if doc_counts["tong_ke_hoach"] > 0 or not phan_nghiep_vu_data.tong_ke_hoach:
+                        phan_nghiep_vu_data.tong_ke_hoach = doc_counts["tong_ke_hoach"]
+
+                phan_nghiep_vu_data.cong_tac_an_ninh = self._clean_cong_tac_an_ninh_text(
+                    phan_nghiep_vu_data.cong_tac_an_ninh
+                )
 
             # ── Sanity-check narrative counts against the stat table ──────
             # The stat table (bang_thong_ke) is the authoritative source for

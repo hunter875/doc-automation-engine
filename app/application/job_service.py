@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -13,6 +13,8 @@ from app.core.exceptions import ProcessingError
 from app.domain.models.extraction_job import ExtractionJob, ExtractionJobStatus, EnrichmentStatus
 from app.domain.workflow import JobStatus, transition_job_state
 from app.engines.extraction.schemas import PipelineResult
+from app.application.aggregation_service import flatten_block_output
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +185,7 @@ class JobManager:
 
         if result.status == "ok" and result.output:
             model_payload = result.output.model_dump() if isinstance(result.output, BaseModel) else result.output
+            model_payload = flatten_block_output(model_payload)
             job.extracted_data = model_payload
             job.confidence_scores = {
                 "_validation_attempts": result.attempts,
@@ -440,6 +443,14 @@ class JobManager:
 
     def delete_job(self, job_id: str, tenant_id: str) -> None:
         job = self.get_job(job_id, tenant_id)
+
+        # Allow deleting stale pending jobs that are likely queue-stuck.
+        if job.status == JobStatus.PENDING:
+            pending_cutoff = datetime.utcnow() - timedelta(seconds=settings.PENDING_TIMEOUT_SECONDS)
+            if (job.updated_at or job.created_at) < pending_cutoff:
+                self.db.delete(job)
+                self.db.commit()
+                return
 
         if job.status not in JobStatus.DELETABLE:
             raise ProcessingError(

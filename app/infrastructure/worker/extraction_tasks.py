@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from billiard.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import or_, and_
 
 # Ensure celery_app is initialized so shared_task binds to correct broker
 from app.infrastructure.worker.celery_app import celery_app  # noqa: F401
@@ -226,7 +227,7 @@ def extract_document_task(self, job_id: str):
 
 @shared_task
 def cleanup_stuck_extraction_jobs():
-    """Mark extraction jobs stuck in 'processing' or 'enriching' as failed.
+    """Mark extraction jobs stuck in 'pending', 'processing' or 'enriching' as failed.
 
     Runs periodically via Celery Beat.
     """
@@ -235,16 +236,28 @@ def cleanup_stuck_extraction_jobs():
     db = SessionLocal()
 
     try:
-        cutoff = datetime.utcnow() - timedelta(minutes=settings.EXTRACTION_TIMEOUT_MINUTES)
+        now = datetime.utcnow()
+        pending_cutoff = now - timedelta(seconds=settings.PENDING_TIMEOUT_SECONDS)
+        processing_cutoff = now - timedelta(minutes=settings.EXTRACTION_TIMEOUT_MINUTES)
+        enriching_cutoff = now - timedelta(seconds=settings.ENRICHMENT_TIMEOUT_SECONDS)
 
         stuck_jobs = (
             db.query(ExtractionJob)
             .filter(
-                ExtractionJob.status.in_([
-                    ExtractionJobStatus.PROCESSING,
-                    JobStatus.ENRICHING,
-                ]),
-                ExtractionJob.updated_at < cutoff,
+                or_(
+                    and_(
+                        ExtractionJob.status == JobStatus.PENDING,
+                        ExtractionJob.updated_at < pending_cutoff,
+                    ),
+                    and_(
+                        ExtractionJob.status == ExtractionJobStatus.PROCESSING,
+                        ExtractionJob.updated_at < processing_cutoff,
+                    ),
+                    and_(
+                        ExtractionJob.status == JobStatus.ENRICHING,
+                        ExtractionJob.updated_at < enriching_cutoff,
+                    ),
+                )
             )
             .all()
         )
@@ -253,11 +266,17 @@ def cleanup_stuck_extraction_jobs():
         for job in stuck_jobs:
             logger.warning(f"[Engine2] Marking stuck job as failed: {job.id} (was {job.status})")
             try:
+                if job.status == JobStatus.PENDING:
+                    timeout_hint = f">{settings.PENDING_TIMEOUT_SECONDS}s (queue pickup timeout)"
+                elif job.status == JobStatus.ENRICHING:
+                    timeout_hint = f">{settings.ENRICHMENT_TIMEOUT_SECONDS}s"
+                else:
+                    timeout_hint = f">{settings.EXTRACTION_TIMEOUT_MINUTES}min"
                 transition_job_state(
                     db, job_id=str(job.id), to_state=JobStatus.FAILED,
-                    actor_type="beat", reason=f"stuck in {job.status} for >{settings.EXTRACTION_TIMEOUT_MINUTES}min",
+                    actor_type="beat", reason=f"stuck in {job.status} for {timeout_hint}",
                 )
-                job.error_message = f"Processing timeout (>{settings.EXTRACTION_TIMEOUT_MINUTES}min)"
+                job.error_message = f"Processing timeout ({timeout_hint})"
                 job.completed_at = datetime.utcnow()
                 fixed += 1
             except Exception as e:

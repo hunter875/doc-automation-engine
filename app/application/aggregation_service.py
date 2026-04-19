@@ -9,7 +9,7 @@ import itertools
 import logging
 import re
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -80,6 +80,17 @@ WORD_STT_MAP: dict[int, str] = {
     60: "stt_60_hl_lai_xe",
     61: "stt_61_hl_lai_tau",
 }
+
+STT_DISPLAY_LABELS: dict[int, str] = {
+    15: "Số người cứu được (=STT 16+STT 17)",
+    32: "Kiểm tra định kỳ",
+    33: "Kiểm tra đột xuất theo chuyên đề",
+    35: "Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT 36+…+STT 39)",
+    55: "Tổng số CBCS tham gia huấn luyện (=STT 56+…+STT 61)",
+    60: "Lái xe CC và CNCH",
+}
+
+WORD_STT_REVERSE_MAP: dict[str, int] = {field_name: stt for stt, field_name in WORD_STT_MAP.items()}
 
 # ---------------------------------------------------------------------------
 # Block-output → Word template field expansion helpers
@@ -426,6 +437,339 @@ def _normalize_master_payload(
     return normalized
 
 
+def _coerce_int_or_none(value: Any) -> int | None:
+    """Parse numeric-like values to int, keep missing values as None."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            return int(Decimal(str(value)))
+        except (InvalidOperation, ValueError):
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace(",", ".")
+    try:
+        return int(Decimal(text))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _derive_missing_additive_stt_fields(row: dict[str, Any]) -> None:
+    """Fill missing STT values using additive formulas from the official template."""
+    if not isinstance(row, dict):
+        return
+
+    equations: list[tuple[str, list[str]]] = [
+        ("stt_15_cnch_cuu_nguoi", ["stt_16_cnch_truc_tiep", "stt_17_cnch_tu_thoat"]),
+        ("stt_31_kiem_tra_tong", ["stt_32_kiem_tra_dinh_ky", "stt_33_kiem_tra_dot_xuat"]),
+        (
+            "stt_35_xu_phat_tong",
+            [
+                "stt_36_xu_phat_canh_cao",
+                "stt_37_xu_phat_tam_dinh_chi",
+                "stt_38_xu_phat_dinh_chi",
+                "stt_39_xu_phat_tien_mat",
+            ],
+        ),
+        (
+            "stt_55_hl_tong_cbcs",
+            [
+                "stt_56_hl_chi_huy_phong",
+                "stt_57_hl_chi_huy_doi",
+                "stt_58_hl_can_bo_tieu_doi",
+                "stt_59_hl_chien_sy",
+                "stt_60_hl_lai_xe",
+                "stt_61_hl_lai_tau",
+            ],
+        ),
+    ]
+
+    for total_key, part_keys in equations:
+        total_val = _coerce_int_or_none(row.get(total_key))
+        part_vals = [_coerce_int_or_none(row.get(k)) for k in part_keys]
+        missing_parts = [idx for idx, value in enumerate(part_vals) if value is None]
+
+        # Missing total but all parts present: total = sum(parts)
+        if total_val is None and not missing_parts:
+            row[total_key] = int(sum(part_vals))
+            continue
+
+        # Total present and exactly one missing part: derive that part.
+        if total_val is not None and len(missing_parts) == 1:
+            miss_idx = missing_parts[0]
+            known_sum = sum(v for i, v in enumerate(part_vals) if i != miss_idx and v is not None)
+            row[part_keys[miss_idx]] = max(0, int(total_val - known_sum))
+
+
+def _sync_derived_stt_fields_to_bang_thong_ke(row: dict[str, Any]) -> None:
+    """Mirror derived STT flat fields back into ``bang_thong_ke`` for UI/JSON visibility."""
+    if not isinstance(row, dict):
+        return
+
+    btk = row.get("bang_thong_ke")
+    if not isinstance(btk, list):
+        return
+
+    stt_map: dict[str, dict[str, Any]] = {}
+    for item in btk:
+        if not isinstance(item, dict):
+            continue
+        stt_key = str(item.get("stt", "")).strip()
+        if stt_key:
+            stt_map[stt_key] = item
+
+    added = False
+    for field_name, stt_num in WORD_STT_REVERSE_MAP.items():
+        value = _coerce_int_or_none(row.get(field_name))
+        if value is None:
+            continue
+
+        stt_key = str(stt_num)
+        existing = stt_map.get(stt_key)
+        if existing is not None:
+            continue
+
+        btk.append(
+            {
+                "stt": stt_key,
+                "ket_qua": int(value),
+                "noi_dung": STT_DISPLAY_LABELS.get(stt_num, f"STT {stt_key}"),
+            }
+        )
+        stt_map[stt_key] = btk[-1]
+        added = True
+
+    if added:
+        btk.sort(key=lambda item: int(str(item.get("stt", "9999")).strip()) if str(item.get("stt", "")).strip().isdigit() else 9999)
+
+
+def _clean_cong_tac_an_ninh_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"^(?:pccc|ccc)\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    return cleaned or text
+
+
+def _strip_cnch_result_labels(text: str) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return ""
+
+    patterns = [
+        r"^(?:kết\s*quả|ket\s*qua)\s*:\s*",
+        r"^(?:thiệt\s*hại|thiet\s*hai)\s*:\s*",
+    ]
+    for _ in range(3):
+        before = cleaned
+        for pattern in patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        if cleaned == before:
+            break
+
+    return cleaned.strip(" .;,:")
+
+
+def _normalize_cnch_result_text(item: dict[str, Any]) -> str:
+    candidates = [
+        item.get("ket_qua_xu_ly"),
+        item.get("mo_ta"),
+        item.get("thiet_hai"),
+    ]
+
+    for raw in candidates:
+        text = _strip_cnch_result_labels(str(raw or ""))
+        if text:
+            return re.sub(r"\s+", " ", text).strip()
+
+    return ""
+
+
+def _collect_cnch_items(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collect and de-duplicate CNCH items from all rows."""
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        items = row.get("danh_sach_cnch")
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            signature = (
+                str(item.get("thoi_gian") or "").strip(),
+                str(item.get("ngay_xay_ra") or "").strip(),
+                str(item.get("dia_diem") or "").strip(),
+                str(item.get("noi_dung_tin_bao") or "").strip(),
+            )
+            if not any(signature):
+                continue
+            if signature in seen:
+                continue
+
+            seen.add(signature)
+            merged.append(dict(item))
+
+    return merged
+
+
+def _collect_cong_van_items(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        items = row.get("danh_sach_cong_van_tham_muu")
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            signature = (
+                str(item.get("so_ky_hieu") or "").strip(),
+                str(item.get("noi_dung") or "").strip(),
+            )
+            if not any(signature):
+                continue
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(dict(item))
+
+    return merged
+
+
+def _collect_cong_tac_khac_items(rows: list[dict[str, Any]]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        items = row.get("danh_sach_cong_tac_khac")
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if text in seen:
+                continue
+            seen.add(text)
+            merged.append(text)
+
+    return merged
+
+
+def _sum_row_int_field(rows: list[dict[str, Any]], field_name: str) -> int:
+    total = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = _coerce_int_or_none(row.get(field_name))
+        if value is not None:
+            total += value
+    return total
+
+
+def _is_empty_cnch_detail(text: Any) -> bool:
+    raw = str(text or "").strip().lower()
+    if not raw:
+        return True
+
+    return "cứu nạn, cứu hộ: không" in raw
+
+
+def _build_cnch_detail_from_items(items: list[dict[str, Any]]) -> str:
+    count = len(items)
+    lines = [f"3. Tình hình công tác cứu nạn, cứu hộ: Trong kỳ xảy ra {count} vụ."]
+
+    for idx, item in enumerate(items, start=1):
+        thoi_gian = str(item.get("thoi_gian") or "").strip()
+        noi_dung = str(item.get("noi_dung_tin_bao") or "").strip()
+        dia_diem = str(item.get("dia_diem") or "").strip()
+        result_text = _normalize_cnch_result_text(item)
+
+        parts = [f"3.{idx}."]
+        if thoi_gian:
+            parts.append(f"Vào lúc {thoi_gian}")
+        if noi_dung:
+            parts.append(f"nhận tin báo {noi_dung}")
+        if dia_diem:
+            parts.append(f"tại {dia_diem}")
+
+        sentence = " ".join(parts).strip()
+        if not sentence.endswith("."):
+            sentence += "."
+        if result_text:
+            sentence += f" Kết quả: {result_text}."
+
+        lines.append(sentence)
+
+    return "\n".join(lines)
+
+
+def _extract_dates_from_text(raw: Any) -> list[date]:
+    """Extract DD/MM/YYYY-like dates from a text value."""
+    text = str(raw or "").strip()
+    if not text:
+        return []
+
+    dates: list[date] = []
+    for day_s, month_s, year_s in re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", text):
+        try:
+            dates.append(date(int(year_s), int(month_s), int(day_s)))
+        except ValueError:
+            continue
+    return dates
+
+
+def _derive_reporting_window_from_rows(rows: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """Build [tu_ngay, den_ngay] from all source rows for multi-day aggregation."""
+    period_end_dates: list[date] = []
+    report_dates: list[date] = []
+    fallback_dates: list[date] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        header = row.get("header") if isinstance(row.get("header"), dict) else {}
+
+        # For daily chain reports, den_ngay usually represents each report day.
+        period_end_dates.extend(_extract_dates_from_text(row.get("den_ngay")))
+
+        # Prefer explicit report dates from each row.
+        report_dates.extend(_extract_dates_from_text(row.get("ngay_bao_cao")))
+        report_dates.extend(_extract_dates_from_text(header.get("ngay_bao_cao")))
+
+        # Fallback: parse any dates from interval text.
+        fallback_dates.extend(_extract_dates_from_text(row.get("thoi_gian_tu_den")))
+        fallback_dates.extend(_extract_dates_from_text(header.get("thoi_gian_tu_den")))
+
+    source = period_end_dates or report_dates or fallback_dates
+    if not source:
+        return None
+
+    start = min(source)
+    end = max(source)
+    return (f"{start.day:02d}/{start.month:02d}/{start.year:04d}", f"{end.day:02d}/{end.month:02d}/{end.year:04d}")
+
+
 class AggregationService:
     """Pandas-based aggregation engine."""
 
@@ -523,9 +867,14 @@ class AggregationService:
             # Strip reviewed_data that is just the failed-job placeholder
             if isinstance(job.reviewed_data, dict) and set(job.reviewed_data.keys()) <= _placeholder_keys:
                 fd = job.extracted_data
-            row = fd
-            if row:
+            row = dict(fd) if isinstance(fd, dict) else fd
+            if isinstance(row, dict):
                 row = flatten_block_output(row)
+                _derive_missing_additive_stt_fields(row)
+                _sync_derived_stt_fields_to_bang_thong_ke(row)
+                if "cong_tac_an_ninh" in row:
+                    row["cong_tac_an_ninh"] = _clean_cong_tac_an_ninh_text(row.get("cong_tac_an_ninh"))
+            if row:
                 data_rows.append(row)
             # Record which data source was used for this job
             if job.reviewed_data and not (
@@ -679,6 +1028,71 @@ class AggregationService:
                 if k not in summary_record and k not in rule_outputs:
                     if not isinstance(v, dict) or k in _passthrough_dicts:
                         summary_record[k] = v
+
+            # For multi-row reports, use the full reporting window instead of
+            # blindly inheriting the last row's interval.
+            if len(data_rows) > 1:
+                window = _derive_reporting_window_from_rows(data_rows)
+                if window is not None:
+                    tu_ngay, den_ngay = window
+                    interval = f"Từ ngày {tu_ngay} đến ngày {den_ngay}"
+
+                    # Keep top-level convenience fields aligned with the
+                    # multi-row reporting window instead of LAST-row values.
+                    aggregated_data["tu_ngay"] = tu_ngay
+                    aggregated_data["den_ngay"] = den_ngay
+                    aggregated_data["thoi_gian_tu_den"] = interval
+
+                    summary_record["tu_ngay"] = tu_ngay
+                    summary_record["den_ngay"] = den_ngay
+                    summary_record["thoi_gian_tu_den"] = interval
+
+                    header = summary_record.get("header")
+                    if isinstance(header, dict):
+                        patched_header = dict(header)
+                        patched_header["thoi_gian_tu_den"] = interval
+                        summary_record["header"] = patched_header
+
+                # Merge CNCH details across rows so multi-day summaries do not
+                # silently inherit an empty "Khong" text from the last row.
+                merged_cnch = _collect_cnch_items(data_rows)
+                if merged_cnch:
+                    summary_record["danh_sach_cnch"] = merged_cnch
+                    aggregated_data["danh_sach_cnch"] = merged_cnch
+
+                    if _is_empty_cnch_detail(summary_record.get("chi_tiet_cnch")):
+                        detail_text = _build_cnch_detail_from_items(merged_cnch)
+                        summary_record["chi_tiet_cnch"] = detail_text
+                        aggregated_data["chi_tiet_cnch"] = detail_text
+
+                        nghiep_vu = summary_record.get("phan_I_va_II_chi_tiet_nghiep_vu")
+                        if isinstance(nghiep_vu, dict):
+                            patched_nghiep_vu = dict(nghiep_vu)
+                            patched_nghiep_vu["chi_tiet_cnch"] = detail_text
+                            summary_record["phan_I_va_II_chi_tiet_nghiep_vu"] = patched_nghiep_vu
+
+                merged_cong_van = _collect_cong_van_items(data_rows)
+                merged_cong_tac_khac = _collect_cong_tac_khac_items(data_rows)
+                summary_record["danh_sach_cong_van_tham_muu"] = merged_cong_van
+                aggregated_data["danh_sach_cong_van_tham_muu"] = merged_cong_van
+                summary_record["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
+                aggregated_data["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
+
+                for counter_field in ("tong_cong_van", "tong_bao_cao", "tong_ke_hoach"):
+                    summed = _sum_row_int_field(data_rows, counter_field)
+                    summary_record[counter_field] = summed
+                    aggregated_data[counter_field] = summed
+
+            cleaned_an_ninh = _clean_cong_tac_an_ninh_text(summary_record.get("cong_tac_an_ninh"))
+            if cleaned_an_ninh:
+                summary_record["cong_tac_an_ninh"] = cleaned_an_ninh
+                aggregated_data["cong_tac_an_ninh"] = cleaned_an_ninh
+
+                nghiep_vu = summary_record.get("phan_I_va_II_chi_tiet_nghiep_vu")
+                if isinstance(nghiep_vu, dict):
+                    patched_nghiep_vu = dict(nghiep_vu)
+                    patched_nghiep_vu["cong_tac_an_ninh"] = cleaned_an_ninh
+                    summary_record["phan_I_va_II_chi_tiet_nghiep_vu"] = patched_nghiep_vu
 
         # 7.25. Force a docxtpl-safe master payload shape from schema_definition.
         # Arrays must always exist as [], and top-level static fields stay flat.

@@ -26,6 +26,7 @@ from app.infrastructure.db.session import SessionLocal
 from app.domain.models.extraction_job import ExtractionJob, EnrichmentStatus
 from app.domain.workflow import JobStatus, transition_job_state
 from app.core.exceptions import ProcessingError
+from app.core.config import settings
 
 # Import models so SQLAlchemy mapper is fully configured
 from app.domain.models.document import Document  # noqa: F401
@@ -35,6 +36,10 @@ from app.domain.models.user import User  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+_ENRICH_SOFT_LIMIT_SECONDS = max(10, int(settings.ENRICHMENT_TIMEOUT_SECONDS))
+_ENRICH_HARD_LIMIT_SECONDS = _ENRICH_SOFT_LIMIT_SECONDS + 10
+
+
 @shared_task(
     bind=True,
     max_retries=3,
@@ -42,8 +47,8 @@ logger = logging.getLogger(__name__)
     retry_backoff=True,
     retry_backoff_max=300,
     retry_jitter=True,
-    soft_time_limit=180,
-    time_limit=240,
+    soft_time_limit=_ENRICH_SOFT_LIMIT_SECONDS,
+    time_limit=_ENRICH_HARD_LIMIT_SECONDS,
     queue="enrichment",
 )
 def enrich_job_task(self, job_id: str) -> dict:
@@ -163,7 +168,9 @@ def enrich_job_task(self, job_id: str) -> dict:
             job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
             if job:
                 job.enrichment_status = EnrichmentStatus.FAILED
-                job.enrichment_error = "Enrichment task timed out (soft_time_limit=180s)"
+                job.enrichment_error = (
+                    f"Enrichment task timed out (soft_time_limit={_ENRICH_SOFT_LIMIT_SECONDS}s)"
+                )
                 job.enrichment_completed_at = datetime.utcnow()
                 # ENRICHING → READY_FOR_REVIEW (even on timeout, job is usable via Stage-1)
                 try:

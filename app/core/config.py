@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     EXTRACTION_MAX_RETRIES: int = 3
     EXTRACTION_TIMEOUT_MINUTES: int = 30
     EXTRACTION_BATCH_MAX_FILES: int = 20
+    PENDING_TIMEOUT_SECONDS: int = 300
+    ENRICHMENT_TIMEOUT_SECONDS: int = 300
+    STUCK_JOB_CLEANUP_POLL_SECONDS: int = 30
 
     # Confidence thresholds (for UI rendering)
     CONFIDENCE_HIGH: float = 0.85

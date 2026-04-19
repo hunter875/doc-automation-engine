@@ -1,0 +1,44 @@
+{
+  "header": {
+    "so_bao_cao": "201/BC-KV30",
+    "ngay_bao_cao": "01/04/2026",
+    "don_vi_bao_cao": "\u0110\u1ed8I CC&CNCH KHU V\u1ef0C 30",
+    "thoi_gian_tu_den": "T\u1eeb 07 h 30\u2019 ng\u00e0y 31/3/2026 \u0111\u1ebfn 07 h 30\u2019 ng\u00e0y 01/4/2026)"
+  },
+  "sizes": {
+    "bang_thong_ke": 60,
+    "danh_sach_cnch": 2,
+    "danh_sach_phuong_tien_hu_hong": 4,
+    "danh_sach_cong_van_tham_muu": 0,
+    "danh_sach_cong_tac_khac": 1
+  },
+  "key_metrics": {
+    "stt_14": 0,
+    "stt_15": 0,
+    "stt_16": 0,
+    "stt_17": 0,
+    "stt_31": 10,
+    "stt_32": 9,
+    "stt_33": 1,
+    "stt_35": 1,
+    "stt_36": 0,
+    "stt_37": 0,
+    "stt_38": 0,
+    "stt_39": 1,
+    "stt_55": 27,
+    "stt_56": 0,
+    "stt_57": 1,
+    "stt_58": 4,
+    "stt_59": 18,
+    "stt_60": 4,
+    "stt_61": 0,
+    "tong_so_vu_chay": 0,
+    "tong_so_vu_no": 0,
+    "tong_so_vu_cnch": 0,
+    "tong_cong_van": 0,
+    "tong_bao_cao": 0,
+    "tong_ke_hoach": 0,
+    "tong_xe_hu_hong": 4,
+    "cong_tac_an_ninh": "Kh\u00f4ng"
+  }
+}
