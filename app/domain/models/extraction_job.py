@@ -6,11 +6,13 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -295,3 +297,37 @@ class AggregationReport(Base):
 
     def __repr__(self) -> str:
         return f"<AggregationReport {self.name} ({self.status})>"
+
+
+class WeeklyReport(Base):
+    """Weekly report payload generated from daily business report dates."""
+
+    __tablename__ = "weekly_reports"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "week_start", name="uq_weekly_reports_tenant_week_start"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    week_start = Column(Date, nullable=False, index=True)
+    week_end = Column(Date, nullable=False, index=True)
+    generated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    report_payload = Column(JSONB, nullable=False, default=dict)
+    sources_used = Column(JSONB, nullable=False, default=list)
+
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    tenant = relationship("Tenant", backref="weekly_reports")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        return f"<WeeklyReport tenant={self.tenant_id} week_start={self.week_start}>"

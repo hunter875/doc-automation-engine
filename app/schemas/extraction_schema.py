@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -382,3 +382,64 @@ class AggregateListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+class DailyReportRequest(BaseModel):
+    """Request: generate a daily report from extraction jobs."""
+
+    template_id: uuid.UUID
+    report_date: date
+    report_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: str = Field(default="approved", pattern=r"^(approved)$")
+
+
+class DailyReportResponse(BaseModel):
+    """Response: daily report generation result."""
+
+    status: str
+    report_date: date
+    report_id: Optional[uuid.UUID] = None
+    report_name: str
+    jobs_total: int
+    jobs_selected: int
+    duplicates_skipped: int
+    partial_rows: int
+    row_status_counts: dict[str, int] = Field(default_factory=dict)
+    output_s3_key: Optional[str] = None
+
+
+# ──────────────────────────────────────────────
+# Deterministic Sheet Ingestion Schemas
+# ──────────────────────────────────────────────
+
+class GoogleSheetIngestionRequest(BaseModel):
+    """Request payload for deterministic Google Sheet ingestion."""
+
+    template_id: uuid.UUID
+    sheet_id: str = Field(..., min_length=1, max_length=200)
+    worksheet: str = Field(..., min_length=1, max_length=200)
+    schema_path: str = Field(..., min_length=1, max_length=500)
+    source_document_id: Optional[uuid.UUID] = None
+    range_a1: Optional[str] = Field(None, max_length=200)
+
+
+class IngestionRowError(BaseModel):
+    row_index: int
+    status: str | None = None
+    errors: list[str]
+    row: dict[str, Any]
+
+
+class GoogleSheetIngestionSummary(BaseModel):
+    status: str
+    sheet_id: str
+    worksheet: str
+    rows_processed: int
+    rows_failed: int
+    rows_inserted: int
+    rows_skipped_idempotent: int
+    schema_match_rate: float
+    validation_error_rate: float
+    errors: list[IngestionRowError] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)

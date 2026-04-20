@@ -24,8 +24,11 @@ from app.schemas.extraction_schema import (
     AggregateListResponse,
     AggregateRequest,
     AggregateResponse,
+    DailyReportRequest,
+    DailyReportResponse,
 )
 from app.application.aggregation_service import AggregationService, ExportService, build_word_export_context
+from app.application.daily_report_service import DailyReportService
 from app.application.template_service import TemplateManager
 
 router = APIRouter()
@@ -37,6 +40,29 @@ def _build_content_disposition(filename: str) -> str:
     ascii_name = re.sub(r"[^\w\s\-.]", "", ascii_name).strip() or "report"
     utf8_quoted_name = quote(raw_name)
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_quoted_name}"
+
+
+@router.post(
+    "/reports/daily",
+    response_model=DailyReportResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate daily report and export DOCX",
+)
+def generate_daily_report(
+    body: DailyReportRequest,
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+    role: Annotated[None, Depends(require_admin)],
+    db: Session = Depends(get_db),
+):
+    return DailyReportService(db).generate_daily_report(
+        tenant_id=ctx.tenant_id,
+        user_id=str(ctx.user.id),
+        template_id=str(body.template_id),
+        report_date=body.report_date,
+        report_name=body.report_name,
+        description=body.description,
+        status=body.status,
+    )
 
 
 @router.post(

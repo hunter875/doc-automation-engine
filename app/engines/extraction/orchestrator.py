@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Callable
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.core.exceptions import ProcessingError
 from app.domain.models.document import Document
 from app.application.doc_service import s3_client
 from app.engines.extraction.block_pipeline import BlockExtractionPipeline
+from app.engines.extraction.sheet_pipeline import SheetExtractionPipeline
 from app.application.job_service import JobManager
 
 logger = logging.getLogger(__name__)
@@ -39,29 +40,46 @@ class ExtractionOrchestrator:
             temperature=0.0,
         )
 
-    def run(self, job_id: str, progress_callback: Callable[[str, str], None] | None = None):
+    def run_sheet_pipeline(self, sheet_data: dict[str, Any] | None = None):
+        pipeline = SheetExtractionPipeline()
+        return pipeline.run(sheet_data or {})
+
+    def run(
+        self,
+        job_id: str,
+        progress_callback: Callable[[str, str], None] | None = None,
+        *,
+        input_type: str = "pdf",
+        source_type: str | None = None,
+        sheet_data: dict[str, Any] | None = None,
+    ):
         """Execute extraction for one job_id and persist final status/result."""
         self.current_job_id = str(job_id)
         self.progress_callback = progress_callback
         job = self.job_manager.get_job_for_processing(job_id)
-        self.job_manager.set_processing(job, parser_used="pdfplumber")
+        effective_source_type = (source_type or input_type or "pdf").strip().lower()
+        parser_used = "sheet" if effective_source_type == "sheet" else "pdfplumber"
+        self.job_manager.set_processing(job, parser_used=parser_used)
 
         try:
-            document = self.db.query(Document).filter(Document.id == job.document_id).first()
-            if not document:
-                raise ProcessingError(message="Document not found")
-
-            logger.info("Downloading document %s from S3", document.s3_key)
-            response = s3_client.get_object(
-                Bucket=settings.S3_BUCKET_NAME,
-                Key=document.s3_key,
-            )
-            file_bytes = response["Body"].read()
-
             started_at = datetime.utcnow()
-            pipeline = self._build_default_pipeline()
+            if effective_source_type == "sheet":
+                result = self.run_sheet_pipeline(sheet_data)
+            else:
+                document = self.db.query(Document).filter(Document.id == job.document_id).first()
+                if not document:
+                    raise ProcessingError(message="Document not found")
 
-            result = pipeline.run_stage1_from_bytes(file_bytes, document.file_name)
+                logger.info("Downloading document %s from S3", document.s3_key)
+                response = s3_client.get_object(
+                    Bucket=settings.S3_BUCKET_NAME,
+                    Key=document.s3_key,
+                )
+                file_bytes = response["Body"].read()
+
+                pipeline = self._build_default_pipeline()
+                result = pipeline.run_stage1_from_bytes(file_bytes, document.file_name)
+
             elapsed_ms = int((datetime.utcnow() - started_at).total_seconds() * 1000)
 
             saved_job = self.job_manager.persist_stage1_result(
