@@ -6,6 +6,12 @@ The Google Sheets → Canonical JSON pipeline solves one specific problem:
 - Persist those records into `extraction_jobs` with idempotency (`row_hash`).
 - Transform sheet-shaped payloads into the canonical contract `BlockExtractionOutput` when sheet extraction is executed.
 
+**Integration with Engine 2:** Sheet pipeline is a first-class extraction mode alongside PDF Block mode. Both share:
+- Same database (`extraction_jobs` table)
+- Same canonical output (`BlockExtractionOutput`)
+- Same aggregation pipeline (sheet jobs and PDF jobs can aggregate together)
+- Different `parser_used` marker: `"google_sheets"` vs `"pdfplumber"`
+
 This pipeline is implemented in code under:
 
 - `app/engines/extraction/sheet_ingestion_service.py`
@@ -55,26 +61,45 @@ Execution inside handler:
 
 There are two distinct runtime paths in the implementation:
 
-- Ingestion path (`GoogleSheetIngestionService`) writes rows into `extraction_jobs`.
-- Extraction path (`SheetExtractionPipeline`) converts provided `sheet_data` into canonical `BlockExtractionOutput`.
+- **Ingestion path** (`GoogleSheetIngestionService`) writes rows into `extraction_jobs`.
+- **Extraction path** (`SheetExtractionPipeline`) converts provided `sheet_data` into canonical `BlockExtractionOutput`.
 
-The implemented execution path is:
+The **complete end-to-end flow** is:
 
-`Google Sheets`
-`→ GoogleSheetsSource.fetch_values()`
-`→ header_detector.detect_header_row()`
-`→ mapper.map_row_to_document_data()`
-`→ row_validator.validate_row()`
-`→ JobWriter.write_row()`
+```
+HTTP POST /jobs/ingest/google-sheet
+    ↓
+GoogleSheetIngestionService.ingest()
+    ↓
+GoogleSheetsSource.fetch_values()
+    ↓
+detect_header_row()
+    ↓
+FOR EACH ROW:
+    map_row_to_document_data()
+    validate_row()
+    build_row_hash()
+    writer.is_duplicate()
+    writer.write_row() → extraction_jobs row với parser_used="google_sheets"
+    ↓
+Return ingestion summary
 
-Canonical mapping path (sheet extraction path) is:
+[Async: Celery extract_document_task picks up job]
+    ↓
+ExtractionOrchestrator.run(job_id, source_type="sheet", sheet_data=job.extracted_data)
+    ↓
+run_sheet_pipeline(sheet_data)
+    ↓
+SheetExtractionPipeline.run()
+    ↓
+normalize() + map_to_schema()
+    ↓
+BlockExtractionOutput (canonical)
+    ↓
+persist_stage1_result() → job.extracted_data = canonical JSON, status=EXTRACTED
+```
 
-`sheet_data`
-`→ SheetExtractionPipeline.normalize()`
-`→ SheetExtractionPipeline.map_to_schema()`
-`→ BlockExtractionOutput`
-
-## Code-level sequence
+**Code-level sequence**
 
 ### Ingestion sequence (`GoogleSheetIngestionService.ingest`)
 
@@ -92,7 +117,7 @@ File: `app/engines/extraction/sheet_ingestion_service.py`
    - `writer.write_row(...)` if valid/non-duplicate
 6. Return ingestion summary with row status counts and metrics.
 
-### Canonical contract sequence (`SheetExtractionPipeline.run`)
+### Canonical mapping sequence (`SheetExtractionPipeline.run`)
 
 File: `app/engines/extraction/sheet_pipeline.py`
 
@@ -109,10 +134,217 @@ File: `app/engines/extraction/orchestrator.py`
 - `ExtractionOrchestrator.run(..., source_type="sheet" | input_type="sheet")`
 - Calls `self.run_sheet_pipeline(sheet_data)`
 - `run_sheet_pipeline` instantiates `SheetExtractionPipeline` and calls `pipeline.run(...)`.
+- Then `job_manager.persist_stage1_result()` lưu canonical output vào `job.extracted_data`.
+
+**CRITICAL FIX (v4.1+):** `extract_document_task` MUST pass `source_type="sheet"` và `sheet_data=job.extracted_data` khi `job.parser_used == "google_sheets"`. See Bug #1-2 in analysis.
 
 ---
 
 # 4. Components Implemented
+
+## 4.1 `GoogleSheetIngestionService`
+
+- File: `app/engines/extraction/sheet_ingestion_service.py`
+- Input:
+  - `IngestionRequest`
+  - DB session
+- Output:
+  - Ingestion summary dict (`rows_processed`, `rows_failed`, `rows_inserted`, `errors`, `metrics`, etc.)
+- Responsibility:
+  - Orchestrate end-to-end row ingestion.
+  - Apply schema loading, fetch, header detection, mapping, validation, idempotent writing.
+- MUST NOT do:
+  - Must not call any LLM.
+  - Must not perform template rendering.
+  - Must not trigger extraction pipeline (that's Celery's job).
+
+## 4.2 `GoogleSheetsSource`
+
+- File: `app/engines/extraction/sources/sheets_source.py`
+- Input:
+  - `SheetsFetchConfig(sheet_id, worksheet, range_a1, max_retries, retry_backoff_seconds)`
+- Output:
+  - `list[list[str]]` raw rows from Google Sheets API
+- Responsibility:
+  - Build Google Sheets client credentials.
+  - Fetch rows with retry.
+- MUST NOT do:
+  - Must not map business fields.
+  - Must not validate schema.
+- **TODO:** Add `request_timeout` to prevent indefinite hangs (Bug #5).
+
+## 4.3 `header_detector`
+
+- File: `app/engines/extraction/mapping/header_detector.py`
+- Function:
+  - `detect_header_row(rows, known_aliases, scan_limit=15)`
+- Input:
+  - Raw rows + known aliases
+- Output:
+  - `(header_index, header_columns)`
+- Responsibility:
+  - Select header row by maximum alias overlap in top rows.
+  - Score: count how many columns match known aliases (normalized lowercased).
+- MUST NOT do:
+  - Must not convert field values.
+  - Must not write DB records.
+- **WARNING:** `scan_limit=15` may miss header if it's on line 16+ (Bug #11). Consider increasing to 30.
+
+## 4.4 `mapper`
+
+- File: `app/engines/extraction/mapping/mapper.py`
+- Function:
+  - `map_row_to_document_data(row, schema)`
+- Input:
+  - One row dict + `IngestionSchema`
+- Output:
+  - `(normalized_data, matched_fields, total_fields, missing_required)`
+- Responsibility:
+  - Match aliases to schema fields (case-insensitive unicode normalized).
+  - Normalize values via `normalize_field_value`.
+- MUST NOT do:
+  - Must not persist to DB.
+  - Must not decide duplicate status.
+
+## 4.5 `row_validator`
+
+- File: `app/engines/extraction/validation/row_validator.py`
+- Functions:
+  - `build_validation_model(schema)`
+  - `validate_row(...)`
+- Input:
+  - Schema + normalized row + coverage stats
+- Output:
+  - `RowValidationResult(is_valid, normalized_data, errors, confidence)`
+- Responsibility:
+  - Runtime type/required validation using generated Pydantic model.
+  - Produce deterministic confidence metrics (60% schema_match + 40% validation_ok).
+- MUST NOT do:
+  - Must not fetch from Google Sheets.
+  - Must not write jobs.
+
+## 4.6 `JobWriter`
+
+- File: `app/engines/extraction/sheet_job_writer.py`
+- Input:
+  - `row_document`, `confidence`, `source_references`
+- Output:
+  - `(created: bool, job_id: str | None)`
+- Responsibility:
+  - Idempotency by `row_hash`.
+  - Create job and write `extracted_data`, `confidence_scores`, `source_references`.
+  - Apply workflow transitions (`PROCESSING` → `EXTRACTED` → `READY_FOR_REVIEW`).
+- MUST NOT do:
+  - Must not do schema mapping.
+  - Must not compute canonical block contract.
+- **CRITICAL BUGS:**
+  - **Bug #3:** `_load_existing_row_hashes()` loads ALL jobs into memory (no DB filter by sheet_id/worksheet). Fix: add JSONB filters.
+  - **Bug #4:** Race condition on duplicate check (in-memory set not atomic). Fix: add unique index on `(source_references->>'row_hash')`.
+  - **Bug #9:** No transaction rollback on batch failure (each row commits individually). Fix: batch-level transaction.
+
+## 4.7 `SheetExtractionPipeline`
+
+- File: `app/engines/extraction/sheet_pipeline.py`
+- Input:
+  - `sheet_data: dict[str, Any] | None` — raw row document from `job.extracted_data`
+- Output:
+  - `PipelineResult` containing `BlockExtractionOutput` on success
+- Responsibility:
+  - Normalize sheet payload shape (support nested `data`, flat, etc.)
+  - Map payload to canonical `BlockExtractionOutput` using aliases from `sheet_mapping.yaml`.
+  - Inject computed STT rows (32, 33, 51, 22-25)
+  - Enforce strict contract check via `_assert_contract_or_raise()`.
+- MUST NOT do:
+  - Must not call Google Sheets API.
+  - Must not write to DB.
+- **NOTE:** This pipeline is called by `ExtractionOrchestrator` when `source_type="sheet"`.
+
+---
+
+# 5. Canonical Output
+
+Canonical output model is `BlockExtractionOutput` (file: `app/engines/extraction/schemas.py`):
+
+- `header: BlockHeader`
+  - `so_bao_cao`
+  - `ngay_bao_cao`
+  - `thoi_gian_tu_den`
+  - `don_vi_bao_cao`
+- `phan_I_va_II_chi_tiet_nghiep_vu: BlockNghiepVu`
+  - includes totals such as `tong_so_vu_chay`, `tong_so_vu_no`, `tong_so_vu_cnch`, etc.
+- `bang_thong_ke: list[ChiTieu]`
+  - each item: `stt`, `noi_dung`, `ket_qua`
+- `danh_sach_cnch: list[CNCHItem]`
+- `danh_sach_phuong_tien_hu_hong: list[PhuongTienHuHongItem]`
+- `danh_sach_cong_van_tham_muu: list[CongVanItem]`
+- `danh_sach_cong_tac_khac: list[str]`
+- `danh_sach_chi_vien: list[ChiVienItem]` (from Excel CHI VIỆN sheet)
+- `danh_sach_chay: list[VuChayItem]` (from Excel VỤ CHÁY sheet)
+- `tuyen_truyen_online: TuyenTruyenOnline` (online metrics)
+
+## Example canonical JSON
+
+```json
+{
+  "header": {
+    "so_bao_cao": "02/BC-TEST",
+    "ngay_bao_cao": "20/04/2026",
+    "thoi_gian_tu_den": "01/04/2026 - 20/04/2026",
+    "don_vi_bao_cao": "Đội CNCH Test"
+  },
+  "phan_I_va_II_chi_tiet_nghiep_vu": {
+    "tong_so_vu_chay": 0,
+    "tong_so_vu_no": 0,
+    "tong_so_vu_cnch": 3,
+    "chi_tiet_cnch": "",
+    "quan_so_truc": 0,
+    "tong_chi_vien": 0,
+    "tong_cong_van": 0,
+    "tong_bao_cao": 0,
+    "tong_ke_hoach": 0,
+    "cong_tac_an_ninh": "",
+    "tong_xe_hu_hong": 0,
+    "tong_tin_bai": 0,
+    "tong_hinh_anh": 0,
+    "so_lan_cai_app_114": 0
+  },
+  "bang_thong_ke": [
+    {
+      "stt": "14",
+      "noi_dung": "Tổng số vụ CNCH",
+      "ket_qua": 3
+    }
+  ],
+  "danh_sach_cnch": [
+    {
+      "stt": 1,
+      "ngay_xay_ra": "20/04/2026",
+      "thoi_gian": "09:30",
+      "dia_diem": "Phường 1",
+      "noi_dung_tin_bao": "Cứu nạn giao thông",
+      "luc_luong_tham_gia": "",
+      "ket_qua_xu_ly": "",
+      "thiet_hai": "0",
+      "thong_tin_nan_nhan": "2",
+      "mo_ta": ""
+    }
+  ],
+  "danh_sach_phuong_tien_hu_hong": [],
+  "danh_sach_cong_van_tham_muu": [],
+  "danh_sach_cong_tac_khac": [],
+  "danh_sach_chi_vien": [],
+  "danh_sach_chay": [],
+  "tuyen_truyen_online": {
+    "so_tin_bai": 0,
+    "so_hinh_anh": 0,
+    "so_lan_cai_app_114": 0
+  }
+}
+```
+
+---
+
+# 6. Mapping Logic
 
 ## 4.1 `GoogleSheetIngestionService`
 

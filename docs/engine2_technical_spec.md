@@ -46,18 +46,19 @@ Engine 2 là hệ thống **bóc tách dữ liệu có cấu trúc** từ tài l
 |---|---|---|
 | 1 | **Hybrid extraction mặc định** | Chạy `HybridExtractionPipeline` (pdfplumber + normalize + Ollama + rule validation) từ bytes in-memory |
 | 2 | **Block mode two-stage (v4)** | Stage 1 = deterministic (không LLM), Stage 2 = LLM enrichment async độc lập. Document dùng được ngay sau Stage 1 kể cả khi Ollama tắt |
-| 3 | **Template-driven** | Định nghĩa schema JSON → AI bóc tách đúng format |
-| 4 | **YAML Template System** | Tất cả regex/pattern/threshold được gửi ngoài vào file YAML (`app/templates/pccc.yaml`), không còn hardcode |
-| 5 | **Dynamic Column Detection** | Tự động phát hiện cột STT/Nội dung/Kết quả trong bảng thống kê thay vì giả định cố định |
-| 6 | **Validation Layer** | Ép kiểu, chuẩn hóa ngày, phát hiện lỗi TRƯỚC khi lưu DB |
-| 7 | **Human-in-the-loop** | Review (approve/reject/edit) trước khi aggregate |
-| 8 | **Aggregation** | SUM, AVG, COUNT, CONCAT → gom N báo cáo thành 1 |
-| 9 | **Word Export** | Nhồi dữ liệu vào template Word bằng Jinja2 (docxtpl) |
-| 10 | **Word Scanner** | Quét file Word mẫu → auto-generate schema |
-| 11 | **Batch processing (Celery)** | Upload N file cùng lúc (max 20) → N Celery tasks phân tán |
-| 12 | **Batch parallel (in-process)** | `run_batch()` chạy block pipeline song song với `ThreadPoolExecutor` + backpressure |
-| 13 | **Observability Metrics** | `PipelineMetrics` (per-run counters/timers) + `GlobalMetrics` (thread-safe aggregator) + API endpoint |
-| 14 | **Multi-tenant** | Cách ly hoàn toàn theo `tenant_id` |
+| 3 | **Sheet mode (v4)** | Deterministic extraction từ Google Sheets hoặc Excel. Không LLM, trả về canonical `BlockExtractionOutput`. Dùng chung pipeline và aggregation với PDF |
+| 4 | **Template-driven** | Định nghĩa schema JSON → AI bóc tách đúng format |
+| 5 | **YAML Template System** | Tất cả regex/pattern/threshold được gửi ngoài vào file YAML (`app/templates/pccc.yaml`), không còn hardcode |
+| 6 | **Dynamic Column Detection** | Tự động phát hiện cột STT/Nội dung/Kết quả trong bảng thống kê thay vì giả định cố định |
+| 7 | **Validation Layer** | Ép kiểu, chuẩn hóa ngày, phát hiện lỗi TRƯỚC khi lưu DB |
+| 8 | **Human-in-the-loop** | Review (approve/reject/edit) trước khi aggregate |
+| 9 | **Aggregation** | SUM, AVG, COUNT, CONCAT → gom N báo cáo thành 1 |
+| 10 | **Word Export** | Nhồi dữ liệu vào template Word bằng Jinja2 (docxtpl) |
+| 11 | **Word Scanner** | Quét file Word mẫu → auto-generate schema |
+| 12 | **Batch processing (Celery)** | Upload N file cùng lúc (max 20) → N Celery tasks phân tán |
+| 13 | **Batch parallel (in-process)** | `run_batch()` chạy block pipeline song song với `ThreadPoolExecutor` + backpressure |
+| 14 | **Observability Metrics** | `PipelineMetrics` (per-run counters/timers) + `GlobalMetrics` (thread-safe aggregator) + API endpoint |
+| 15 | **Multi-tenant** | Cách ly hoàn toàn theo `tenant_id` |
 
 ---
 
@@ -285,7 +286,117 @@ WHERE extracted_data @> '{"so_vu": 5}'::jsonb;
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.3 Stage 1 — Deterministic Extraction
+### 5.3 Sheet Mode — Deterministic Spreadsheet Extraction
+
+> **Sheet mode** là chế độ extraction độc lập, không dùng LLM, không dùng PDF. Nó xử lý **Google Sheets API** và **Excel files** (KV30 format) và trả về chính xác `BlockExtractionOutput` như Block mode.
+
+**Entry point:** `ExtractionOrchestrator.run_sheet_pipeline(sheet_data)`  
+**File:** `app/engines/extraction/sheet_pipeline.py`
+
+**Tại sao sheet mode tồn tại riêng?**
+- Input format khác biệt hoàn toàn: structured rows (spreadsheet) vs unstructured PDF
+- Không cần layout reconstruction, block detection
+- Field mapping và normalization là chính
+- Không bao giờ cần LLM enrichment (deterministic 100%)
+
+**Kiến trúc:**
+
+```
+Google Sheets API / Excel File
+         ↓
+    SheetExtractionPipeline
+         ↓
+    normalize() — flatten nested payloads
+         ↓
+    map_to_schema() — alias resolution + STT mapping
+         ↓
+    _inject_computed_bang_thong_ke_rows() — STT 32/33/51 auto-compute
+         ↓
+    _inject_online_rows() — STT 22-25 from online metrics
+         ↓
+    BlockExtractionOutput (canonical)
+```
+
+**Các thành phần chính:**
+
+| Component | File | Mô tả |
+|-----------|------|-------|
+| `GoogleSheetIngestionService` | `sheet_ingestion_service.py` | Ingest rows từ Google Sheets vào `extraction_jobs` với idempotency |
+| `SheetExtractionPipeline` | `sheet_pipeline.py` | Chuyển sheet payload → canonical `BlockExtractionOutput` |
+| `GoogleSheetsSource` | `sources/sheets_source.py` | Google Sheets API client (retry logic) |
+| `HeaderDetector` | `mapping/header_detector.py` | Tự động phát hiện header row bằng alias overlap |
+| `Mapper` | `mapping/mapper.py` | Map row columns → schema fields với alias matching |
+| `RowValidator` | `validation/row_validator.py` | Pydantic validation + confidence scoring |
+| `JobWriter` | `sheet_job_writer.py` | Persist validated rows với row_hash idempotency |
+
+**Sheet ingestion flow:**
+
+```
+HTTP POST /jobs/ingest/google-sheet
+    ↓
+GoogleSheetIngestionService.ingest()
+    ↓
+GoogleSheetsSource.fetch_values() [Google API]
+    ↓
+detect_header_row() [alias scoring]
+    ↓
+FOR EACH ROW:
+    map_row_to_document_data() [alias + normalize]
+    validate_row() [Pydantic]
+    build_row_hash() [SHA-256]
+    writer.is_duplicate() [check in-memory set]
+    writer.write_row() [DB commit, set parser_used="google_sheets"]
+    ↓
+Return ingestion summary
+```
+
+**Sheet extraction flow (dùng chung orchestrator):**
+
+```
+ExtractionOrchestrator.run(job_id, source_type="sheet", sheet_data=job.extracted_data)
+    ↓
+run_sheet_pipeline(sheet_data)
+    ↓
+SheetExtractionPipeline.run()
+    ↓
+normalize() — hỗ trợ multiple shapes: {"data": {...}}, {"header": {...}}, flat
+    ↓
+map_to_schema() — load sheet_mapping.yaml, resolve aliases
+    ↓
+Build BlockExtractionOutput:
+    - header: from header dict (so_bao_cao, ngay_bao_cao, thoi_gian_tu_den, don_vi_bao_cao)
+    - phan_I_va_II_chi_tiet_nghiep_vu: từ nghiệp_vu fields (tong_so_vu_chay, etc.)
+    - bang_thong_ke: list[ChiTieu] từ STT mapping (61 rows)
+    - danh_sach_cnch: from danh_sach_cnch array
+    - danh_sach_phuong_tien_hu_hong: from array
+    - danh_sach_cong_van_tham_muu: from array
+    - danh_sach_cong_tac_khac: from array
+    ↓
+_assert_contract_or_raise() — validate 7 expected top-level keys
+    ↓
+Return PipelineResult(status="ok", output=BlockExtractionOutput)
+```
+
+**Sheet-specific mapping (`sheet_mapping.yaml`):**
+
+- **61 STT rows** với `stt_map` mapping từ STT number → field name
+- Ví dụ: `"2": {noi_dung: "1. Tổng số vụ cháy", field: "tong_so_vu_chay"}`
+- **Computed STT injection:**
+  - STT 32 = STT 31 - STT 33 (kiểm tra định kỳ)
+  - STT 33 = STT 31 - STT 32 (kiểm tra đột xuất)
+  - STT 51 = STT 52 - STT 53 (PA PC09 residual)
+  - STT 25 = STT 22 + STT 23 (tổng online)
+
+**Integration với Block mode:**
+
+- **Cùng database:** extraction_jobs bảng dùng chung
+- **Cùng canonical output:** `BlockExtractionOutput` schema
+- **Cùng aggregation:** sheet jobs và PDF jobs có thể aggregate chung
+- **Khác biệt:** Sheet mode không có Stage 2 enrichment (không cần LLM)
+
+---
+
+## 6. Bước 2: Rây lọc & Ép kiểu (Validation Layer)
 
 **Entry point:** `BlockExtractionPipeline.run_stage1_from_bytes(pdf_bytes, filename)`  
 **File:** `app/engines/extraction/block_pipeline.py`
@@ -1084,6 +1195,54 @@ job.enrichment_status NOT IN ("pending", "running")
 | `POST` | `/aggregate/{report_id}/export-word` | `require_viewer` | 200 | Upload .docx template → render → download |
 | `GET` | `/aggregate/{report_id}/export-word-auto` | `require_viewer` | 200 | Dùng template đã lưu trong S3 để render |
 
+### 10.6 Sheet Ingestion
+
+| Method | Path | Auth | Status | Description |
+|---|---|---|---|---|
+| `POST` | `/jobs/ingest/google-sheet` | `require_admin` | 202 | Ingest rows từ Google Sheets → extraction_jobs (deterministic, idempotent) |
+| `GET` | `/sheets/inspect/by-date` | `require_viewer` | 200 | Per-day job counts & STT coverage grid cho sheet inspection |
+| `GET` | `/sheets/inspect/issues` | `require_viewer` | 200 | Missing/zero/mismatch STT fields so sánh Excel vs extracted |
+| `GET` | `/sheets/inspect/mapping` | `require_viewer` | 200 | Column → STT mapping table từ sheet_mapping.yaml |
+| `GET` | `/sheets/names` | `require_viewer` | 200 | List sheet names từ Excel file trong MinIO |
+
+**Sheet ingestion request body:**
+```json
+{
+  "template_id": "uuid",
+  "sheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+  "worksheet": "BC NGÀY",
+  "schema_path": "/path/to/schema.yaml",
+  "source_document_id": "uuid-optional",
+  "range_a1": "A1:ZZ1000-optional"
+}
+```
+
+**Sheet ingestion response:**
+```json
+{
+  "status": "ok",
+  "sheet_id": "...",
+  "worksheet": "...",
+  "rows_processed": 150,
+  "rows_inserted": 148,
+  "rows_failed": 2,
+  "rows_skipped_idempotent": 0,
+  "schema_match_rate": 0.9234,
+  "validation_error_rate": 0.0133,
+  "errors": [...],
+  "metrics": {
+    "ingestion_run_id": "uuid",
+    "row_status_counts": {
+      "VALID": 140,
+      "INVALID": 2,
+      "PARTIAL": 6,
+      "DUPLICATE": 0,
+      "SKIPPED": 2
+    }
+  }
+}
+```
+
 ---
 
 ## 11. Cấu hình (Configuration)
@@ -1512,6 +1671,8 @@ app/
 │   ├── templates.py
 │   ├── jobs.py
 │   ├── aggregation.py
+│   ├── ingestion.py            # ★ Google Sheets ingestion endpoint
+│   ├── sheets.py               # ★ Sheet Inspector endpoints (by-date, issues, mapping)
 │   ├── rag.py
 │   ├── auth.py
 │   └── tenant.py
@@ -1545,15 +1706,27 @@ app/
 │       └── template_loader.py # DocumentTemplate wrapper + YAML registry + lru_cache
 ├── engines/
 │   └── extraction/
-│       ├── block_pipeline.py  # ★ BlockExtractionPipeline:
-│       │                      #    - run_stage1_from_bytes() — no LLM (v4)
-│       │                      #    - run_from_bytes()        — legacy, full pipeline
-│       │                      #    - _llm_enrich_cnch()      — LLM method duy nhất (v4)
-│       ├── extractors.py      # OllamaInstructorExtractor, GeminiExtractor...
-│       ├── hybrid_pipeline.py # HybridExtractionPipeline + PipelineResult (chi_tiet_cnch v4)
-│       ├── orchestrator.py    # ★ ExtractionOrchestrator.run() — two-stage dispatch (v4)
-│       ├── schemas.py         # BlockExtractionOutput, CNCHItem (8 fields), CNCHListOutput...
-│       └── rag/               # Engine 1 RAG pipeline
+│       ├── block_pipeline.py      # ★ BlockExtractionPipeline (PDF two-stage)
+│       │                          #    - run_stage1_from_bytes() — no LLM (v4)
+│       │                          #    - run_from_bytes()        — legacy, full pipeline
+│       │                          #    - _llm_enrich_cnch()      — LLM method duy nhất (v4)
+│       ├── sheet_pipeline.py      # ★ SheetExtractionPipeline (Google Sheets/Excel → canonical)
+│       ├── sheet_ingestion_service.py  # ★ GoogleSheetIngestionService — row-level ingestion with idempotency
+│       ├── sources/
+│       │   └── sheets_source.py   # ★ GoogleSheetsSource — API client with retry
+│       ├── mapping/
+│       │   ├── header_detector.py # ★ Header row auto-detection by alias overlap
+│       │   ├── mapper.py          # ★ Row-to-schema field mapping with aliases
+│       │   ├── normalizer.py      # ★ Value normalization (int/float/bool/date/VN formats)
+│       │   └── schema_loader.py   # ★ YAML schema loader for ingestion
+│       ├── validation/
+│       │   └── row_validator.py   # ★ Pydantic row validation + confidence scoring
+│       ├── sheet_job_writer.py    # ★ JobWriter — persist sheet rows with row_hash idempotency
+│       ├── extractors.py          # OllamaInstructorExtractor, GeminiExtractor...
+│       ├── hybrid_pipeline.py    # HybridExtractionPipeline + PipelineResult (chi_tiet_cnch v4)
+│       ├── orchestrator.py        # ★ ExtractionOrchestrator.run() — two-stage dispatch (v4)
+│       ├── schemas.py             # BlockExtractionOutput, CNCHItem (8 fields), CNCHListOutput...
+│       └── rag/                   # Engine 1 RAG pipeline
 ├── infrastructure/
 │   ├── db/
 │   │   └── session.py
