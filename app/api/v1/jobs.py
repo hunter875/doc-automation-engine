@@ -5,12 +5,14 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Optional
 
+from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import TenantContext, get_tenant_context, require_admin, require_viewer
 from app.core.config import settings
 from app.infrastructure.db.session import get_db
+from app.infrastructure.worker.celery_app import celery_app
 from app.schemas.extraction_schema import (
     BatchCreateResponse,
     BatchStatusResponse,
@@ -325,7 +327,66 @@ def get_batch_status(
     role: Annotated[None, Depends(require_viewer)],
     db: Session = Depends(get_db),
 ):
-    return JobManager(db).get_batch_status(batch_id, ctx.tenant_id)
+    status_payload = JobManager(db).get_batch_status(batch_id, ctx.tenant_id)
+    if int(status_payload.get("total") or 0) > 0:
+        return status_payload
+
+    task_result = AsyncResult(batch_id, app=celery_app)
+    task_state = str(task_result.state or "PENDING").upper()
+
+    if task_state == "SUCCESS" and isinstance(task_result.result, dict):
+        summary = task_result.result
+        total_rows = int(summary.get("rows_processed") or 0)
+        inserted_rows = int(summary.get("rows_inserted") or 0)
+        failed_rows = int(summary.get("rows_failed") or 0)
+        skipped_rows = int(summary.get("rows_skipped_idempotent") or 0)
+        done_rows = inserted_rows + failed_rows + skipped_rows
+        progress = 100.0 if total_rows <= 0 else round(min(100.0, (done_rows / total_rows) * 100.0), 1)
+        return {
+            "batch_id": batch_id,
+            "total": total_rows,
+            "pending": 0,
+            "processing": 0,
+            "extracted": 0,
+            "enriching": 0,
+            "ready_for_review": inserted_rows,
+            "approved": 0,
+            "rejected": 0,
+            "aggregated": 0,
+            "failed": failed_rows,
+            "progress_percent": progress,
+        }
+
+    if task_state in {"FAILURE", "REVOKED"}:
+        return {
+            "batch_id": batch_id,
+            "total": 1,
+            "pending": 0,
+            "processing": 0,
+            "extracted": 0,
+            "enriching": 0,
+            "ready_for_review": 0,
+            "approved": 0,
+            "rejected": 0,
+            "aggregated": 0,
+            "failed": 1,
+            "progress_percent": 100.0,
+        }
+
+    return {
+        "batch_id": batch_id,
+        "total": 1,
+        "pending": 1 if task_state in {"PENDING", "RECEIVED"} else 0,
+        "processing": 1 if task_state in {"STARTED", "PROGRESS", "RETRY"} else 0,
+        "extracted": 0,
+        "enriching": 0,
+        "ready_for_review": 0,
+        "approved": 0,
+        "rejected": 0,
+        "aggregated": 0,
+        "failed": 0,
+        "progress_percent": 10.0 if task_state in {"PENDING", "RECEIVED"} else 50.0,
+    }
 
 
 @router.get(

@@ -314,7 +314,7 @@ class JobListResponse(BaseModel):
 class BatchStatusResponse(BaseModel):
     """Response: batch progress."""
 
-    batch_id: uuid.UUID
+    batch_id: str
     total: int
     pending: int
     processing: int
@@ -371,6 +371,7 @@ class AggregateResponse(BaseModel):
     approved_jobs: int
     status: str
     created_at: datetime
+    sources_used: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -409,6 +410,15 @@ class DailyReportResponse(BaseModel):
     output_s3_key: Optional[str] = None
 
 
+class AggregateByDateRequest(BaseModel):
+    """Request: create aggregation report by calendar date."""
+
+    report_date: date
+    template_id: Optional[uuid.UUID] = None
+    report_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+
+
 # ──────────────────────────────────────────────
 # Deterministic Sheet Ingestion Schemas
 # ──────────────────────────────────────────────
@@ -443,3 +453,22 @@ class GoogleSheetIngestionSummary(BaseModel):
     validation_error_rate: float
     errors: list[IngestionRowError] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class GoogleSheetIngestionEnqueueResponse(BaseModel):
+    """Response payload for async Google Sheet ingestion scheduling."""
+
+    status: str
+    batch_id: str
+    task_id: str
+    poll_url: str
+
+
+class GoogleSheetIngestionTaskStatus(BaseModel):
+    """Polling status for async Google Sheet ingestion task."""
+
+    task_id: str
+    state: str
+    status: str
+    summary: Optional[GoogleSheetIngestionSummary] = None
+    error: Optional[str] = None

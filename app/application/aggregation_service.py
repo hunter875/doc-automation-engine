@@ -776,6 +776,89 @@ class AggregationService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _build_sources_used(jobs: list[ExtractionJob], template_name: str) -> list[dict[str, Any]]:
+        if not jobs:
+            return []
+
+        sheet_names: set[str] = set()
+        for job in jobs:
+            refs = job.source_references if isinstance(job.source_references, dict) else {}
+            worksheet = refs.get("worksheet")
+            if isinstance(worksheet, str) and worksheet.strip():
+                sheet_names.add(worksheet.strip())
+
+        created_values = [job.created_at for job in jobs if getattr(job, "created_at", None) is not None]
+        date_range = {
+            "start": min(created_values).isoformat() if created_values else None,
+            "end": max(created_values).isoformat() if created_values else None,
+        }
+
+        return [
+            {
+                "template_name": template_name,
+                "sheet_names": sorted(sheet_names),
+                "row_count": len(jobs),
+                "date_range": date_range,
+                "jobs": [
+                    {
+                        "id": str(job.id),
+                        "file_name": getattr(job, "file_name", None) or getattr(job, "display_name", None) or "",
+                    }
+                    for job in jobs
+                ],
+            }
+        ]
+
+    def create_report_by_date(
+        self,
+        *,
+        tenant_id: str,
+        report_date: date,
+        user_id: str,
+        template_id: str | None = None,
+        report_name: str | None = None,
+        description: str | None = None,
+    ) -> AggregationReport:
+        day_start = datetime.combine(report_date, datetime.min.time())
+        day_end = day_start + timedelta(days=1)
+
+        query = self.db.query(ExtractionJob).filter(
+            ExtractionJob.tenant_id == tenant_id,
+            ExtractionJob.status == ExtractionJobStatus.APPROVED,
+            ExtractionJob.created_at >= day_start,
+            ExtractionJob.created_at < day_end,
+        )
+        if template_id:
+            query = query.filter(ExtractionJob.template_id == template_id)
+
+        jobs = query.order_by(ExtractionJob.created_at.asc()).all()
+        if not jobs:
+            raise ProcessingError(message=f"No approved jobs found on {report_date.isoformat()}")
+
+        if template_id is None:
+            template_ids = {str(job.template_id) for job in jobs}
+            if len(template_ids) > 1:
+                raise ProcessingError(
+                    message=(
+                        "Multiple templates found for selected date. "
+                        "Please choose a specific template_id."
+                    )
+                )
+            resolved_template_id = str(next(iter(template_ids)))
+        else:
+            resolved_template_id = str(template_id)
+
+        resolved_report_name = report_name or f"Báo cáo {report_date.strftime('%d/%m/%Y')}"
+        return self.aggregate(
+            template_id=resolved_template_id,
+            job_ids=[str(job.id) for job in jobs],
+            tenant_id=tenant_id,
+            report_name=resolved_report_name,
+            user_id=user_id,
+            description=description,
+        )
+
     def aggregate(
         self,
         template_id: str,
@@ -1134,6 +1217,7 @@ class AggregationService:
             "enrichment_summary": enrichment_counts,
             "enrichment_partial": enrichment_partial,
             "enrichment_audit": enrichment_audit,
+            "sources_used": self._build_sources_used(jobs, template.name),
         }
         aggregated_data["metrics"] = {
             "total_records": len(data_rows),

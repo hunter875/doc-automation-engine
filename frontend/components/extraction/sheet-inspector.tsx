@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { RefreshCw, Download, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -393,6 +393,18 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
           <tbody>
             {days.map((day) => {
               const isExpanded = expandedDay === day.date;
+              const totalCoverage = day.jobs.reduce((sum, job) => sum + (job.stt_coverage?.total ?? 0), 0);
+              const populatedCoverage = day.jobs.reduce((sum, job) => sum + (job.stt_coverage?.populated ?? 0), 0);
+              const isComplete = totalCoverage > 0 && populatedCoverage === totalCoverage;
+              const isEmpty = populatedCoverage === 0;
+              const isPartial = !isComplete && !isEmpty;
+              const rowClass = day.has_issues
+                ? "bg-red-50/50 dark:bg-red-950/10"
+                : isComplete
+                  ? "bg-green-50/30 dark:bg-green-950/10"
+                  : isPartial
+                    ? "bg-yellow-50/30 dark:bg-yellow-950/10"
+                    : "bg-red-50/30 dark:bg-red-950/5";
               // Aggregate stt_values across all jobs for the day
               const aggValues: Record<string, number> = {};
               day.jobs.forEach((j) => {
@@ -402,20 +414,22 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
               });
 
               return (
-                <>
+                <Fragment key={day.date}>
                   <tr
                     key={day.date}
-                    className={`cursor-pointer hover:bg-accent/50 ${day.has_issues ? "bg-red-50/50 dark:bg-red-950/10" : ""}`}
+                    className={`cursor-pointer hover:bg-accent/50 ${rowClass}`}
                     onClick={() => setExpandedDay(isExpanded ? null : day.date)}
                   >
                     <td className="px-3 py-2 font-medium sticky left-0 bg-background">
                       {day.date.slice(8, 10)}/{day.date.slice(5, 7)}
+                      {isComplete && <span className="ml-1">✅</span>}
+                      {isPartial && <span className="ml-1">⚠️</span>}
+                      {isEmpty && <span className="ml-1">❌</span>}
                       {day.has_issues && <span className="ml-1 text-red-500">⚠️</span>}
                     </td>
                     {GRID_STTS.map((s) => {
                       const key = `stt_${s.stt.padStart(2, "0")}`;
                       const val = aggValues[key] ?? 0;
-                      // Check if key present in any job's btk_rows
                       const present = day.jobs.some((j) =>
                         j.btk_rows.some((r: { stt: string }) => r.stt === s.stt)
                       );
@@ -426,6 +440,18 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
                       );
                     })}
                   </tr>
+                  {isExpanded && (
+                    <tr className="bg-muted/10 text-xs">
+                      <td colSpan={GRID_STTS.length + 1} className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <Badge variant={isComplete ? "success" : isPartial ? "warning" : "destructive"}>
+                            {isComplete ? "Complete" : isPartial ? "Partial" : "Empty"}
+                          </Badge>
+                          <span className="text-muted-foreground">STT coverage: {populatedCoverage}/{totalCoverage || 0}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {isExpanded && day.jobs.map((job) => (
                     <tr key={`${day.date}-${job.id}`} className="bg-muted/20 text-xs">
                       <td colSpan={GRID_STTS.length + 1} className="px-4 py-2">
@@ -467,7 +493,7 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
                       </td>
                     </tr>
                   ))}
-                </>
+                </Fragment>
               );
             })}
           </tbody>

@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.infrastructure.db.session import get_db
 from app.schemas.extraction_schema import (
     AggregateListResponse,
+    AggregateByDateRequest,
     AggregateRequest,
     AggregateResponse,
     DailyReportRequest,
@@ -32,6 +33,26 @@ from app.application.daily_report_service import DailyReportService
 from app.application.template_service import TemplateManager
 
 router = APIRouter()
+
+
+def _as_aggregate_response(report) -> AggregateResponse:
+    metadata = {}
+    if isinstance(getattr(report, "aggregated_data", None), dict):
+        metadata = report.aggregated_data.get("_metadata") or {}
+    sources_used = metadata.get("sources_used") if isinstance(metadata, dict) else []
+    return AggregateResponse(
+        id=report.id,
+        tenant_id=report.tenant_id,
+        template_id=report.template_id,
+        name=report.name,
+        description=report.description,
+        aggregated_data=report.aggregated_data or {},
+        total_jobs=report.total_jobs,
+        approved_jobs=report.approved_jobs,
+        status=report.status,
+        created_at=report.created_at,
+        sources_used=sources_used if isinstance(sources_used, list) else [],
+    )
 
 
 def _build_content_disposition(filename: str) -> str:
@@ -77,7 +98,7 @@ def create_aggregate(
     role: Annotated[None, Depends(require_admin)],
     db: Session = Depends(get_db),
 ):
-    return AggregationService(db).aggregate(
+    report = AggregationService(db).aggregate(
         template_id=str(body.template_id),
         job_ids=[str(j) for j in body.job_ids],
         tenant_id=ctx.tenant_id,
@@ -85,6 +106,30 @@ def create_aggregate(
         user_id=str(ctx.user.id),
         description=body.description,
     )
+    return _as_aggregate_response(report)
+
+
+@router.post(
+    "/reports/create-by-date",
+    response_model=AggregateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create aggregation report by calendar date",
+)
+def create_aggregate_by_date(
+    body: AggregateByDateRequest,
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+    role: Annotated[None, Depends(require_admin)],
+    db: Session = Depends(get_db),
+):
+    report = AggregationService(db).create_report_by_date(
+        tenant_id=ctx.tenant_id,
+        report_date=body.report_date,
+        user_id=str(ctx.user.id),
+        template_id=str(body.template_id) if body.template_id else None,
+        report_name=body.report_name,
+        description=body.description,
+    )
+    return _as_aggregate_response(report)
 
 
 @router.get(
@@ -108,7 +153,7 @@ def list_reports(
         template_id=template_id,
     )
     return AggregateListResponse(
-        items=[AggregateResponse.model_validate(r) for r in items],
+        items=[_as_aggregate_response(r) for r in items],
         total=total,
         page=page,
         per_page=per_page,
@@ -126,7 +171,8 @@ def get_report(
     role: Annotated[None, Depends(require_viewer)],
     db: Session = Depends(get_db),
 ):
-    return AggregationService(db).get_report(report_id, ctx.tenant_id)
+    report = AggregationService(db).get_report(report_id, ctx.tenant_id)
+    return _as_aggregate_response(report)
 
 
 @router.delete(

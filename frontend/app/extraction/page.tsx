@@ -8,6 +8,7 @@ import { TemplatesTab } from "@/components/extraction/templates-tab";
 import { JobsTab } from "@/components/extraction/jobs-tab";
 import { ReviewTab } from "@/components/extraction/review-tab";
 import { ExportTab } from "@/components/extraction/export-tab";
+import { SheetInspector } from "@/components/extraction/sheet-inspector";
 import { useAuth } from "@/components/providers";
 import { api } from "@/lib/api";
 import type { Template, ExtractionJob } from "@/lib/types";
@@ -89,7 +90,7 @@ function ExtractionContent() {
     );
   }
 
-  const validTabs = ["templates", "jobs", "review", "export"];
+  const validTabs = ["templates", "jobs", "review", "inspect", "export"];
   const initialTab = validTabs.includes(defaultTab) ? defaultTab : "templates";
 
   return (
@@ -97,10 +98,11 @@ function ExtractionContent() {
       <h1 className="text-2xl font-bold">⚙️ Engine 2 — Trích xuất dữ liệu</h1>
 
       <Tabs defaultValue={initialTab}>
-        <TabsList className="grid grid-cols-4 w-full max-w-xl">
+        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
           <TabsTrigger value="templates">⚙️ Mẫu</TabsTrigger>
           <TabsTrigger value="jobs">📤 Hồ sơ</TabsTrigger>
           <TabsTrigger value="review">🔍 Duyệt</TabsTrigger>
+          <TabsTrigger value="inspect">📋 Kiểm tra</TabsTrigger>
           <TabsTrigger value="export">📊 Báo cáo</TabsTrigger>
         </TabsList>
 
@@ -132,6 +134,10 @@ function ExtractionContent() {
 
         <TabsContent value="export" className="mt-4">
           <ExportTab templates={templates} jobs={jobs} onRefreshJobs={fetchJobs} />
+        </TabsContent>
+
+        <TabsContent value="inspect" className="mt-4">
+          <SheetInspector month={new Date().getMonth() + 1} year={new Date().getFullYear()} />
         </TabsContent>
       </Tabs>
     </div>

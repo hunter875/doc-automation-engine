@@ -49,6 +49,13 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [overrideTplId, setOverrideTplId] = useState<string>("__auto");
   const [uploading, setUploading] = useState(false);
+  const [sheetTemplateId, setSheetTemplateId] = useState<string>("");
+  const [sheetIdOrUrl, setSheetIdOrUrl] = useState<string>("");
+  const [worksheet, setWorksheet] = useState<string>("BC NGÀY");
+  const [rangeA1, setRangeA1] = useState<string>("A1:ZZZ");
+  const [schemaPath, setSchemaPath] = useState<string>("/tmp/sheet_schema.yaml");
+  const [sheetIngesting, setSheetIngesting] = useState(false);
+  const [sheetProgress, setSheetProgress] = useState<string>("");
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [tplFilter, setTplFilter] = useState<string>("__all");
@@ -126,6 +133,86 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
 
   const actionJob = jobs.find((j) => j.id === actionJobId);
 
+  function parseSheetId(raw: string): string {
+    const text = raw.trim();
+    const match = text.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (match?.[1]) return match[1];
+    return text;
+  }
+
+  async function waitForIngestionTask(taskId: string): Promise<void> {
+    const maxAttempts = 120;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const statusRes = await api.jobs.getBatchStatus(taskId);
+      if (!statusRes.ok) {
+        setSheetProgress("Lỗi đọc trạng thái ingestion");
+        return;
+      }
+
+      const payload = statusRes.data;
+      const total = Number(payload.total || 0);
+      const processed = Math.max(0, total - Number(payload.pending || 0) - Number(payload.processing || 0));
+      setSheetProgress(`Đang chạy: ${processed}/${total || 1} (${payload.progress_percent}%)`);
+
+      if (Number(payload.progress_percent || 0) >= 100) {
+        const inserted = Number(payload.ready_for_review || 0);
+        const failed = Number(payload.failed || 0);
+        if (failed > 0) {
+          toast.warning(`Đồng bộ hoàn tất có lỗi: ${inserted} thành công, ${failed} lỗi.`);
+        } else {
+          toast.success(`✅ Đồng bộ xong: ${inserted} bản ghi.`);
+        }
+        setSheetProgress(`Hoàn tất: ${inserted} bản ghi`);
+        onRefreshJobs();
+        return;
+      }
+    }
+    toast.warning("Đồng bộ vẫn đang chạy, vui lòng kiểm tra lại sau.");
+    setSheetProgress("Đang chạy nền…");
+  }
+
+  async function handleSheetIngestion() {
+    if (!sheetTemplateId) {
+      toast.warning("Chọn template cho Google Sheets.");
+      return;
+    }
+    if (!sheetIdOrUrl.trim()) {
+      toast.warning("Nhập Sheet ID hoặc URL.");
+      return;
+    }
+    if (!worksheet.trim()) {
+      toast.warning("Nhập worksheet name.");
+      return;
+    }
+    if (!schemaPath.trim()) {
+      toast.warning("Nhập schema path.");
+      return;
+    }
+
+    const sheetId = parseSheetId(sheetIdOrUrl);
+    setSheetIngesting(true);
+    setSheetProgress("Đang đưa vào hàng đợi…");
+    const res = await api.jobs.ingestGoogleSheet({
+      template_id: sheetTemplateId,
+      sheet_id: sheetId,
+      worksheet: worksheet.trim(),
+      schema_path: schemaPath.trim(),
+      range_a1: rangeA1.trim() || undefined,
+    });
+
+    if (!res.ok) {
+      setSheetIngesting(false);
+      setSheetProgress("");
+      toast.error(`Không thể đồng bộ sheet: ${res.error}`);
+      return;
+    }
+
+    setSheetProgress("Đã nhận task, đang theo dõi tiến độ…");
+    await waitForIngestionTask(res.data.batch_id || res.data.task_id);
+    setSheetIngesting(false);
+  }
+
   return (
     <div className="space-y-6">
       {/* Upload section */}
@@ -171,6 +258,63 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
             )}
           </Button>
         </div>
+      </div>
+
+      <div className="rounded-lg border bg-background p-4 space-y-3">
+        <h3 className="font-semibold">📥 Google Sheets</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <Select value={sheetTemplateId} onValueChange={setSheetTemplateId}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Chọn template…" />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.map((t) => (
+                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <input
+            type="text"
+            className="h-10 rounded-md border px-3 text-sm"
+            placeholder="Sheet ID hoặc URL"
+            value={sheetIdOrUrl}
+            onChange={(e) => setSheetIdOrUrl(e.target.value)}
+          />
+
+          <input
+            type="text"
+            className="h-10 rounded-md border px-3 text-sm"
+            placeholder="Worksheet name"
+            value={worksheet}
+            onChange={(e) => setWorksheet(e.target.value)}
+          />
+
+          <input
+            type="text"
+            className="h-10 rounded-md border px-3 text-sm"
+            placeholder="Range (A1:ZZZ)"
+            value={rangeA1}
+            onChange={(e) => setRangeA1(e.target.value)}
+          />
+
+          <input
+            type="text"
+            className="h-10 rounded-md border px-3 text-sm md:col-span-2"
+            placeholder="Schema path (YAML)"
+            value={schemaPath}
+            onChange={(e) => setSchemaPath(e.target.value)}
+          />
+        </div>
+
+        <Button onClick={handleSheetIngestion} disabled={sheetIngesting} className="w-full">
+          {sheetIngesting ? (
+            <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang đồng bộ…</>
+          ) : (
+            <>📥 Đồng bộ từ Google Sheets</>
+          )}
+        </Button>
+        {sheetProgress && <p className="text-sm text-muted-foreground">{sheetProgress}</p>}
       </div>
 
       {/* Job list */}

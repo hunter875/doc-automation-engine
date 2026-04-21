@@ -160,20 +160,43 @@ export function CalendarPicker({ templates, onRefreshJobs }: CalendarPickerProps
   // ── Create report ──────────────────────────────────────────────────────────
 
   async function handleCreateReport() {
-    if (!selTplId || selectedJobIds.size === 0) {
-      toast.warning("Chọn mẫu báo cáo và ít nhất 1 hồ sơ.");
+    if (!selectedDay) {
+      toast.warning("Chọn một ngày trên lịch.");
       return;
     }
+    if (selectedDay.approved_count === 0) {
+      toast.warning("Không có hồ sơ nào được duyệt cho ngày này.");
+      return;
+    }
+
+    const approvedTemplateIds = Array.from(
+      new Set(
+        selectedDay.jobs
+          .filter((job) => ["approved", "aggregated"].includes(job.status))
+          .map((job) => job.template_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    if (approvedTemplateIds.length === 0) {
+      toast.warning("Không tìm thấy template hợp lệ cho ngày đã chọn.");
+      return;
+    }
+    if (approvedTemplateIds.length > 1 && !selTplId) {
+      toast.warning("Ngày này có nhiều template, vui lòng chọn template trước khi tạo báo cáo.");
+      return;
+    }
+
+    const chosenTemplateId = selTplId || approvedTemplateIds[0];
     setCreating(true);
-    const res = await api.reports.create({
-      template_id: selTplId,
-      job_ids: Array.from(selectedJobIds),
-      report_name: reportName.trim() || `Báo cáo ${new Date().toLocaleDateString("vi-VN")}`,
+    const res = await api.reports.createByDate({
+      report_date: selectedDay.date,
+      template_id: chosenTemplateId,
+      report_name: reportName.trim() || `Báo cáo ${selectedDay.date}`,
     });
     setCreating(false);
     if (res.ok) {
       toast.success(`✅ Đã tạo báo cáo "${(res.data as { name?: string }).name}"!`);
-      setSelectedJobIds(new Set());
       onRefreshJobs();
     } else {
       toast.error(`Tổng hợp thất bại: ${res.error}`);
@@ -205,7 +228,7 @@ export function CalendarPicker({ templates, onRefreshJobs }: CalendarPickerProps
     new Set(selectedJobs.map((j) => j.template_id).filter(Boolean))
   ) as string[];
 
-  const canCreate = selTplId && selectedJobIds.size > 0 && !creating;
+  const canCreateByDate = !!selectedDay && selectedDay.approved_count > 0 && !creating;
 
   return (
     <div className="space-y-4">
@@ -426,17 +449,17 @@ export function CalendarPicker({ templates, onRefreshJobs }: CalendarPickerProps
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-0">
             <p className="text-sm text-muted-foreground">
-              {selectedJobIds.size === 0
-                ? "Chọn ngày và hồ sơ bên trên để tạo báo cáo."
-                : `Đã chọn ${selectedJobIds.size} hồ sơ`}
+              {selectedDay
+                ? `Ngày ${selectedDay.date}: ${selectedDay.approved_count} hồ sơ đã duyệt`
+                : "Chọn ngày để tạo báo cáo tự động."}
             </p>
           </div>
           <Button
             onClick={handleCreateReport}
-            disabled={!canCreate}
+            disabled={!canCreateByDate}
           >
             <BarChart3 className="h-4 w-4 mr-2" />
-            {creating ? "Đang tổng hợp…" : `📊 Tạo báo cáo (${selectedJobIds.size})`}
+            {creating ? "Đang tổng hợp…" : "📊 Tạo báo cáo theo ngày"}
           </Button>
         </div>
       </div>
