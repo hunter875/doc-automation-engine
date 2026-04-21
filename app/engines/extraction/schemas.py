@@ -133,7 +133,7 @@ class BlockHeader(BaseModel):
 
 
 class BlockNghiepVu(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")  # ignore so new fields don't break legacy payloads
 
     tong_so_vu_chay: int = Field(default=0)
     tong_so_vu_no: int = Field(default=0)
@@ -146,6 +146,10 @@ class BlockNghiepVu(BaseModel):
     tong_ke_hoach: int = Field(default=0, description="Tổng số kế hoạch tham mưu")
     cong_tac_an_ninh: str = Field(default="", description="Nội dung công tác an ninh trật tự")
     tong_xe_hu_hong: int = Field(default=0, description="Tổng số phương tiện hư hỏng")
+    # NEW: online tuyên truyền
+    tong_tin_bai: int = Field(default=0, description="Tổng số tin bài online → STT 22")
+    tong_hinh_anh: int = Field(default=0, description="Số hình ảnh đăng tải → STT 23")
+    so_lan_cai_app_114: int = Field(default=0, description="Số lượt cài app HELP 114 → STT 24")
 
 
 class ChiTieu(BaseModel):
@@ -193,6 +197,51 @@ class CongVanItem(BaseModel):
     noi_dung: str = Field(default="", description="Nội dung / trích yếu công văn")
 
 
+class ChiVienItem(BaseModel):
+    """Danh sách vụ cháy chi viện — sheet CHI VIỆN."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stt: int = Field(default=0, description="Số thứ tự")
+    ngay: str = Field(default="", description="Ngày xảy ra vụ cháy chi viện")
+    dia_diem: str = Field(default="", description="Địa điểm xảy ra")
+    khu_vuc_quan_ly: str = Field(default="", description="Đơn vị quản lý khu vực")
+    so_luong_xe: int = Field(default=0, description="Số lượng xe tham gia")
+    thoi_gian_di: str = Field(default="", description="Thời gian xuất phát")
+    thoi_gian_ve: str = Field(default="", description="Thời gian quay về")
+    chi_huy_chua_chay: str = Field(default="", description="Chỉ huy chữa cháy")
+    ghi_chu: str = Field(default="", description="Ghi chú bổ sung")
+
+
+class VuChayItem(BaseModel):
+    """Danh sách vụ cháy có thống kê — sheet VỤ CHÁY THỐNG KÊ."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stt: int = Field(default=0, description="Số thứ tự")
+    ngay_xay_ra: str = Field(default="", description="Ngày xảy ra vụ cháy")
+    thoi_gian: str = Field(default="", description="Thời gian xảy ra vụ cháy")
+    ten_vu_chay: str = Field(default="", description="Tên/tình huống vụ cháy")
+    dia_diem: str = Field(default="", description="Địa điểm xảy ra")
+    nguyen_nhan: str = Field(default="", description="Nguyên nhân vụ cháy")
+    thiet_hai_nguoi: str = Field(default="", description="Thiệt hại về người")
+    thiet_hai_tai_san: str = Field(default="", description="Thiệt hại về tài sản (VNĐ)")
+    thoi_gian_khong_che: str = Field(default="", description="Thời gian khống chế đám cháy")
+    thoi_gian_dap_tat: str = Field(default="", description="Thời gian dập tắt hoàn toàn")
+    so_luong_xe: int = Field(default=0, description="Số lượng xe chữa cháy")
+    chi_huy: str = Field(default="", description="Chỉ huy chữa cháy")
+
+
+class TuyenTruyenOnline(BaseModel):
+    """1.1 Tuyên truyền qua MXH — STT 22-25."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    so_tin_bai: int = Field(default=0, description="Số tin, bài đã đăng phát → STT 22")
+    so_hinh_anh: int = Field(default=0, description="Số hình ảnh đăng tải → STT 23")
+    cai_app_114: int = Field(default=0, description="Số lượt cài app HELP 114 → STT 24")
+
+
 class CNCHListOutput(BaseModel):
     """Wrapper schema for targeted LLM extraction of CNCH incident list.
 
@@ -210,11 +259,15 @@ class CNCHListOutput(BaseModel):
 class BlockExtractionOutput(BaseModel):
     header: BlockHeader
     phan_I_va_II_chi_tiet_nghiep_vu: BlockNghiepVu
-    bang_thong_ke: list[ChiTieu]
+    bang_thong_ke: list[ChiTieu] = Field(default_factory=list)
     danh_sach_cnch: list[CNCHItem] = Field(default_factory=list)
     danh_sach_phuong_tien_hu_hong: list[PhuongTienHuHongItem] = Field(default_factory=list)
     danh_sach_cong_van_tham_muu: list[CongVanItem] = Field(default_factory=list)
     danh_sach_cong_tac_khac: list[str] = Field(default_factory=list)
+    # NEW: từ Excel sheets chuyên biệt
+    danh_sach_chi_vien: list[ChiVienItem] = Field(default_factory=list)
+    danh_sach_chay: list[VuChayItem] = Field(default_factory=list)
+    tuyen_truyen_online: TuyenTruyenOnline = Field(default_factory=TuyenTruyenOnline)
 
 
 @dataclass

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, Download, Trash2, FileSpreadsheet, FileText } from "lucide-react";
+import { RefreshCw, Download, Trash2, FileSpreadsheet, FileText, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,15 +11,18 @@ import { Separator } from "@/components/ui/separator";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { formatDate, downloadBlob } from "@/lib/utils";
+import { CalendarPicker } from "./calendar-picker";
 import type { Template, ExtractionJob, AggregationReport } from "@/lib/types";
 import { toast } from "sonner";
 
 interface ExportTabProps {
   templates: Template[];
   jobs: ExtractionJob[];
+  onRefreshJobs: () => void;
 }
 
 function RenderAggPreview({ data }: { data: Record<string, unknown> }) {
@@ -83,7 +86,7 @@ function RenderAggPreview({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-export function ExportTab({ templates, jobs }: ExportTabProps) {
+export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
   const [reports, setReports] = useState<AggregationReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [selectedReportId, setSelectedReportId] = useState<string>("");
@@ -239,7 +242,7 @@ export function ExportTab({ templates, jobs }: ExportTabProps) {
 
   return (
     <div className="space-y-6">
-      {/* Section 1 — Create */}
+      {/* Section 1 — Create (two modes: by template / by calendar) */}
       <div>
         <h3 className="font-semibold text-base mb-3">1️⃣ Tạo báo cáo mới</h3>
         {approvedJobs.length === 0 ? (
@@ -249,6 +252,28 @@ export function ExportTab({ templates, jobs }: ExportTabProps) {
             </AlertDescription>
           </Alert>
         ) : (
+          <Tabs defaultValue="calendar" className="w-full">
+            <TabsList className="mb-4">
+              <TabsTrigger value="calendar">
+                <Calendar className="h-4 w-4 mr-1.5" />
+                📅 Theo lịch
+              </TabsTrigger>
+              <TabsTrigger value="template">
+                <FileSpreadsheet className="h-4 w-4 mr-1.5" />
+                📋 Theo mẫu
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Tab 1: Calendar picker */}
+            <TabsContent value="calendar" className="mt-0">
+              <CalendarPicker
+                templates={templates}
+                onRefreshJobs={onRefreshJobs}
+              />
+            </TabsContent>
+
+            {/* Tab 2: Original template dropdown */}
+            <TabsContent value="template" className="mt-0">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -337,6 +362,8 @@ export function ExportTab({ templates, jobs }: ExportTabProps) {
               </>
             )}
           </div>
+            </TabsContent>
+          </Tabs>
         )}
       </div>
 

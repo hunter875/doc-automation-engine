@@ -131,7 +131,7 @@ function ExtractionContent() {
         </TabsContent>
 
         <TabsContent value="export" className="mt-4">
-          <ExportTab templates={templates} jobs={jobs} />
+          <ExportTab templates={templates} jobs={jobs} onRefreshJobs={fetchJobs} />
         </TabsContent>
       </Tabs>
     </div>

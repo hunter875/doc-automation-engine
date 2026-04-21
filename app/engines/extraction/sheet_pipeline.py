@@ -14,9 +14,12 @@ from app.engines.extraction.schemas import (
     BlockNghiepVu,
     CNCHItem,
     ChiTieu,
+    ChiVienItem,
     CongVanItem,
     PhuongTienHuHongItem,
     PipelineResult,
+    TuyenTruyenOnline,
+    VuChayItem,
 )
 
 
@@ -28,6 +31,10 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "danh_sach_phuong_tien_hu_hong",
     "danh_sach_cong_van_tham_muu",
     "danh_sach_cong_tac_khac",
+    # NEW: from Excel sheets chuyên biệt
+    "danh_sach_chi_vien",
+    "danh_sach_chay",
+    "tuyen_truyen_online",
 }
 
 
@@ -190,6 +197,12 @@ def _assert_contract_or_raise(output: BlockExtractionOutput) -> None:
 
 
 def _inject_computed_bang_thong_ke_rows(items: list[ChiTieu]) -> list[ChiTieu]:
+    """Inject only rows absent from Excel but computable from sibling rows.
+
+    STT 32 = STT 31 - STT 33  (định kỳ = tổng - đột xuất)
+    STT 33 = STT 31 - STT 32  (đột xuất = tổng - định kỳ)
+    STT 60 is a direct input field — do NOT derive, read directly from Excel.
+    """
     by_stt = {str(item.stt).strip(): item for item in items if getattr(item, "stt", None) is not None}
     insertions: list[ChiTieu] = []
 
@@ -207,17 +220,64 @@ def _inject_computed_bang_thong_ke_rows(items: list[ChiTieu]) -> list[ChiTieu]:
             ChiTieu(stt="33", noi_dung="Kiểm tra đột xuất theo chuyên đề", ket_qua=max(0, _kq("31") - _kq("32")))
         )
 
-    required_for_60 = {"55", "56", "57", "58", "59", "61"}
-    if "60" not in by_stt and required_for_60.issubset(by_stt):
-        kq60 = _kq("55") - (_kq("56") + _kq("57") + _kq("58") + _kq("59") + _kq("61"))
-        if kq60 >= 0:
+    # STT 51 = STT 52 - STT 53 (PA PC09 residual, if both present but 51 absent)
+    if "51" not in by_stt and "52" in by_stt and "53" in by_stt:
+        kq51 = _kq("52") - _kq("53")
+        if kq51 >= 0:
             insertions.append(
-                ChiTieu(stt="60", noi_dung="Chiến sĩ nghĩa vụ (hợp đồng lao động)", ket_qua=kq60)
+                ChiTieu(stt="51", noi_dung="Phương án CNCH của CQCA thực tập khác", ket_qua=kq51)
             )
 
     merged = items + insertions
     merged.sort(key=lambda x: int(str(x.stt)) if str(x.stt).isdigit() else 9999)
     return merged
+
+
+def _inject_online_rows(items: list[ChiTieu], online: dict[str, Any]) -> list[ChiTieu]:
+    """Inject STT 22-25 (tuyên truyền online / MXH) into bang_thong_ke.
+
+    STT 22 = so_tin_bai
+    STT 23 = so_hinh_anh
+    STT 24 = cai_app_114
+    STT 25 = STT 22 + STT 23 (tổng online)
+    """
+    by_stt = {str(item.stt).strip(): item for item in items if getattr(item, "stt", None) is not None}
+    insertions: list[ChiTieu] = []
+
+    if "22" not in by_stt and online:
+        so_tin_bai = _to_int(online.get("so_tin_bai", 0))
+        if so_tin_bai > 0:
+            insertions.append(
+                ChiTieu(stt="22", noi_dung="Số tin, bài đã đăng phát", ket_qua=so_tin_bai)
+            )
+
+    if "23" not in by_stt and online:
+        so_hinh_anh = _to_int(online.get("so_hinh_anh", 0))
+        if so_hinh_anh > 0:
+            insertions.append(
+                ChiTieu(stt="23", noi_dung="Số hình ảnh được đăng tải", ket_qua=so_hinh_anh)
+            )
+
+    if "24" not in by_stt and online:
+        cai_app = _to_int(online.get("cai_app_114", 0))
+        if cai_app > 0:
+            insertions.append(
+                ChiTieu(stt="24", noi_dung="Số lượt cài đặt ứng dụng HELP 114", ket_qua=cai_app)
+            )
+
+    # STT 25 = STT 22 + STT 23 (tổng online)
+    if "25" not in by_stt and "22" in by_stt and "23" in by_stt:
+        so_tin = _to_int(getattr(by_stt.get("22"), "ket_qua", 0))
+        so_hinh = _to_int(getattr(by_stt.get("23"), "ket_qua", 0))
+        if (so_tin or so_hinh) > 0:
+            insertions.append(
+                ChiTieu(stt="25", noi_dung="Tổng tuyên truyền qua MXH", ket_qua=so_tin + so_hinh)
+            )
+
+    if insertions:
+        items = list(items) + insertions
+        items.sort(key=lambda x: int(str(x.stt)) if str(x.stt).isdigit() else 9999)
+    return items
 
 
 class SheetExtractionPipeline:
@@ -261,6 +321,10 @@ class SheetExtractionPipeline:
             "danh_sach_phuong_tien_hu_hong": _as_list(core.get("danh_sach_phuong_tien_hu_hong")),
             "danh_sach_cong_van_tham_muu": _as_list(core.get("danh_sach_cong_van_tham_muu")),
             "danh_sach_cong_tac_khac": _as_list(core.get("danh_sach_cong_tac_khac")),
+            # NEW: from Excel sheets chuyên biệt
+            "danh_sach_chi_vien": _as_list(core.get("danh_sach_chi_vien")),
+            "danh_sach_chay": _as_list(core.get("danh_sach_chay")),
+            "tuyen_truyen_online": core.get("tuyen_truyen_online") or {},
         }
 
     def map_to_schema(self, normalized: dict[str, Any]) -> BlockExtractionOutput:
@@ -369,6 +433,28 @@ class SheetExtractionPipeline:
                     len(normalized.get("danh_sach_phuong_tien_hu_hong") or []),
                 )
             ),
+            # NEW: online tuyên truyền fields
+            tong_tin_bai=_to_int(
+                _get_first(
+                    nghiep_vu_raw,
+                    _aliases(mapping, "nghiep_vu", "tong_tin_bai", ["tong_tin_bai", "tổng tin bài", "tin bài online"]),
+                    0,
+                )
+            ),
+            tong_hinh_anh=_to_int(
+                _get_first(
+                    nghiep_vu_raw,
+                    _aliases(mapping, "nghiep_vu", "tong_hinh_anh", ["tong_hinh_anh", "số hình ảnh"]),
+                    0,
+                )
+            ),
+            so_lan_cai_app_114=_to_int(
+                _get_first(
+                    nghiep_vu_raw,
+                    _aliases(mapping, "nghiep_vu", "so_lan_cai_app_114", ["so_lan_cai_app_114", "cài app 114"]),
+                    0,
+                )
+            ),
         )
 
         cnch_items: list[CNCHItem] = []
@@ -423,6 +509,58 @@ class SheetExtractionPipeline:
             if text:
                 cong_tac_khac.append(text)
 
+        # Inject tuyên truyền online rows (STT 22-25) if not already present
+        chi_tieu_items = _inject_online_rows(chi_tieu_items, normalized.get("tuyen_truyen_online") or {})
+
+        # Map danh_sach_chi_vien (from sheet CHI VIỆN)
+        chi_vien_items: list[ChiVienItem] = []
+        for row in normalized.get("danh_sach_chi_vien") or []:
+            if not isinstance(row, dict):
+                continue
+            chi_vien_items.append(
+                ChiVienItem(
+                    stt=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "stt", ["STT", "stt"]), 0)),
+                    ngay=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "ngay", ["NGÀY", "Ngày", "ngay"]))),
+                    dia_diem=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "dia_diem", ["ĐỊA ĐIỂM", "dia_diem"]))),
+                    khu_vuc_quan_ly=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "khu_vuc_quan_ly", ["KHU VỰC QUẢN LÝ", "khu_vuc"]))),
+                    so_luong_xe=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "so_luong_xe", ["SỐ LƯỢNG XE", "so_xe"]), 0)),
+                    thoi_gian_di=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "thoi_gian_di", ["THỜI GIAN ĐI", "thoi_gian_di"]))),
+                    thoi_gian_ve=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "thoi_gian_ve", ["THỜI GIAN VỀ", "thoi_gian_ve"]))),
+                    chi_huy_chua_chay=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "chi_huy", ["CHỈ HUY", "chi_huy"]))),
+                    ghi_chu=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "ghi_chu", ["Ghi chú", "ghi_chu"]))),
+                )
+            )
+
+        # Map danh_sach_chay (from sheet VỤ CHÁY THỐNG KÊ)
+        chay_items: list[VuChayItem] = []
+        for row in normalized.get("danh_sach_chay") or []:
+            if not isinstance(row, dict):
+                continue
+            chay_items.append(
+                VuChayItem(
+                    stt=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chay", "stt", ["STT", "stt"]), 0)),
+                    ngay_xay_ra=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "ngay_xay_ra", ["NGÀY", "ngay"]))),
+                    thoi_gian=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thoi_gian", ["THỜI GIAN", "thoi_gian"]))),
+                    ten_vu_chay=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "ten_vu_chay", ["VỤ CHÁY", "ten_vu"]))),
+                    dia_diem=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "dia_diem", ["ĐỊA ĐIỂM", "dia_diem"]))),
+                    nguyen_nhan=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "nguyen_nhan", ["NGUYÊN NHÂN", "nguyen_nhan"]))),
+                    thiet_hai_nguoi=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thiet_hai_nguoi", ["THIỆT HẠI VỀ NGƯỜI", "thiet_hai"]))),
+                    thiet_hai_tai_san=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thiet_hai_tai_san", ["THIỆT HẠI TÀI SẢN", "tai_san"]))),
+                    thoi_gian_khong_che=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thoi_gian_khong_che", ["THỜI GIAN KHỐNG CHẾ"]))),
+                    thoi_gian_dap_tat=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thoi_gian_dap_tat", ["THỜI GIAN DẬP TẮT"]))),
+                    so_luong_xe=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chay", "so_luong_xe", ["SỐ LƯỢNG XE"]), 0)),
+                    chi_huy=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "chi_huy", ["CHỈ HUY"]))),
+                )
+            )
+
+        # Build TuyenTruyenOnline from nghiep_vu_raw
+        online_dict = normalized.get("tuyen_truyen_online") or {}
+        tuyen_truyen_online = TuyenTruyenOnline(
+            so_tin_bai=_to_int(online_dict.get("so_tin_bai", 0)),
+            so_hinh_anh=_to_int(online_dict.get("so_hinh_anh", 0)),
+            cai_app_114=_to_int(online_dict.get("cai_app_114", 0)),
+        )
+
         output = BlockExtractionOutput(
             header=header,
             phan_I_va_II_chi_tiet_nghiep_vu=nghiep_vu,
@@ -431,6 +569,10 @@ class SheetExtractionPipeline:
             danh_sach_phuong_tien_hu_hong=phuong_tien_items,
             danh_sach_cong_van_tham_muu=cong_van_items,
             danh_sach_cong_tac_khac=cong_tac_khac,
+            # NEW:
+            danh_sach_chi_vien=chi_vien_items,
+            danh_sach_chay=chay_items,
+            tuyen_truyen_online=tuyen_truyen_online,
         )
         _assert_contract_or_raise(output)
         return output

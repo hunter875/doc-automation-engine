@@ -1,6 +1,6 @@
 template_id: sheet_mapping
 template_name: "PCCC Sheet Mapping - Deterministic"
-version: "2.0"
+version: "2.1"
 language: vi
 
 sheet_mapping:
@@ -26,7 +26,7 @@ sheet_mapping:
     quan_so_truc:
       aliases: ["quan_so_truc", "quân số trực"]
     tong_chi_vien:
-      aliases: ["tong_chi_vien", "tổng chi viện"]
+      aliases: ["tong_chi_vien", "tổng chi viện", "vụ cháy chi viện", "chi viện"]
     tong_cong_van:
       aliases: ["tong_cong_van", "tổng công văn"]
     tong_bao_cao:
@@ -37,6 +37,13 @@ sheet_mapping:
       aliases: ["cong_tac_an_ninh", "công tác an ninh"]
     tong_xe_hu_hong:
       aliases: ["tong_xe_hu_hong", "tổng xe hư hỏng"]
+    # NEW: tuyên truyền online
+    tong_tin_bai:
+      aliases: ["tong_tin_bai", "tổng tin bài", "tin bài online", "so_tin_bai"]
+    tong_hinh_anh:
+      aliases: ["tong_hinh_anh", "số hình ảnh", "so_hinh_anh"]
+    so_lan_cai_app_114:
+      aliases: ["so_lan_cai_app_114", "cài app 114", "app help 114", "so_cai_app_114"]
 
   bang_thong_ke:
     fields:
@@ -64,45 +71,47 @@ sheet_mapping:
       "18": {noi_dung: "Số thi thể", field: "cnch_thi_the"}
       "19": {noi_dung: "Tài sản cứu được", field: "cnch_tai_san"}
       "20": {noi_dung: "II. KẾT QUẢ CÔNG TÁC PCCC VÀ CNCH", field: null}
-      "21": {noi_dung: "1. Tuyên truyền", field: null}
-      "22": {noi_dung: "1.1 MXH", field: null}
-      "23": {noi_dung: "Số tin bài", field: "so_tin_bai"}
-      "24": {noi_dung: "Số hình ảnh", field: "so_hinh_anh"}
-      "26": {noi_dung: "1.2 Trực tiếp", field: null}
+      "21": {noi_dung: "1. Tuyên truyền về PCCC và CNCH", field: null}
+      "22": {noi_dung: "1.1 Tuyên truyền qua các phương tiện thông tin truyền thông và nền tảng trực tuyến MXH", field: "tong_tin_bai"}
+      "23": {noi_dung: "Số tin, bài đã đăng phát", field: "so_tin_bai"}
+      "24": {noi_dung: "Số hình ảnh được đăng tải", field: "so_hinh_anh"}
+      "25": {noi_dung: "Số lượt cài đặt ứng dụng HELP 114", field: "so_lan_cai_app_114"}
+      "26": {noi_dung: "1.2 Tuyên truyền trực tiếp tại cơ sở, doanh nghiệp, các khu dân cư", field: null}
       "27": {noi_dung: "Số cuộc", field: "so_cuoc_tuyen_truyen"}
-      "28": {noi_dung: "Số người", field: "so_nguoi"}
-      "29": {noi_dung: "Số tờ rơi", field: "so_to_roi"}
-      "30": {noi_dung: "2. Kiểm tra", field: null}
-      "31": {noi_dung: "Tổng kiểm tra", field: "tong_kiem_tra"}
-      "32": {noi_dung: "Định kỳ", field: "kiem_tra_dinh_ky"}
-      "33": {noi_dung: "Đột xuất", field: "kiem_tra_dot_xuat"}
-      "34": {noi_dung: "Vi phạm", field: "so_vi_pham"}
-      "35": {noi_dung: "Xử phạt", field: "so_xu_phat"}
-      "36": {noi_dung: "Cảnh cáo", field: "phat_canh_cao"}
-      "37": {noi_dung: "Tạm đình chỉ", field: "tam_dinh_chi"}
-      "38": {noi_dung: "Đình chỉ", field: "dinh_chi"}
-      "39": {noi_dung: "Phạt tiền", field: "phat_tien"}
-      "40": {noi_dung: "Tiền phạt", field: "tien_phat"}
-      "41": {noi_dung: "3. Phương án", field: null}
-      "42": {noi_dung: "3.1 Cơ sở", field: null}
-      "43": {noi_dung: "Duyệt", field: "phuong_an_duyet"}
-      "44": {noi_dung: "Thực tập", field: "phuong_an_thuc_tap"}
-      "45": {noi_dung: "3.2 PTGT", field: null}
-      "46": {noi_dung: "Duyệt", field: "ptgt_duyet"}
-      "47": {noi_dung: "Thực tập", field: "ptgt_thuc_tap"}
-      "48": {noi_dung: "3.3 Công an", field: null}
-      "49": {noi_dung: "Duyệt", field: "ca_duyet"}
-      "50": {noi_dung: "Thực tập", field: "ca_thuc_tap"}
-      "51": {noi_dung: "3.4 CNCH CA", field: null}
-      "52": {noi_dung: "Duyệt", field: "cnch_duyet"}
-      "53": {noi_dung: "Thực tập", field: "cnch_thuc_tap"}
-      "54": {noi_dung: "4. Huấn luyện", field: null}
-      "55": {noi_dung: "Tổng CBCS", field: "tong_cbcs"}
+      "28": {noi_dung: "Số người tham dự", field: "so_nguoi_tuyen_truyen"}
+      "29": {noi_dung: "Số khuyến cáo, tờ rơi đã phát hành", field: "so_khuyen_cao"}
+      "30": {noi_dung: "2. Hướng dẫn, kiểm tra về PCCC và CNCH", field: null}
+      "31": {noi_dung: "Số cơ sở được kiểm an toàn PCCC (=STT 31+STT 33)", field: "tong_kiem_tra"}
+      "32": {noi_dung: "Kiểm tra định kỳ", field: "kiem_tra_dinh_ky"}
+      "33": {noi_dung: "Kiểm tra đột xuất theo chuyên đề", field: "kiem_tra_dot_xuat"}
+      "34": {noi_dung: "Số vi phạm được phát hiện", field: "so_vi_pham"}
+      "35": {noi_dung: "Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT 36+…+STT 39)", field: "so_xu_phat"}
+      "36": {noi_dung: "Trong đó, phạt cảnh cáo", field: "phat_canh_cao"}
+      "37": {noi_dung: "Trong đó, tạm đình chỉ hoạt động", field: "tam_dinh_chi"}
+      "38": {noi_dung: "Trong đó, đình chỉ hoạt động", field: "dinh_chi"}
+      "39": {noi_dung: "Trong đó, phạt tiền", field: "phat_tien"}
+      "40": {noi_dung: "Số tiền phạt thu được (triệu đồng)", field: "so_tien_phat"}
+      "41": {noi_dung: "3. Xây dựng, thực tập phương án chữa cháy, CNCH", field: null}
+      "42": {noi_dung: "3.1 Cơ sở theo Mẫu số PC06", field: null}
+      "43": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc06_xd"}
+      "44": {noi_dung: "Số phương án được thực tập", field: "pa_pc06_tt"}
+      "45": {noi_dung: "3.2 Phương tiện giao thông theo Mẫu số PC07", field: null}
+      "46": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc07_xd"}
+      "47": {noi_dung: "Số phương án được thực tập", field: "pa_pc07_tt"}
+      "48": {noi_dung: "3.3 CQ Công an thực hiện theo Mẫu số PC08", field: null}
+      "49": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc08_xd"}
+      "50": {noi_dung: "Số phương án được thực tập", field: "pa_pc08_tt"}
+      "51": {noi_dung: "3.4 CNCH CQ Công an thực hiện theo Mẫu số PC09", field: null}
+      "52": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc09_xd"}
+      "53": {noi_dung: "Số phương án được thực tập", field: "pa_pc09_tt"}
+      "54": {noi_dung: "4. Công tác huấn luyện nghiệp vụ chữa cháy và CNCH thường xuyên", field: null}
+      "55": {noi_dung: "Tổng số CBCS tham gia huấn luyện (=STT 56+…+STT 61)", field: "tong_cbcs"}
       "56": {noi_dung: "Chỉ huy phòng", field: "chi_huy_phong"}
-      "57": {noi_dung: "Chỉ huy đội", field: "chi_huy_doi"}
-      "58": {noi_dung: "Cán bộ", field: "can_bo_tieu_doi"}
-      "59": {noi_dung: "Chiến sĩ", field: "chien_si"}
-      "61": {noi_dung: "Lái tàu", field: "lai_tau"}
+      "57": {noi_dung: "Chỉ huy Đội", field: "chi_huy_doi"}
+      "58": {noi_dung: "Cán bộ tiểu đội", field: "can_bo_tieu_doi"}
+      "59": {noi_dung: "Chiến sĩ CC và CNCH", field: "chien_si_cc_cnch"}
+      "60": {noi_dung: "Chiến sĩ nghĩa vụ (hợp đồng lao động)", field: "chi_sy_nghia_vu"}
+      "61": {noi_dung: "Lái tàu CC và CNCH", field: "lai_tau"}
 
   danh_sach_cnch:
     fields:
@@ -128,3 +137,26 @@ sheet_mapping:
   danh_sach_cong_tac_khac:
     fields:
       noi_dung: ["Nội dung", "noi_dung", "content"]
+
+  # NEW: sheet chuyên biệt
+  danh_sach_chi_vien:
+    fields:
+      stt: ["STT", "stt"]
+      ngay: ["NGÀY XẢY RA", "Ngày", "ngay"]
+      dia_diem: ["ĐỊA ĐIỂM", "dia_diem"]
+      khu_vuc_quan_ly: ["KHU VỰC QUẢN LÝ", "khu_vuc"]
+      so_luong_xe: ["SỐ LƯỢNG XE", "so_xe"]
+      thoi_gian_di: ["THỜI GIAN ĐI", "thoi_gian_di"]
+      thoi_gian_ve: ["THỜI GIAN VỀ", "thoi_gian_ve"]
+      chi_huy: ["CHỈ HUY CHỮA CHÁY", "chi_huy"]
+
+  danh_sach_chay:
+    fields:
+      stt: ["STT", "stt"]
+      ngay_xay_ra: ["NGÀY XẢY RA VỤ CHÁY", "ngay"]
+      thoi_gian: ["THỜI GIAN", "thoi_gian"]
+      ten_vu_chay: ["VỤ CHÁY", "ten_vu"]
+      dia_diem: ["ĐỊA ĐIỂM", "dia_diem"]
+      nguyen_nhan: ["NGUYÊN NHÂN", "nguyen_nhan"]
+      thiet_hai_nguoi: ["THIỆT HẠI VỀ NGƯỜI", "thiet_hai"]
+      thiet_hai_tai_san: ["THIỆT HẠI TÀI SẢN", "tai_san"]

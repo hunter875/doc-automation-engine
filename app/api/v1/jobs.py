@@ -427,6 +427,118 @@ def get_extraction_metrics(
 
 
 @router.get(
+    "/jobs/by-date",
+    status_code=status.HTTP_200_OK,
+    summary="Get jobs grouped by date for a month — powers the calendar picker UI",
+)
+def get_jobs_by_date(
+    month: int = Query(..., ge=1, le=12, description="Month (1-12)"),
+    year: int = Query(..., ge=2020, le=2100, description="Year"),
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_viewer),
+    db: Session = Depends(get_db),
+):
+    """Return all jobs for a given month, grouped by date.
+
+    Each calendar day contains:
+      - date: ISO date string
+      - job_count: total jobs uploaded that day
+      - approved_count: jobs with status approved/aggregated
+      - has_issues: True if any job has extraction issues
+      - jobs: list of job summaries
+    """
+    from datetime import date
+    from calendar import monthrange
+    from app.domain.models.extraction_job import ExtractionJob, ExtractionJobStatus
+
+    tid = ctx.tenant_id
+    _, last_day = monthrange(year, month)
+
+    start = date(year, month, 1)
+    end = date(year, month, last_day)
+
+    jobs = (
+        db.query(ExtractionJob)
+        .filter(
+            ExtractionJob.tenant_id == tid,
+            ExtractionJob.created_at >= start,
+            ExtractionJob.created_at <= end,
+        )
+        .order_by(ExtractionJob.created_at.desc())
+        .all()
+    )
+
+    # Group by date string (YYYY-MM-DD)
+    from collections import defaultdict
+    by_date: dict[str, dict] = defaultdict(
+        lambda: {
+            "date": "",
+            "job_count": 0,
+            "approved_count": 0,
+            "has_issues": False,
+            "jobs": [],
+        }
+    )
+
+    for job in jobs:
+        if job.created_at is None:
+            continue
+        day_str = job.created_at.strftime("%Y-%m-%d")
+        entry = by_date[day_str]
+        entry["date"] = day_str
+        entry["job_count"] += 1
+
+        status = job.status or ""
+        is_approved = status in (
+            ExtractionJobStatus.APPROVED.value,
+            ExtractionJobStatus.AGGREGATED.value,
+        )
+        if is_approved:
+            entry["approved_count"] += 1
+
+        # Mark issues if job has failed or has errors in extracted_data
+        if status == ExtractionJobStatus.FAILED.value:
+            entry["has_issues"] = True
+        elif status == ExtractionJobStatus.READY_FOR_REVIEW.value:
+            # Check if extracted_data has missing STTs (heuristic)
+            ed = job.extracted_data or {}
+            if isinstance(ed, dict):
+                btk = ed.get("bang_thong_ke") or []
+                if len(btk) < 20:
+                    entry["has_issues"] = True
+
+        entry["jobs"].append({
+            "id": str(job.id),
+            "file_name": job.file_name or job.display_name or "(no name)",
+            "status": status,
+            "template_id": job.template_id or "",
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+        })
+
+    # Fill in all days of the month (even empty ones) for the calendar grid
+    from datetime import timedelta
+    result = []
+    current = start
+    while current <= end:
+        day_str = current.strftime("%Y-%m-%d")
+        entry = by_date.get(day_str)
+        if entry:
+            entry["date"] = day_str
+            result.append(entry)
+        else:
+            result.append({
+                "date": day_str,
+                "job_count": 0,
+                "approved_count": 0,
+                "has_issues": False,
+                "jobs": [],
+            })
+        current += timedelta(days=1)
+
+    return result
+
+
+@router.get(
     "/dashboard",
     status_code=status.HTTP_200_OK,
     summary="Business observability dashboard metrics",
