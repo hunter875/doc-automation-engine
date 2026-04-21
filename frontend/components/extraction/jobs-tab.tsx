@@ -69,7 +69,9 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
     const res = await api.jobs.smartUpload(fd);
     setUploading(false);
     if (res.ok) {
-      const jobList = res.data.jobs ?? [];
+      type SmartUploadJob = { status?: string; file_name?: string };
+      const payload = res.data as { jobs?: SmartUploadJob[] };
+      const jobList: SmartUploadJob[] = Array.isArray(payload.jobs) ? payload.jobs : [];
       const errors = jobList.filter((j) => j.status?.includes("error"));
       const ok = jobList.length - errors.length;
       if (ok > 0) toast.success(`✅ ${ok} file đã gửi — AI đang xử lý.`);

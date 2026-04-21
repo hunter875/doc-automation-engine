@@ -61,8 +61,8 @@ def get_calendar_reports(
 @router.get("/daily", response_model=DailyReportResponse)
 def get_daily_report(
     date: date = Query(..., description="Business report date (YYYY-MM-DD)"),
-    ctx: Annotated[TenantContext, Depends(get_tenant_context)] = Depends(get_tenant_context),
-    role: Annotated[None, Depends(require_viewer)] = Depends(require_viewer),
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_viewer),
     db: Session = Depends(get_db),
 ):
     controller = ReportController(db, ctx)
@@ -91,8 +91,8 @@ def create_weekly_report(
 @router.get("/weekly", response_model=WeeklyReportResponse)
 def get_weekly_report(
     week_start: date = Query(..., description="Week start date (Monday, YYYY-MM-DD)"),
-    ctx: Annotated[TenantContext, Depends(get_tenant_context)] = Depends(get_tenant_context),
-    role: Annotated[None, Depends(require_viewer)] = Depends(require_viewer),
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_viewer),
     db: Session = Depends(get_db),
 ):
     controller = ReportController(db, ctx)

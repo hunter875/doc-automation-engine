@@ -90,12 +90,13 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
       toast.error(`Scan thất bại: ${res.error}`);
       return;
     }
-    setScanResult(res.data);
-    const schemaFields = res.data.schema_definition?.fields ?? [];
+    const scanData = res.data as ScanWordResult;
+    setScanResult(scanData);
+    const schemaFields = scanData.schema_definition?.fields ?? [];
     const varMap: Record<string, string> = {};
-    (res.data.variables ?? []).forEach((v) => { varMap[v.name] = v.original_name; });
+    (scanData.variables ?? []).forEach((v) => { varMap[v.name] = v.original_name ?? v.name; });
     const aggMap: Record<string, string> = {};
-    (res.data.aggregation_rules?.rules ?? []).forEach((r) => { aggMap[r.output_field] = r.method; });
+    (scanData.aggregation_rules?.rules ?? []).forEach((r) => { aggMap[r.output_field] = r.method; });
     setFieldRows(
       schemaFields.map((f) => ({
         selected: true,
