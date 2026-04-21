@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.application.job_service import JobManager
 from app.domain.models.extraction_job import ExtractionJob
 from app.domain.workflow import JobStatus, transition_job_state
+from app.engines.extraction.sheet_pipeline import SheetExtractionPipeline
 
 
 class JobWriter:
@@ -40,24 +41,17 @@ class JobWriter:
 
     def _load_existing_row_hashes(self) -> set[str]:
         rows = (
-            self.db.query(ExtractionJob.source_references)
+            self.db.query(ExtractionJob.source_references["row_hash"].astext)
             .filter(
                 ExtractionJob.tenant_id == self.tenant_id,
                 ExtractionJob.template_id == self.template_id,
                 ExtractionJob.parser_used == "google_sheets",
+                ExtractionJob.source_references["sheet_id"].astext == self.sheet_id,
+                ExtractionJob.source_references["worksheet"].astext == self.worksheet,
             )
             .all()
         )
-        found: set[str] = set()
-        for (source_ref,) in rows:
-            if not isinstance(source_ref, dict):
-                continue
-            if source_ref.get("sheet_id") != self.sheet_id or source_ref.get("worksheet") != self.worksheet:
-                continue
-            row_hash = source_ref.get("row_hash")
-            if row_hash:
-                found.add(str(row_hash))
-        return found
+        return {str(row_hash) for (row_hash,) in rows if row_hash}
 
     @staticmethod
     def build_fingerprint(source_doc: dict[str, Any]) -> str:
@@ -100,7 +94,15 @@ class JobWriter:
             reason="google sheet ingestion processing",
         )
 
-        job.extracted_data = row_document
+        pipeline_result = SheetExtractionPipeline().run(row_document)
+        if pipeline_result.status == "ok" and pipeline_result.output is not None:
+            canonical_payload: dict[str, Any] = pipeline_result.output.model_dump()
+        else:
+            canonical_payload = row_document
+            source_references["sheet_pipeline_status"] = "failed"
+            source_references["sheet_pipeline_errors"] = pipeline_result.errors
+
+        job.extracted_data = canonical_payload
         job.confidence_scores = confidence
         job.source_references = source_references
         job.parser_used = "google_sheets"

@@ -112,7 +112,20 @@ def extract_document_task(self, job_id: str):
             db.commit()
 
         orchestrator = ExtractionOrchestrator(db)
-        job = orchestrator.run(job_id, progress_callback=emit_progress)
+        existing_job = db.query(ExtractionJob).filter(ExtractionJob.id == job_id).first()
+        if existing_job is None:
+            raise ValueError(f"Job {job_id} not found")
+
+        parser_used = str(existing_job.parser_used or "").lower()
+        source_type = "sheet" if parser_used in {"google_sheets", "sheet"} else "pdf"
+        sheet_data = existing_job.extracted_data if source_type == "sheet" else None
+
+        job = orchestrator.run(
+            job_id,
+            progress_callback=emit_progress,
+            source_type=source_type,
+            sheet_data=sheet_data if isinstance(sheet_data, dict) else None,
+        )
 
         logger.info(
             f"[Engine2] Extraction complete for job {job_id}: "

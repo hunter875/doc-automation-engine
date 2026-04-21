@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -105,7 +106,12 @@ class GoogleSheetIngestionService:
                     },
                 }
 
-            header_idx, header = detect_header_row(raw_rows, known_aliases=schema.all_aliases)
+            header_scan_limit = int(os.getenv("SHEET_HEADER_SCAN_LIMIT", "15"))
+            header_idx, header = detect_header_row(
+                raw_rows,
+                known_aliases=schema.all_aliases,
+                scan_limit=max(1, header_scan_limit),
+            )
             data_rows = raw_rows[header_idx + 1 :]
 
             document_id = self._ensure_source_document(req, raw_rows)
@@ -191,7 +197,7 @@ class GoogleSheetIngestionService:
                 async with semaphore:
                     return await process_one(row_index, row_values)
 
-            batch_size = 200
+            batch_size = max(1, int(os.getenv("SHEET_INGESTION_BATCH_SIZE", "200")))
             for start in range(0, len(rows_to_process), batch_size):
                 batch = rows_to_process[start : start + batch_size]
                 prepared_rows = await asyncio.gather(*(guarded_process(item) for item in batch))
@@ -232,6 +238,7 @@ class GoogleSheetIngestionService:
                     is_partial = int(prepared["matched"]) < int(prepared["total_fields"])
                     status = RowStatus.PARTIAL if is_partial else RowStatus.VALID
                     prepared["source_references"]["row_status"] = status.value
+                    prepared["source_references"]["is_partial"] = is_partial
                     created, _job_id = writer.write_row(
                         row_document=prepared["row_document"],
                         confidence=validation.confidence,

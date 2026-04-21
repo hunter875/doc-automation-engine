@@ -18,6 +18,7 @@ class SheetsFetchConfig:
     range_a1: str | None = None
     max_retries: int = 3
     retry_backoff_seconds: float = 1.5
+    request_timeout_seconds: float = 30.0
 
 
 class GoogleSheetsSource:
@@ -32,8 +33,9 @@ class GoogleSheetsSource:
         self.service_account_file = service_account_file or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
         self.service_account_json = service_account_json or os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 
-    def _build_service(self):
+    def _build_service(self, *, timeout_seconds: float = 30.0):
         try:
+            import httplib2
             from google.oauth2.service_account import Credentials
             from googleapiclient.discovery import build
         except Exception as exc:
@@ -59,7 +61,8 @@ class GoogleSheetsSource:
                 )
             )
 
-        return build("sheets", "v4", credentials=credentials, cache_discovery=False)
+        http = httplib2.Http(timeout=float(timeout_seconds))
+        return build("sheets", "v4", credentials=credentials, cache_discovery=False, http=http)
 
     def fetch_values(self, cfg: SheetsFetchConfig) -> list[list[str]]:
         """Fetch values from worksheet, retrying transient API failures."""
@@ -69,7 +72,7 @@ class GoogleSheetsSource:
             raise ProcessingError(message="worksheet is required when range_a1 is not provided")
 
         range_name = cfg.range_a1 or f"{cfg.worksheet}!A1:ZZZ"
-        service = self._build_service()
+        service = self._build_service(timeout_seconds=cfg.request_timeout_seconds)
 
         last_error: Exception | None = None
         for attempt in range(1, cfg.max_retries + 1):
