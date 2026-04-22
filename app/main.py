@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.exceptions import RAGException
 from app.core.logging import configure_logging
 from app.infrastructure.db.session import engine, Base
+from sqlalchemy import text
 
 # Configure logging
 configure_logging(
@@ -39,6 +40,96 @@ async def lifespan(app: FastAPI):
 
     # Create database tables
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_templates
+                ADD COLUMN IF NOT EXISTS filename_pattern VARCHAR(500)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_templates
+                ADD COLUMN IF NOT EXISTS extraction_mode VARCHAR(20)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE extraction_templates
+                SET extraction_mode = 'standard'
+                WHERE extraction_mode IS NULL
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_templates
+                ALTER COLUMN extraction_mode SET DEFAULT 'standard'
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_templates
+                ALTER COLUMN extraction_mode SET NOT NULL
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS debug_traces JSONB DEFAULT '[]'::jsonb
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS enrichment_status VARCHAR(20)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS enriched_data JSONB
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS enrichment_error TEXT
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS enrichment_started_at TIMESTAMP
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS enrichment_completed_at TIMESTAMP
+                """
+            )
+        )
     logger.info("Database tables created/verified")
 
     yield
