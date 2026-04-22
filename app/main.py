@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -193,7 +194,8 @@ async def rag_exception_handler(request: Request, exc: RAGException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors — log full detail so bugs are visible."""
-    errors = exc.errors()
+    # Convert nested ctx objects (e.g., ValueError) into JSON-safe values.
+    errors = jsonable_encoder(exc.errors())
     # Log every error with the offending field path + value
     logger.error(
         f"422 Validation error on {request.method} {request.url.path}\n"

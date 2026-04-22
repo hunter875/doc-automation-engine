@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const token = getToken();
     const email = getUserEmail();
     const tenantId = getTenantId();
-    const tenantList = getTenantList<Tenant>();
+    const tenantList = getTenantList();
     if (token) {
       setState({ token, email, tenantId, tenantList, isLoggedIn: true });
     }

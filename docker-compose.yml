@@ -6,6 +6,8 @@ services:
       dockerfile: Dockerfile
     container_name: rag-api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app
     ports:
       - "8000:8000"
     environment:
@@ -43,37 +45,22 @@ services:
       - rag-network
     restart: unless-stopped
 
-  # Streamlit UI (legacy — kept for reference, disable if using Next.js)
-  streamlit:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: rag-streamlit
-    command: streamlit run ui/streamlit_app.py --server.address 0.0.0.0 --server.port 8501 --server.fileWatcherType poll
-    ports:
-      - "8501:8501"
-    environment:
-      - DOC_API_BASE_URL=http://api:8000
-      - PYTHONPATH=/app:/app/ui:/app/ui/pages
-    depends_on:
-      api:
-        condition: service_started
-    networks:
-      - rag-network
-    restart: unless-stopped
-    profiles:
-      - legacy
-
-  # Next.js Frontend (replaces Streamlit)
+  # Next.js Frontend
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: node:20-alpine
     container_name: rag-frontend
+    working_dir: /app
+    command: sh -c "npm install --legacy-peer-deps && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://rag-api:8000
+      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
     depends_on:
       api:
         condition: service_started

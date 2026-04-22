@@ -447,7 +447,7 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
                           <div key={`${source.template_name ?? "src"}-${index}`} className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                             <div>
                               <span className="text-muted-foreground">Template:</span>
-                              <p className="font-medium">{source.template_name || tplMap[reportDetail.template_id] || "—"}</p>
+                              <p className="font-medium">{source.template_name || (reportDetail.template_id ? tplMap[reportDetail.template_id] : undefined) || "—"}</p>
                             </div>
                             <div>
                               <span className="text-muted-foreground">Số hồ sơ:</span>
