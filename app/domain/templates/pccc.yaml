@@ -1,0 +1,244 @@
+# ==========================================================
+# DOCUMENT TEMPLATE — PCCC REPORT
+# Keys/paths here are read directly by DocumentTemplate (template_loader.py).
+# Structure MUST match what each property accessor calls via _get().
+# ==========================================================
+
+template_id: pccc
+template_name: "Báo cáo PCCC định kỳ"
+version: "2.2"
+language: vi
+
+# ==========================================================
+# BLOCK DETECTION
+# Used by: narrative_start_re, table_anchor_re, section_split_re
+# ==========================================================
+
+block_detection:
+  # Matches "I." at the start of the narrative section
+  narrative_start_pattern: "^I\\."
+  narrative_start_fallback_lines: 30
+  # Matches "BIỂU MẪU THỐNG KÊ" or "BẢNG THỐNG KÊ" (table anchor)
+  table_anchor_pattern: "BIEU\\s*MAU\\s*THONG\\s*KE|BANG\\s*THONG\\s*KE"
+  section_split_pattern: "^[IVX]+\\."
+
+# ==========================================================
+# PROMPTS
+# Used by: extraction_prompt(), enforcer_prompt()
+# ==========================================================
+
+prompts:
+  extraction: >-
+    Bạn là chuyên gia trích xuất dữ liệu từ báo cáo PCCC Việt Nam.
+    Trích xuất dữ liệu từ block '{block_name}' và trả về JSON hợp lệ theo schema.
+    Chỉ trả về JSON, không giải thích.
+  enforcer: >-
+    Trích xuất trường '{field_name}' từ đoạn văn bản báo cáo PCCC.
+    Trả về JSON với key 'value'.
+
+# ==========================================================
+# HEADER
+# Used by: header_max_lines, header_max_context_chars, header_required_fields,
+#           report_number_primary_re, report_number_fallback_re,
+#           date_long_form_re, date_short_form_re, date_period_markers,
+#           date_skip_line_re, unit_patterns
+# ==========================================================
+
+header:
+  max_lines: 30
+  max_context_chars: 3000
+  required_fields:
+    - so_bao_cao
+    - ngay_bao_cao
+
+  report_number:
+    # Matches: "Số: 180/BC-KV30" — allow spaces within the suffix (e.g. "KV 30"),
+    # they are collapsed to "" by re.sub(r"\s+", "", raw) in block_pipeline.py.
+    primary_pattern: "Số\\s*[:\\.]?\\s*(\\d{1,4}/BC[^\\n]{1,30})"
+    fallback_pattern: "(\\d{1,4}/BC-[A-Z0-9\\s]{1,20})"
+    format_regex: "^\\d+/BC-.+"
+
+  date:
+    # Matches: "ngày 21 tháng 03 năm 2026"
+    long_form: "ngày\\s+(\\d{1,2})\\s+tháng\\s+(\\d{1,2})\\s+năm\\s+(\\d{4})"
+    # Matches: "ngày 21/03/2026"
+    short_form: "ngày\\s+(\\d{1,2}/\\d{2}/\\d{4})"
+    # Lines containing these strings are skipped when searching for ngay_bao_cao
+    period_markers:
+      - "Từ"
+      - "đến"
+    # Skip lines starting with "Từ <digit>" (period range lines)
+    skip_line_pattern: "^\\(?Từ\\s+\\d"
+
+  unit:
+    # Matches unit name in header area
+    patterns:
+      - "ĐỘI CC&CNCH[^\\n]{0,50}"
+      - "PHÒNG CẢNH SÁT[^\\n]{0,50}"
+
+# ==========================================================
+# NARRATIVE
+# Used by: summary_section_keyword, summary_max_lines,
+#           narrative_count_patterns(), detail_keywords, detail_max_lines,
+#           incident_time_re, incident_location_re, incident_description_re,
+#           incident_context_chars, incident_location_max_chars
+# Note: count patterns are applied to NORMALIZED text
+#       (uppercase, diacritics stripped, single-space collapsed).
+# ==========================================================
+
+narrative:
+  summary_section_keyword: "KẾT QUẢ"
+  summary_max_lines: 15
+
+  counts:
+    # ĐÃ SỬA: Giữ NGUYÊN các rule gốc + Bổ sung rule bắt chữ KHONG
+    tong_so_vu_chay:
+      - "TINH HINH CHAY[:\\s]+(KHONG|\\d+)"
+      - "XAY RA (\\d+) VU CHAY"
+      - "TONG SO VU CHAY[:\\s]+(\\d+)"
+      - "(\\d+) VU CHAY"
+    tong_so_vu_no:
+      - "TINH HINH NO[:\\s]+(KHONG|\\d+)"
+      - "XAY RA (\\d+) VU NO"
+      - "TONG SO VU NO[:\\s]+(\\d+)"
+      - "(\\d+) VU NO"
+    tong_so_vu_cnch:
+      # ĐÃ SỬA: Bỏ "XAY RA (\d+) SU CO" để tránh nhầm cháy cỏ. Giữ NGUYÊN các rule còn lại + rule KHONG
+      - "TINH HINH CONG TAC CUU NAN, CUU HO[:\\s]+(KHONG|\\d+)"
+      - "XAY RA (\\d+) VU TAI NAN"
+      - "TONG SO VU TAI NAN[:\\s]+(\\d+)"
+      - "(\\d+) SU CO LIEN QUAN"
+    quan_so_truc:
+      # layout_text: "+ Quân số trực: 25 đồng chí."
+      - "QUAN SO TRUC[:\\s]+(\\d+)"
+      - "QUAN SO TRUC LA (\\d+)"
+
+  # MỚI BỔ SUNG: Khối array cho Stage 1 trích xuất Phương tiện & Công văn
+  arrays:
+    phuong_tien_hu_hong:
+      # Quét tìm các biển số xe đi kèm với trạng thái hư hỏng/kiểm định
+      plate_pattern: "([0-9]{2}[A-Z]{1,2}-[0-9]{3}\\.[0-9]{2})"
+      status_keywords: 
+        - "hư hỏng"
+        - "đang sửa chữa"
+        - "hết kiểm định"
+        - "chờ thanh lý"
+    cong_van_tham_muu:
+      # Group 1: Số ký hiệu, Group 2: Nội dung
+      pattern: "(?:Công văn|Báo cáo|Kế hoạch)\\s+(?:số\\s+)?([0-9]+/[A-Z0-9\\-]+)\\s+ngày\\s+\\d{1,2}/\\d{1,2}/\\d{4}\\s*(?:V/v\\s*)?([^;\\n]+)"
+
+  # Fallback keyword scan when section regex fails
+  detail_keywords:
+    - "CNCH"
+    - "TAI NAN"
+    - "SU CO"
+    - "CUU NAN"
+  detail_max_lines: 20
+
+  # Matches: "lúc 16 giờ 33 phút ngày 20/03/2026" or "20/3/2026" (1-digit month)
+  # Groups: (1)=hour, (2)=minute, (3)=date dd/mm/yyyy or dd/m/yyyy
+  incident_time_pattern: "lúc\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s*phút?\\s+ngày\\s+(\\d{1,2}/\\d{1,2}/\\d{4})"
+
+  # Matches: "tại địa chỉ: ..." or "xảy ra tại khu đất..." (with or without "địa chỉ")
+  # Group (1) = địa điểm text. Ends at ". Đội" or " Đội" or ". Thiệ" or EOL.
+  incident_location_pattern: "(?:xảy ra\\s+)?tại\\s+(?:địa\\s+chỉ:?\\s*)?(.+?)(?:\\.\\s*Đội|\\s+Đội|\\.\\s*Thiệ|$)"
+
+  # Matches description sentence after incident trigger keywords
+  incident_description_pattern: "(?:người dân|nạn nhân)[^.]{0,300}"
+
+  incident_context_chars: 600
+  incident_location_max_chars: 200
+
+# ==========================================================
+# TABLE
+# Used by: table_header_skip_keywords, law_citation_tail_re,
+#           incident_row_patterns_spaced/compact,
+#           structured_incident_headers, cnch_fallback_patterns
+# ==========================================================
+
+table:
+  # Rows whose normalized joined text contains these are skipped (header rows)
+  header_skip_keywords:
+    - "DANH MUC CHI TIEU"
+    - "DANH MUC"
+    - "STT DANH MUC"
+    - "KET QUA GHI CHU"
+
+  # Tail pattern that indicates a law citation (no numeric result expected)
+  law_citation_tail: "ND-CP|Nghi\\s+dinh\\s+so"
+
+  # Patterns matched against normalized noi_dung to find CNCH incident rows
+  # Used by _apply_cnch_fallback — normalized = upper, no diacritics, no spaces
+  cnch_fallback_patterns:
+    - "TONGSOVUTAINAN"
+    - "TONGSOVUCNCH"
+    - "TAISUSUCO"
+
+  # Regex patterns used by _regex_fill_cnch_fields to recover empty fields
+  # from chi_tiet_cnch text after LLM extraction.
+  # All patterns use re.IGNORECASE | re.DOTALL. Group 1 = extracted value.
+  # All patterns below run on text that has already been normalized to
+  # single spaces (re.sub(r"\s+", " ", text)) by _regex_fill_cnch_fields.
+  # re.IGNORECASE | re.DOTALL are applied automatically by cnch_fill_patterns().
+  # Group 1 = extracted value.
+  cnch_fill_patterns:
+    noi_dung_tin_bao:
+      - "báo có\\s+([\\s\\S]{5,150}?)\\s+xảy ra"
+      - "nhận tin báo[^,]*,\\s*([\\s\\S]{5,120}?)(?:xảy ra|tại)"
+      - "báo\\s+(cháy[\\s\\S]{2,100}?)\\s+tại\\s+(?:địa chỉ)"
+      - "báo\\s+(cháy[\\s\\S]{2,80}?)\\s+tại"
+      - "có\\s+(cháy[\\s\\S]{2,100}?)\\s+xảy ra"
+      - "tin báo từ[\\s\\S]{5,60}?(?:báo|có)\\s+([\\s\\S]{3,100}?)\\s+(?:xảy ra|tại)"
+    luc_luong_tham_gia:
+      - "điều động\\s+([\\s\\S]{5,200}?)\\s+tham gia"
+      - "xuất\\s+(\\d+\\s+xe[\\s\\S]{5,200}?)\\s*(?:Thiệ|\\.\\s|$)"
+      - "(?:Đội[\\s\\S]{5,50}?)\\s+xuất\\s+(\\d+\\s+xe[\\s\\S]{5,150}?CBCS)"
+      - "điều động\\s+([\\s\\S]{5,200}?)\\s+đến"
+      - "(Đội\\s+(?:Chữa cháy|CC&CNCH|Công tác)[\\s\\S]{5,200}?(?:CBCS|Hồ Chí Minh))(?:\\.\\s|\\s*Thiệ|$)"
+    thong_tin_nan_nhan:
+      - "nạn nhân(?:\\s+(?:tên|là))?\\s+([\\s\\S]{10,300}?)(?=\\s*Đội|\\s*Hiện|\\.|$)"
+    ngay_xay_ra:
+      - "(?:lúc|vào lúc)[\\s\\S]{1,50}?ngày\\s+(\\d{1,2}/\\d{1,2}/\\d{4})"
+      - "(\\d{1,2}/\\d{1,2}/\\d{4})"
+    ket_qua_xu_ly:
+      - "Thi(?:ệ|ấ)t hại:\\s*(Không|[\\s\\S]{3,100}?)\\."
+      - "[Hh]iện tại[\\s\\S]{0,100}?(?:đang|đã)\\s+([\\s\\S]{5,150}?)\\.(?:\\s*\\d|$)"
+      - "[Hh]iện tại[\\s\\S]{0,100}?(?:đang|đã)\\s+([\\s\\S]{5,150}?)\\."
+      - "tham gia[\\s\\S]{0,30}?(?:cứu chữa|chữa cháy|xử lý)[\\s\\S]{0,20}?(?:\\(([^)]{3,100})\\))"
+    incident_marker:
+      - "\\bxảy ra\\b|\\bsự cố\\b|\\btai nạn\\b|\\bcứu nạn\\b|\\bnạn nhân\\b"
+    incident_time:
+      - "(?:lúc|vào lúc)\\s+(\\d{1,2})\\s+giờ\\s+(\\d{2})\\s+phút\\s+ngày\\s+(\\d{1,2}/\\d{1,2}/\\d{4})"
+    incident_location:
+      - "(?:xảy ra\\s+)?tại\\s+(?:địa chỉ:?\\s*)?([\\s\\S]{10,200}?)(?:\\.\\s*Đội|\\s+Đội|\\.\\s*Thiệ|$)"
+
+  incident_row_patterns:
+    # Patterns matched against normalized text (spaced — after diacritics removed)
+    spaced:
+      - "TONG SO VU TAI NAN SU CO"
+      - "TONG SO VU CNCH"
+      - "TONG SO VU TAI NAN"
+    # Patterns matched against compact normalized text (no spaces)
+    compact:
+      - "TONGSOVUTAINAN"
+      - "TONGSOVUCNCH"
+
+  # Column headers indicating a structured incident table (vs stat table)
+  structured_incident_headers:
+    - "Địa điểm"
+    - "Nguyên nhân"
+    - "Thời gian"
+
+# ==========================================================
+# VALIDATION RULES
+# Used by: year_range, max_ket_qua, cross_field_tolerance, non_negative_fields
+# ==========================================================
+
+validation:
+  year_range: [2020, 2035]
+  non_negative_fields:
+    - stt_02_tong_chay
+    - stt_08_tong_no
+    - stt_14_tong_cnch
+  cross_field_tolerance: 3
+  max_ket_qua: 100000

@@ -1,0 +1,162 @@
+template_id: sheet_mapping
+template_name: "PCCC Sheet Mapping - Deterministic"
+version: "2.1"
+language: vi
+
+sheet_mapping:
+  header:
+    so_bao_cao:
+      aliases: ["so_bao_cao", "số báo cáo", "so bao cao", "report_no"]
+    ngay_bao_cao:
+      aliases: ["ngay_bao_cao", "ngày báo cáo", "report_date"]
+    thoi_gian_tu_den:
+      aliases: ["thoi_gian_tu_den", "thời gian từ đến", "report_period"]
+    don_vi_bao_cao:
+      aliases: ["don_vi_bao_cao", "đơn vị báo cáo", "unit"]
+
+  nghiep_vu:
+    tong_so_vu_chay:
+      aliases: ["tong_so_vu_chay", "tổng số vụ cháy", "vu_chay"]
+    tong_so_vu_no:
+      aliases: ["tong_so_vu_no", "tổng số vụ nổ", "vu_no"]
+    tong_so_vu_cnch:
+      aliases: ["tong_so_vu_cnch", "tổng số vụ cnch", "cnch"]
+    chi_tiet_cnch:
+      aliases: ["chi_tiet_cnch", "chi tiết cnch"]
+    quan_so_truc:
+      aliases: ["quan_so_truc", "quân số trực"]
+    tong_chi_vien:
+      aliases: ["tong_chi_vien", "tổng chi viện", "vụ cháy chi viện", "chi viện"]
+    tong_cong_van:
+      aliases: ["tong_cong_van", "tổng công văn"]
+    tong_bao_cao:
+      aliases: ["tong_bao_cao", "tổng báo cáo"]
+    tong_ke_hoach:
+      aliases: ["tong_ke_hoach", "tổng kế hoạch"]
+    cong_tac_an_ninh:
+      aliases: ["cong_tac_an_ninh", "công tác an ninh"]
+    tong_xe_hu_hong:
+      aliases: ["tong_xe_hu_hong", "tổng xe hư hỏng"]
+    # NEW: tuyên truyền online
+    tong_tin_bai:
+      aliases: ["tong_tin_bai", "tổng tin bài", "tin bài online", "so_tin_bai"]
+    tong_hinh_anh:
+      aliases: ["tong_hinh_anh", "số hình ảnh", "so_hinh_anh"]
+    so_lan_cai_app_114:
+      aliases: ["so_lan_cai_app_114", "cài app 114", "app help 114", "so_cai_app_114"]
+
+  bang_thong_ke:
+    fields:
+      stt: ["stt", "STT", "id"]
+      noi_dung: ["noi_dung", "nội dung", "name", "chi_tieu"]
+      ket_qua: ["ket_qua", "kết quả", "value", "so_lieu"]
+    stt_map:
+      "1": {noi_dung: "I. TÌNH HÌNH CHÁY, NỔ, SỰ CỐ TAI NẠN", field: null}
+      "2": {noi_dung: "1. Tổng số vụ cháy", field: "tong_so_vu_chay"}
+      "3": {noi_dung: "Số người chết", field: "chay_chet"}
+      "4": {noi_dung: "Số người bị thương", field: "chay_bi_thuong"}
+      "5": {noi_dung: "Số người cứu được", field: "chay_cuu_duoc"}
+      "6": {noi_dung: "Tài sản thiệt hại", field: "chay_thiet_hai"}
+      "7": {noi_dung: "Tài sản cứu được", field: "chay_cuu_tai_san"}
+      "8": {noi_dung: "2. Tổng số vụ nổ", field: "tong_so_vu_no"}
+      "9": {noi_dung: "Số người chết", field: "no_chet"}
+      "10": {noi_dung: "Số người bị thương", field: "no_bi_thuong"}
+      "11": {noi_dung: "Số người cứu được", field: "no_cuu_duoc"}
+      "12": {noi_dung: "Tài sản thiệt hại", field: "no_thiet_hai"}
+      "13": {noi_dung: "Tài sản cứu được", field: "no_cuu_tai_san"}
+      "14": {noi_dung: "3. Tổng số vụ tai nạn, sự cố", field: "tong_so_vu_cnch"}
+      "15": {noi_dung: "Số người cứu được (=16+17)", field: "cnch_cuu_duoc"}
+      "16": {noi_dung: "Trực tiếp cứu được", field: "cnch_truc_tiep"}
+      "17": {noi_dung: "Hướng dẫn thoát nạn", field: "cnch_huong_dan"}
+      "18": {noi_dung: "Số thi thể", field: "cnch_thi_the"}
+      "19": {noi_dung: "Tài sản cứu được", field: "cnch_tai_san"}
+      "20": {noi_dung: "II. KẾT QUẢ CÔNG TÁC PCCC VÀ CNCH", field: null}
+      "21": {noi_dung: "1. Tuyên truyền về PCCC và CNCH", field: null}
+      "22": {noi_dung: "1.1 Tuyên truyền qua các phương tiện thông tin truyền thông và nền tảng trực tuyến MXH", field: "tong_tin_bai"}
+      "23": {noi_dung: "Số tin, bài đã đăng phát", field: "so_tin_bai"}
+      "24": {noi_dung: "Số hình ảnh được đăng tải", field: "so_hinh_anh"}
+      "25": {noi_dung: "Số lượt cài đặt ứng dụng HELP 114", field: "so_lan_cai_app_114"}
+      "26": {noi_dung: "1.2 Tuyên truyền trực tiếp tại cơ sở, doanh nghiệp, các khu dân cư", field: null}
+      "27": {noi_dung: "Số cuộc", field: "so_cuoc_tuyen_truyen"}
+      "28": {noi_dung: "Số người tham dự", field: "so_nguoi_tuyen_truyen"}
+      "29": {noi_dung: "Số khuyến cáo, tờ rơi đã phát hành", field: "so_khuyen_cao"}
+      "30": {noi_dung: "2. Hướng dẫn, kiểm tra về PCCC và CNCH", field: null}
+      "31": {noi_dung: "Số cơ sở được kiểm an toàn PCCC (=STT 31+STT 33)", field: "tong_kiem_tra"}
+      "32": {noi_dung: "Kiểm tra định kỳ", field: "kiem_tra_dinh_ky"}
+      "33": {noi_dung: "Kiểm tra đột xuất theo chuyên đề", field: "kiem_tra_dot_xuat"}
+      "34": {noi_dung: "Số vi phạm được phát hiện", field: "so_vi_pham"}
+      "35": {noi_dung: "Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT 36+…+STT 39)", field: "so_xu_phat"}
+      "36": {noi_dung: "Trong đó, phạt cảnh cáo", field: "phat_canh_cao"}
+      "37": {noi_dung: "Trong đó, tạm đình chỉ hoạt động", field: "tam_dinh_chi"}
+      "38": {noi_dung: "Trong đó, đình chỉ hoạt động", field: "dinh_chi"}
+      "39": {noi_dung: "Trong đó, phạt tiền", field: "phat_tien"}
+      "40": {noi_dung: "Số tiền phạt thu được (triệu đồng)", field: "so_tien_phat"}
+      "41": {noi_dung: "3. Xây dựng, thực tập phương án chữa cháy, CNCH", field: null}
+      "42": {noi_dung: "3.1 Cơ sở theo Mẫu số PC06", field: null}
+      "43": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc06_xd"}
+      "44": {noi_dung: "Số phương án được thực tập", field: "pa_pc06_tt"}
+      "45": {noi_dung: "3.2 Phương tiện giao thông theo Mẫu số PC07", field: null}
+      "46": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc07_xd"}
+      "47": {noi_dung: "Số phương án được thực tập", field: "pa_pc07_tt"}
+      "48": {noi_dung: "3.3 CQ Công an thực hiện theo Mẫu số PC08", field: null}
+      "49": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc08_xd"}
+      "50": {noi_dung: "Số phương án được thực tập", field: "pa_pc08_tt"}
+      "51": {noi_dung: "3.4 CNCH CQ Công an thực hiện theo Mẫu số PC09", field: null}
+      "52": {noi_dung: "Số phương án được xây dựng và phê duyệt", field: "pa_pc09_xd"}
+      "53": {noi_dung: "Số phương án được thực tập", field: "pa_pc09_tt"}
+      "54": {noi_dung: "4. Công tác huấn luyện nghiệp vụ chữa cháy và CNCH thường xuyên", field: null}
+      "55": {noi_dung: "Tổng số CBCS tham gia huấn luyện (=STT 56+…+STT 61)", field: "tong_cbcs"}
+      "56": {noi_dung: "Chỉ huy phòng", field: "chi_huy_phong"}
+      "57": {noi_dung: "Chỉ huy Đội", field: "chi_huy_doi"}
+      "58": {noi_dung: "Cán bộ tiểu đội", field: "can_bo_tieu_doi"}
+      "59": {noi_dung: "Chiến sĩ CC và CNCH", field: "chien_si_cc_cnch"}
+      "60": {noi_dung: "Chiến sĩ nghĩa vụ (hợp đồng lao động)", field: "chi_sy_nghia_vu"}
+      "61": {noi_dung: "Lái tàu CC và CNCH", field: "lai_tau"}
+
+  danh_sach_cnch:
+    fields:
+      stt: ["STT", "stt"]
+      ngay_xay_ra: ["Ngày xảy ra sự cố", "ngay_xay_ra"]
+      thoi_gian: ["Thời gian đến", "thoi_gian"]
+      dia_diem: ["Địa điểm", "dia_diem"]
+      dia_chi: ["Địa chỉ", "dia_chi"]
+      noi_dung_tin_bao: ["Loại hình CNCH", "noi_dung_tin_bao", "noi_dung"]
+      thiet_hai: ["Thiệt hại về người", "thiet_hai"]
+      thong_tin_nan_nhan: ["Số người cứu được", "thong_tin_nan_nhan"]
+
+  danh_sach_phuong_tien_hu_hong:
+    fields:
+      bien_so: ["Biển số", "bien_so"]
+      tinh_trang: ["Tình trạng", "tinh_trang"]
+
+  danh_sach_cong_van_tham_muu:
+    fields:
+      so_ky_hieu: ["Số ký hiệu", "so_ky_hieu"]
+      noi_dung: ["Nội dung", "noi_dung"]
+
+  danh_sach_cong_tac_khac:
+    fields:
+      noi_dung: ["Nội dung", "noi_dung", "content"]
+
+  # NEW: sheet chuyên biệt
+  danh_sach_chi_vien:
+    fields:
+      stt: ["STT", "stt"]
+      ngay: ["NGÀY XẢY RA", "Ngày", "ngay"]
+      dia_diem: ["ĐỊA ĐIỂM", "dia_diem"]
+      khu_vuc_quan_ly: ["KHU VỰC QUẢN LÝ", "khu_vuc"]
+      so_luong_xe: ["SỐ LƯỢNG XE", "so_xe"]
+      thoi_gian_di: ["THỜI GIAN ĐI", "thoi_gian_di"]
+      thoi_gian_ve: ["THỜI GIAN VỀ", "thoi_gian_ve"]
+      chi_huy: ["CHỈ HUY CHỮA CHÁY", "chi_huy"]
+
+  danh_sach_chay:
+    fields:
+      stt: ["STT", "stt"]
+      ngay_xay_ra: ["NGÀY XẢY RA VỤ CHÁY", "ngay"]
+      thoi_gian: ["THỜI GIAN", "thoi_gian"]
+      ten_vu_chay: ["VỤ CHÁY", "ten_vu"]
+      dia_diem: ["ĐỊA ĐIỂM", "dia_diem"]
+      nguyen_nhan: ["NGUYÊN NHÂN", "nguyen_nhan"]
+      thiet_hai_nguoi: ["THIỆT HẠI VỀ NGƯỜI", "thiet_hai"]
+      thiet_hai_tai_san: ["THIỆT HẠI TÀI SẢN", "tai_san"]

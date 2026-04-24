@@ -1,0 +1,146 @@
+"""Extractor strategy implementations for LLM backends."""
+
+from __future__ import annotations
+
+import json
+import logging
+from abc import ABC, abstractmethod
+from typing import Any
+
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+
+class BaseExtractor(ABC):
+    """Strategy interface for extraction backends."""
+
+    @abstractmethod
+    def extract(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel],
+        model: str,
+        temperature: float,
+    ) -> BaseModel:
+        """Run extraction and return an instance of response_model."""
+
+
+class OllamaInstructorExtractor(BaseExtractor):
+    """Ollama extractor using instructor constrained decoding."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout_seconds: float = 180.0,
+        log_raw_pre_validate: bool = False,
+        raw_preview_chars: int = 1200,
+    ) -> None:
+        self.base_url = base_url
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
+        self.log_raw_pre_validate = log_raw_pre_validate
+        self.raw_preview_chars = raw_preview_chars
+
+    def extract(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel],
+        model: str,
+        temperature: float,
+        timeout_seconds: float | None = None,
+    ) -> BaseModel:
+        import instructor
+        from openai import OpenAI
+
+        base_url = self.base_url.rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
+
+        client = instructor.from_openai(
+            OpenAI(
+                base_url=base_url,
+                api_key=self.api_key,
+                timeout=effective_timeout,
+                max_retries=0,
+            ),
+            mode=instructor.Mode.JSON,
+        )
+
+        # Disable qwen3 / deepseek-r1 thinking chain.
+        # "think" must be a TOP-LEVEL field in the Ollama request body,
+        # NOT inside "options". Passing it inside options is silently ignored.
+        # num_predict: 512 was too small for CNCHListOutput with full address fields —
+        # a single incident with thong_tin_nan_nhan can exceed 512 tokens of JSON.
+        # 2048 tokens is sufficient for ~10 incidents with all 8 fields populated.
+        result, completion = client.chat.completions.create_with_completion(
+            model=model,
+            temperature=temperature,
+            response_model=response_model,
+            max_retries=0,
+            messages=messages,
+            extra_body={"think": False, "options": {"num_predict": 2048}},
+        )
+
+        if self.log_raw_pre_validate and completion and completion.choices:
+            raw_content = (completion.choices[0].message.content or "").strip()
+            if raw_content:
+                preview = raw_content[: self.raw_preview_chars]
+                logger.info(
+                    "[OLLAMA_RAW_PRE_VALIDATE] model=%s chars=%s preview=%s",
+                    model,
+                    len(raw_content),
+                    preview,
+                )
+
+        if isinstance(result, response_model):
+            return result
+        return response_model.model_validate(result)
+
+
+class OpenAIExtractor(BaseExtractor):
+    """OpenAI extractor using JSON schema response format."""
+
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+        self.api_key = api_key
+        self.base_url = base_url
+
+    def extract(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        response_model: type[BaseModel],
+        model: str,
+        temperature: float,
+    ) -> BaseModel:
+        from openai import OpenAI
+
+        client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+
+        client = OpenAI(**client_kwargs)
+        schema = response_model.model_json_schema()
+
+        response = client.chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_model.__name__,
+                    "schema": schema,
+                    "strict": True,
+                },
+            },
+        )
+
+        content = response.choices[0].message.content or "{}"
+        return response_model.model_validate(json.loads(content))
