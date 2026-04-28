@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -22,6 +23,35 @@ from app.schemas.extraction_schema import (
 )
 
 router = APIRouter()
+
+GOOGLE_SHEET_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
+
+
+def _normalize_configs(configs: list | None) -> list[dict] | None:
+    if not configs:
+        return None
+    normalized: list[dict] = []
+    for cfg in configs:
+        if hasattr(cfg, "model_dump"):
+            normalized.append(cfg.model_dump())
+        elif isinstance(cfg, dict):
+            normalized.append(cfg)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Each worksheet config must be an object with worksheet/schema_path",
+            )
+    return normalized
+
+
+def _normalize_sheet_id(sheet_id_or_url: str | None) -> str | None:
+    if not sheet_id_or_url:
+        return None
+    raw = str(sheet_id_or_url).strip()
+    match = GOOGLE_SHEET_ID_RE.search(raw)
+    if match:
+        return match.group(1)
+    return raw
 
 
 @router.post(
@@ -45,30 +75,52 @@ async def ingest_google_sheet(
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    # Resolve: explicit body > template stored > error
-    sheet_id = body.sheet_id or template.google_sheet_id
-    worksheet = body.worksheet or template.google_sheet_worksheet
-    schema_path = body.schema_path or template.google_sheet_schema_path
-    range_a1 = body.range_a1 or template.google_sheet_range or "A1:ZZZ"
-
-    # Validate we have required config
+    # Resolve Sheet ID (explicit > template)
+    sheet_id = _normalize_sheet_id(body.sheet_id or template.google_sheet_id)
     if not sheet_id:
         raise HTTPException(status_code=400, detail="Sheet ID required (provide in request or configure in template)")
-    if not worksheet:
-        raise HTTPException(status_code=400, detail="Worksheet name required (provide in request or configure in template)")
-    if not schema_path:
-        raise HTTPException(status_code=400, detail="Schema path required (provide in request or configure in template)")
 
+    # Resolve worksheet configurations
+    configs: list[dict] | None = None
+    if body.configs:
+        configs = _normalize_configs(body.configs)
+    else:
+        template_configs = template.google_sheet_configs
+        if template_configs:
+            configs = _normalize_configs(template_configs)
+        else:
+            # Legacy single-field config
+            worksheet = body.worksheet or template.google_sheet_worksheet
+            schema_path = body.schema_path or template.google_sheet_schema_path
+            if not worksheet or not schema_path:
+                raise HTTPException(status_code=400, detail="Worksheet name and schema path required (provide in request or configure in template, or use google_sheet_configs)")
+            range_a1 = body.range_a1 or template.google_sheet_range or "A1:ZZZ"
+            configs = [{
+                "worksheet": worksheet,
+                "schema_path": schema_path,
+                "range": range_a1,
+            }]
+
+    # Validate configs
+    for cfg in configs:
+        if not cfg.get("worksheet") or not cfg.get("schema_path"):
+            raise HTTPException(status_code=400, detail="Each worksheet config must have 'worksheet' and 'schema_path'")
+
+    # Build task payload
     task_payload = {
         "tenant_id": ctx.tenant_id,
         "user_id": str(ctx.user.id),
         "template_id": str(body.template_id),
         "sheet_id": sheet_id,
-        "worksheet": worksheet,
-        "schema_path": schema_path,
-        "source_document_id": str(body.source_document_id) if body.source_document_id else None,
-        "range_a1": range_a1,
+        "configs": configs,
     }
+    # For backward compatibility, also include first config's fields at top-level (not used by new service but harmless)
+    first_cfg = configs[0]
+    task_payload.setdefault("worksheet", first_cfg["worksheet"])
+    task_payload.setdefault("schema_path", first_cfg["schema_path"])
+    if "range" in first_cfg:
+        task_payload["range_a1"] = first_cfg["range"]
+
     task = ingest_google_sheet_task.delay(task_payload)
     poll_url = f"/api/v1/extraction/jobs/ingest/google-sheet/{task.id}"
     response.headers["Location"] = poll_url
@@ -136,19 +188,36 @@ async def ingest_google_sheet_sync(
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    # Resolve config
-    sheet_id = body.sheet_id or template.google_sheet_id
-    worksheet = body.worksheet or template.google_sheet_worksheet
-    schema_path = body.schema_path or template.google_sheet_schema_path
-    range_a1 = body.range_a1 or template.google_sheet_range or "A1:ZZZ"
-
-    # Validate
+    # Resolve Sheet ID
+    sheet_id = _normalize_sheet_id(body.sheet_id or template.google_sheet_id)
     if not sheet_id:
         raise HTTPException(status_code=400, detail="Sheet ID required")
-    if not worksheet:
-        raise HTTPException(status_code=400, detail="Worksheet name required")
-    if not schema_path:
-        raise HTTPException(status_code=400, detail="Schema path required")
+
+    # Resolve worksheet configurations
+    configs: list[dict] | None = None
+    if body.configs:
+        configs = _normalize_configs(body.configs)
+    else:
+        template_configs = template.google_sheet_configs
+        if template_configs:
+            configs = _normalize_configs(template_configs)
+        else:
+            # Legacy single-field config
+            worksheet = body.worksheet or template.google_sheet_worksheet
+            schema_path = body.schema_path or template.google_sheet_schema_path
+            if not worksheet or not schema_path:
+                raise HTTPException(status_code=400, detail="Worksheet name and schema path required")
+            range_a1 = body.range_a1 or template.google_sheet_range or "A1:ZZZ"
+            configs = [{
+                "worksheet": worksheet,
+                "schema_path": schema_path,
+                "range": range_a1,
+            }]
+
+    # Validate configs
+    for cfg in configs:
+        if not cfg.get("worksheet") or not cfg.get("schema_path"):
+            raise HTTPException(status_code=400, detail="Each worksheet config must have 'worksheet' and 'schema_path'")
 
     service = GoogleSheetIngestionService(db)
     return await service.ingest(
@@ -157,9 +226,10 @@ async def ingest_google_sheet_sync(
             user_id=str(ctx.user.id),
             template_id=str(body.template_id),
             sheet_id=sheet_id,
-            worksheet=worksheet,
-            schema_path=schema_path,
+            worksheet=configs[0]["worksheet"],  # for single compatibility, use first worksheet
+            schema_path=configs[0]["schema_path"],
             source_document_id=str(body.source_document_id) if body.source_document_id else None,
-            range_a1=range_a1,
+            range_a1=configs[0].get("range"),
+            configs=configs if len(configs) > 1 else None,  # only pass configs if multiple
         )
     )

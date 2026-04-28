@@ -213,6 +213,20 @@ class ChiVienItem(BaseModel):
     ghi_chu: str = Field(default="", description="Ghi chú bổ sung")
 
 
+class SCLQItem(BaseModel):
+    """Danh sách sự cố SCLQ đến PCCC&CNCH — sheet SCLQ ĐẾN PCCC&CNCH."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stt: int = Field(default=0, description="Số thứ tự")
+    ngay: str = Field(default="", description="Ngày xảy ra sự cố")
+    dia_diem: str = Field(default="", description="Địa điểm xảy ra")
+    nguyen_nhan: str = Field(default="", description="Nguyên nhân sự cố")
+    thiet_hai: str = Field(default="", description="Thiệt hại (người/tài sản)")
+    chi_huy: str = Field(default="", description="Chỉ huy xử lý")
+    ghi_chu: str = Field(default="", description="Ghi chú bổ sung")
+
+
 class VuChayItem(BaseModel):
     """Danh sách vụ cháy có thống kê — sheet VỤ CHÁY THỐNG KÊ."""
 
@@ -267,6 +281,7 @@ class BlockExtractionOutput(BaseModel):
     # NEW: từ Excel sheets chuyên biệt
     danh_sach_chi_vien: list[ChiVienItem] = Field(default_factory=list)
     danh_sach_chay: list[VuChayItem] = Field(default_factory=list)
+    danh_sach_sclq: list[SCLQItem] = Field(default_factory=list)
     tuyen_truyen_online: TuyenTruyenOnline = Field(default_factory=TuyenTruyenOnline)
 
 

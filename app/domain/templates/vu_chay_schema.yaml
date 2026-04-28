@@ -1,0 +1,15 @@
+sheet_mapping:
+  danh_sach_chay:
+    fields:
+      stt: ["STT", "stt"]
+      ngay_xay_ra: ["NGÀY XẢY RA VỤ CHÁY", "ngay"]
+      thoi_gian: ["THỜI GIAN", "thoi_gian"]
+      ten_vu_chay: ["VỤ CHÁY", "ten_vu"]
+      dia_diem: ["ĐỊA ĐIỂM", "dia_diem"]
+      nguyen_nhan: ["NGUYÊN NHÂN", "nguyen_nhan"]
+      thiet_hai_nguoi: ["THIỆT HẠI VỀ NGƯỜI", "thiet_hai"]
+      thiet_hai_tai_san: ["THIỆT HẠI TÀI SẢN", "tai_san"]
+      thoi_gian_khong_che: ["THỜI GIAN KHỐNG CHẾ"]
+      thoi_gian_dap_tat: ["THỜI GIAN DẬP TẮT"]
+      so_luong_xe: ["SỐ LƯỢNG XE"]
+      chi_huy: ["CHỈ HUY"]

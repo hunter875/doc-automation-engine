@@ -120,18 +120,56 @@ def create_template(
     role: Annotated[None, Depends(require_admin)],
     db: Session = Depends(get_db),
 ):
-    manager = TemplateManager(db)
-    return manager.create_template(
-        tenant_id=ctx.tenant_id,
-        user_id=str(ctx.user.id),
-        name=body.name,
-        schema_definition=body.schema_definition.model_dump(),
-        description=body.description,
-        aggregation_rules=body.aggregation_rules.model_dump() if body.aggregation_rules else None,
-        word_template_s3_key=body.word_template_s3_key,
-        filename_pattern=body.filename_pattern,
-        extraction_mode=body.extraction_mode,
+    # Log incoming request for debugging
+    logger.info(
+        f"CREATE_TEMPLATE: name='{body.name}', "
+        f"schema_fields={len(body.schema_definition.fields) if body.schema_definition else 0}, "
+        f"extraction_mode='{body.extraction_mode}'"
     )
+    if body.schema_definition:
+        for field in body.schema_definition.fields:
+            logger.debug(f"  Field: name='{field.name}', type='{field.type}', required={field.required}")
+
+    try:
+        manager = TemplateManager(db)
+
+        # If using new multi-worksheet config, populate legacy fields from first config for backward compatibility
+        google_sheet_worksheet = body.google_sheet_worksheet
+        google_sheet_schema_path = body.google_sheet_schema_path
+        google_sheet_range = body.google_sheet_range
+        if body.google_sheet_configs and len(body.google_sheet_configs) > 0:
+            first_cfg = body.google_sheet_configs[0]
+            google_sheet_worksheet = first_cfg.worksheet or google_sheet_worksheet
+            google_sheet_schema_path = first_cfg.schema_path or google_sheet_schema_path
+            google_sheet_range = first_cfg.range or google_sheet_range
+        google_sheet_configs = (
+            [cfg.model_dump() for cfg in body.google_sheet_configs]
+            if body.google_sheet_configs
+            else None
+        )
+
+        result = manager.create_template(
+            tenant_id=ctx.tenant_id,
+            user_id=str(ctx.user.id),
+            name=body.name,
+            schema_definition=body.schema_definition.model_dump(),
+            description=body.description,
+            aggregation_rules=body.aggregation_rules.model_dump() if body.aggregation_rules else None,
+            word_template_s3_key=body.word_template_s3_key,
+            filename_pattern=body.filename_pattern,
+            extraction_mode=body.extraction_mode,
+            google_sheet_id=body.google_sheet_id,
+            google_sheet_worksheet=google_sheet_worksheet,
+            google_sheet_range=google_sheet_range,
+            google_sheet_schema_path=google_sheet_schema_path,
+            google_sheet_configs=google_sheet_configs,
+            aggregation_group=body.aggregation_group,
+        )
+        logger.info(f"CREATE_TEMPLATE_SUCCESS: template_id={result.id}, name='{result.name}'")
+        return result
+    except Exception as e:
+        logger.error(f"CREATE_TEMPLATE_FAILED: name='{body.name}' error={type(e).__name__}: {e}")
+        raise
 
 
 @router.get(
@@ -207,7 +245,7 @@ def update_template(
 def delete_template(
     template_id: str,
     ctx: Annotated[TenantContext, Depends(get_tenant_context)],
-    role: Annotated[None, Depends(RoleChecker("owner"))],
+    role: Annotated[None, Depends(require_admin)],
     db: Session = Depends(get_db),
 ):
     TemplateManager(db).delete_template(template_id, ctx.tenant_id)

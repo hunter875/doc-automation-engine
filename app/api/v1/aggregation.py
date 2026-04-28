@@ -79,6 +79,7 @@ def generate_daily_report(
         tenant_id=ctx.tenant_id,
         user_id=str(ctx.user.id),
         template_id=str(body.template_id),
+        group_name=body.group_name,
         report_date=body.report_date,
         report_name=body.report_name,
         description=body.description,

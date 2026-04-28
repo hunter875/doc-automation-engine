@@ -108,7 +108,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT: str = "100/minute"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["*"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGIN_REGEX: str | None = r"https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?"
 
     # ── Engine 2: Extraction ──────────────────────────────
     EXTRACTION_MAX_TOKENS: int = 65536

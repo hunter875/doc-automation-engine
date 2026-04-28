@@ -9,6 +9,7 @@ import { JobsTab } from "@/components/extraction/jobs-tab";
 import { ReviewTab } from "@/components/extraction/review-tab";
 import { ExportTab } from "@/components/extraction/export-tab";
 import { SheetInspector } from "@/components/extraction/sheet-inspector";
+import { PipelineIndicator } from "@/components/extraction/pipeline-indicator";
 import { useAuth } from "@/components/providers";
 import { api } from "@/lib/api";
 import type { Template, ExtractionJob } from "@/lib/types";
@@ -97,8 +98,10 @@ function ExtractionContent() {
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">⚙️ Engine 2 — Trích xuất dữ liệu</h1>
 
+      <PipelineIndicator currentTab={initialTab} />
+
       <Tabs defaultValue={initialTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+        <TabsList className="grid grid-cols-5 w-full max-w-3xl">
           <TabsTrigger value="templates">⚙️ Mẫu</TabsTrigger>
           <TabsTrigger value="jobs">📤 Hồ sơ</TabsTrigger>
           <TabsTrigger value="review">🔍 Duyệt</TabsTrigger>

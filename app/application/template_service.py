@@ -35,6 +35,8 @@ class TemplateManager:
         google_sheet_worksheet: str | None = None,
         google_sheet_range: str | None = None,
         google_sheet_schema_path: str | None = None,
+        google_sheet_configs: list | None = None,
+        aggregation_group: str | None = None,
     ) -> ExtractionTemplate:
         template = ExtractionTemplate(
             tenant_id=tenant_id,
@@ -49,6 +51,8 @@ class TemplateManager:
             google_sheet_worksheet=google_sheet_worksheet,
             google_sheet_range=google_sheet_range,
             google_sheet_schema_path=google_sheet_schema_path,
+            google_sheet_configs=google_sheet_configs,
+            aggregation_group=aggregation_group,
             created_by=user_id,
         )
         self.db.add(template)

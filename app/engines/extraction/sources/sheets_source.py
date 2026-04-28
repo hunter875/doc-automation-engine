@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from app.core.exceptions import ProcessingError
 
@@ -72,7 +75,21 @@ class GoogleSheetsSource:
             raise ProcessingError(message="worksheet is required when range_a1 is not provided")
 
         range_name = cfg.range_a1 or f"{cfg.worksheet}!A1:ZZZ"
-        service = self._build_service(timeout_seconds=cfg.request_timeout_seconds)
+
+        service = None
+        build_error: Exception | None = None
+        try:
+            service = self._build_service(timeout_seconds=cfg.request_timeout_seconds)
+        except ProcessingError as exc:
+            build_error = exc
+
+        if service is None:
+            public_rows = self._fetch_public_values(cfg)
+            if public_rows is not None:
+                return public_rows
+            if build_error:
+                raise build_error
+            raise ProcessingError(message="Failed to initialize Google Sheets client")
 
         last_error: Exception | None = None
         for attempt in range(1, cfg.max_retries + 1):
@@ -94,3 +111,51 @@ class GoogleSheetsSource:
                 time.sleep(cfg.retry_backoff_seconds * attempt)
 
         raise ProcessingError(message=f"Failed reading Google Sheet after retries: {last_error}")
+
+    def _fetch_public_values(self, cfg: SheetsFetchConfig) -> list[list[str]] | None:
+        """Fallback reader for public Google Sheets without credentials.
+
+        Uses the gviz endpoint, which works for sheets shared publicly.
+        Returns None when the sheet is not publicly readable.
+        """
+        params: dict[str, str] = {
+            "tqx": "out:json",
+            "sheet": cfg.worksheet,
+        }
+        if cfg.range_a1:
+            params["range"] = cfg.range_a1
+        url = f"https://docs.google.com/spreadsheets/d/{cfg.sheet_id}/gviz/tq?{urlencode(params)}"
+
+        try:
+            with urlopen(url, timeout=float(cfg.request_timeout_seconds)) as response:
+                payload = response.read().decode("utf-8", errors="ignore")
+        except Exception:
+            return None
+
+        match = re.search(r"setResponse\((.*)\);\s*$", payload, flags=re.DOTALL)
+        if not match:
+            return None
+
+        try:
+            data = json.loads(match.group(1))
+        except Exception:
+            return None
+
+        table = data.get("table") if isinstance(data, dict) else None
+        cols = table.get("cols", []) if isinstance(table, dict) else []
+        rows = table.get("rows", []) if isinstance(table, dict) else []
+        if not cols:
+            return []
+
+        header = [str((col or {}).get("label") or (col or {}).get("id") or "") for col in cols]
+        output: list[list[str]] = [header]
+        for row in rows:
+            cells = (row or {}).get("c", [])
+            line: list[str] = []
+            for cell in cells:
+                value = "" if cell is None else cell.get("v", "")
+                line.append("" if value is None else str(value))
+            while len(line) < len(header):
+                line.append("")
+            output.append(line)
+        return output

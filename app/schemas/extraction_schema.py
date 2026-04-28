@@ -113,6 +113,15 @@ class AggregationRules(BaseModel):
     sort_by: Optional[str] = None
 
 
+class GoogleSheetWorksheetConfig(BaseModel):
+    """Configuration for a single worksheet within a Google Sheet."""
+
+    worksheet: str = Field(..., min_length=1, max_length=200, description="Worksheet name within the Google Sheet.")
+    schema_path: str = Field(..., min_length=1, max_length=500, description="Path to YAML schema file for mapping sheet columns.")
+    range: Optional[str] = Field(None, max_length=200, description="A1 notation range (e.g., A1:ZZZ). Defaults to A1:ZZZ if omitted.")
+    mode: Optional[str] = Field(None, description="Ingestion mode: 'row' (default, one job per data row) or 'single_document' (one job for entire worksheet).")
+
+
 # ──────────────────────────────────────────────
 # Template Schemas
 # ──────────────────────────────────────────────
@@ -148,6 +157,14 @@ class TemplateCreate(BaseModel):
     google_sheet_schema_path: Optional[str] = Field(
         None, max_length=500,
         description="Path to YAML schema file for mapping sheet columns.",
+    )
+    google_sheet_configs: Optional[list[GoogleSheetWorksheetConfig]] = Field(
+        None,
+        description="List of worksheet configurations for multi-worksheet ingestion from a single Google Sheet. If provided, overrides single-field configs (google_sheet_worksheet, google_sheet_schema_path, google_sheet_range).",
+    )
+    aggregation_group: Optional[str] = Field(
+        None, max_length=100,
+        description="Aggregation group name for cross-template daily reports.",
     )
 
     @field_validator("extraction_mode")
@@ -206,6 +223,14 @@ class TemplateUpdate(BaseModel):
         None, max_length=500,
         description="Path to YAML schema file for mapping sheet columns.",
     )
+    google_sheet_configs: Optional[list[GoogleSheetWorksheetConfig]] = Field(
+        None,
+        description="List of worksheet configurations for multi-worksheet ingestion from a single Google Sheet. If provided, overrides single-field configs (google_sheet_worksheet, google_sheet_schema_path, google_sheet_range).",
+    )
+    aggregation_group: Optional[str] = Field(
+        None, max_length=100,
+        description="Aggregation group name for cross-template daily reports.",
+    )
 
     @field_validator("extraction_mode")
     @classmethod
@@ -249,6 +274,9 @@ class TemplateResponse(BaseModel):
     google_sheet_worksheet: Optional[str] = None
     google_sheet_range: Optional[str] = None
     google_sheet_schema_path: Optional[str] = None
+    google_sheet_configs: Optional[list[dict]] = None
+    # Aggregation group
+    aggregation_group: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -426,6 +454,11 @@ class DailyReportRequest(BaseModel):
     """Request: generate a daily report from extraction jobs."""
 
     template_id: uuid.UUID
+    group_name: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Optional aggregation group name to combine jobs from multiple templates.",
+    )
     report_date: date
     report_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
@@ -464,11 +497,15 @@ class GoogleSheetIngestionRequest(BaseModel):
     """Request payload for deterministic Google Sheet ingestion."""
 
     template_id: uuid.UUID
-    sheet_id: str = Field(..., min_length=1, max_length=200)
-    worksheet: str = Field(..., min_length=1, max_length=200)
-    schema_path: str = Field(..., min_length=1, max_length=500)
+    sheet_id: Optional[str] = Field(None, min_length=1, max_length=200, description="Google Sheet ID or URL. Overrides template's google_sheet_id if provided.")
+    worksheet: Optional[str] = Field(None, min_length=1, max_length=200, description="Worksheet name. Used only in single-config mode (legacy).")
+    schema_path: Optional[str] = Field(None, min_length=1, max_length=500, description="Path to YAML schema. Used only in single-config mode (legacy).")
     source_document_id: Optional[uuid.UUID] = None
-    range_a1: Optional[str] = Field(None, max_length=200)
+    range_a1: Optional[str] = Field(None, max_length=200, description="A1 notation range. Used only in single-config mode (legacy).")
+    configs: Optional[list[GoogleSheetWorksheetConfig]] = Field(
+        None,
+        description="List of worksheet configurations. If provided, overrides single-field configs and template's google_sheet_configs. Enables multi-worksheet ingestion from one Sheet ID."
+    )
 
 
 class IngestionRowError(BaseModel):
@@ -479,17 +516,37 @@ class IngestionRowError(BaseModel):
 
 
 class GoogleSheetIngestionSummary(BaseModel):
+    """Response model for Google Sheet ingestion.
+
+    Used for both row-level and snapshot ingestion modes. Fields may be None
+    depending on the ingestion mode.
+    """
+
     status: str
     sheet_id: str
-    worksheet: str
+    # Row-level: worksheet name; Snapshot: None (multiple worksheets)
+    worksheet: Optional[str] = None
     rows_processed: int
     rows_failed: int
-    rows_inserted: int
-    rows_skipped_idempotent: int
-    schema_match_rate: float
-    validation_error_rate: float
+    # Row-level: number of rows inserted; Snapshot: unused
+    rows_inserted: Optional[int] = None
+    # Row-level: duplicate/empty rows; Snapshot: unused
+    rows_skipped_idempotent: Optional[int] = None
+    # Row-level: schema match rate per row; Snapshot: unused
+    schema_match_rate: Optional[float] = None
+    # Row-level: validation error rate; Snapshot: unused
+    validation_error_rate: Optional[float] = None
     errors: list[IngestionRowError] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
+
+    # Snapshot-specific fields
+    job_id: Optional[str] = None
+    report_date: Optional[date] = None
+    report_version: Optional[int] = None
+    worksheets_processed: Optional[list[str]] = None
+    rows_valid: Optional[int] = None
+    validation_summary: Optional[dict[str, Any]] = None
+    ingestion_mode: Optional[str] = Field(None, description="'row' or 'snapshot'")
 
 
 class GoogleSheetIngestionEnqueueResponse(BaseModel):

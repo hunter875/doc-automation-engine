@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from app.core.exceptions import ProcessingError
 from app.engines.extraction.schemas import (
     BlockExtractionOutput,
     BlockHeader,
@@ -103,6 +104,25 @@ def _load_sheet_mapping() -> dict[str, Any]:
     return mapping if isinstance(mapping, dict) else {}
 
 
+# Global cache for custom schemas (not using lru_cache because paths are dynamic)
+_CUSTOM_MAPPING_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _load_custom_mapping(schema_path: str) -> dict[str, Any]:
+    if schema_path in _CUSTOM_MAPPING_CACHE:
+        return _CUSTOM_MAPPING_CACHE[schema_path]
+    path = Path(schema_path).expanduser().resolve()
+    if not path.is_file():
+        raise ProcessingError(message=f"Schema YAML not found: {path}")
+    with open(path, encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh) or {}
+    mapping = raw.get("sheet_mapping")
+    if not isinstance(mapping, dict):
+        raise ProcessingError(message=f"Invalid schema: missing 'sheet_mapping' in {schema_path}")
+    _CUSTOM_MAPPING_CACHE[schema_path] = mapping
+    return mapping
+
+
 def _aliases(mapping: dict[str, Any], section: str, field: str, fallback: list[str]) -> list[str]:
     section_data = mapping.get(section)
     if not isinstance(section_data, dict):
@@ -182,6 +202,166 @@ def _build_bang_thong_ke_from_flat(
         )
 
     return rows
+
+
+def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
+    sheet_mapping = mapping.get("sheet_mapping", mapping)
+
+    # Build header
+    header_dict: dict[str, Any] = {}
+    if "header" in sheet_mapping:
+        header_spec = sheet_mapping["header"]
+        if isinstance(header_spec, dict) and "fields" in header_spec:
+            field_names = list(header_spec["fields"].keys())
+        else:
+            field_names = [k for k in header_spec.keys() if k not in ("stt_map",)]
+        for field_name in field_names:
+            if field_name in core:
+                header_dict[field_name] = core[field_name]
+        # Special bc_ngay date building
+        if "ngay_bao_cao_day" in field_names and "ngay_bao_cao_month" in field_names:
+            if not header_dict.get("ngay_bao_cao"):
+                day = header_dict.get("ngay_bao_cao_day") or core.get("ngay_bao_cao_day")
+                month = header_dict.get("ngay_bao_cao_month") or core.get("ngay_bao_cao_month")
+                if day is not None and month is not None:
+                    try:
+                        day_int = int(day)
+                        month_int = int(month)
+                        year = "2026" if month_int <= 2 else "2025"
+                        header_dict["ngay_bao_cao"] = f"{day_int:02d}/{month_int:02d}/{year}"
+                    except Exception:
+                        pass
+    header = BlockHeader(**header_dict)
+
+    # Build phan_I_va_II_chi_tiet_nghiep_vu
+    nghiep_vu_dict: dict[str, Any] = {}
+    if "nghiep_vu" in sheet_mapping:
+        nv_spec = sheet_mapping["nghiep_vu"]
+        if isinstance(nv_spec, dict) and "fields" in nv_spec:
+            nv_field_names = list(nv_spec["fields"].keys())
+        else:
+            nv_field_names = [k for k in nv_spec.keys() if k not in ("stt_map",)]
+        for field_name in nv_field_names:
+            if field_name in core:
+                nghiep_vu_dict[field_name] = core[field_name]
+    nghiep_vu = BlockNghiepVu(**nghiep_vu_dict)
+
+    # Build bang_thong_ke from flat if section present
+    btk_items: list[ChiTieu] = []
+    if "bang_thong_ke" in sheet_mapping:
+        raw_btk = _build_bang_thong_ke_from_flat(sheet_mapping, core)
+        btk_items = [ChiTieu(**item) for item in raw_btk]
+
+    # Build danh_sach_cnch (single item)
+    cnch_items: list[CNCHItem] = []
+    if "danh_sach_cnch" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_cnch"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            field_map = fields_spec["fields"]
+        else:
+            field_map = fields_spec
+        item_dict: dict[str, Any] = {}
+        for field_name in field_map.keys():
+            if field_name in core:
+                item_dict[field_name] = core[field_name]
+        if item_dict:
+            cnch_items = [CNCHItem(**item_dict)]
+
+    # Build danh_sach_phuong_tien_hu_hong (single item)
+    phuong_tien_items: list[PhuongTienHuHongItem] = []
+    if "danh_sach_phuong_tien_hu_hong" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_phuong_tien_hu_hong"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            field_map = fields_spec["fields"]
+        else:
+            field_map = fields_spec
+        item_dict = {}
+        for field_name in field_map.keys():
+            if field_name in core:
+                item_dict[field_name] = core[field_name]
+        if item_dict:
+            phuong_tien_items = [PhuongTienHuHongItem(**item_dict)]
+
+    # Build danh_sach_cong_van_tham_muu (single item)
+    cong_van_items: list[CongVanItem] = []
+    if "danh_sach_cong_van_tham_muu" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_cong_van_tham_muu"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            field_map = fields_spec["fields"]
+        else:
+            field_map = fields_spec
+        item_dict = {}
+        for field_name in field_map.keys():
+            if field_name in core:
+                item_dict[field_name] = core[field_name]
+        if item_dict:
+            cong_van_items = [CongVanItem(**item_dict)]
+
+    # Build danh_sach_cong_tac_khac (list of strings)
+    cong_tac_khac: list[str] = []
+    if "danh_sach_cong_tac_khac" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_cong_tac_khac"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            field_map = fields_spec["fields"]
+        else:
+            field_map = fields_spec
+        for field_name in field_map.keys():
+            if field_name in core:
+                val = core[field_name]
+                if isinstance(val, list):
+                    cong_tac_khac.extend([str(v) for v in val if v is not None])
+                else:
+                    cong_tac_khac.append(str(val))
+
+    # Build danh_sach_chi_vien (single item)
+    chi_vien_items: list[ChiVienItem] = []
+    if "danh_sach_chi_vien" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_chi_vien"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            field_map = fields_spec["fields"]
+        else:
+            field_map = fields_spec
+        item_dict = {}
+        for field_name in field_map.keys():
+            if field_name in core:
+                item_dict[field_name] = core[field_name]
+        if item_dict:
+            chi_vien_items = [ChiVienItem(**item_dict)]
+
+    # Build danh_sach_chay (single item)
+    chay_items: list[VuChayItem] = []
+    if "danh_sach_chay" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_chay"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            field_map = fields_spec["fields"]
+        else:
+            field_map = fields_spec
+        item_dict = {}
+        for field_name in field_map.keys():
+            if field_name in core:
+                item_dict[field_name] = core[field_name]
+        if item_dict:
+            chay_items = [VuChayItem(**item_dict)]
+
+    # Build tuyen_truyen_online from fields in core
+    tuyen_truyen_online = TuyenTruyenOnline(
+        so_tin_bai=_to_int(core.get("tong_tin_bai", 0)),
+        so_hinh_anh=_to_int(core.get("tong_hinh_anh", 0)),
+        cai_app_114=_to_int(core.get("so_lan_cai_app_114", 0)),
+    )
+
+    return BlockExtractionOutput(
+        header=header,
+        phan_I_va_II_chi_tiet_nghiep_vu=nghiep_vu,
+        bang_thong_ke=btk_items,
+        danh_sach_cnch=cnch_items,
+        danh_sach_phuong_tien_hu_hong=phuong_tien_items,
+        danh_sach_cong_van_tham_muu=cong_van_items,
+        danh_sach_cong_tac_khac=cong_tac_khac,
+        danh_sach_chi_vien=chi_vien_items,
+        danh_sach_chay=chay_items,
+        tuyen_truyen_online=tuyen_truyen_online,
+    )
 
 
 def _assert_contract_or_raise(output: BlockExtractionOutput) -> None:
@@ -285,25 +465,19 @@ class SheetExtractionPipeline:
 
     def normalize(self, sheet_data: dict[str, Any] | None) -> dict[str, Any]:
         raw = sheet_data or {}
-        mapping = _load_sheet_mapping()
-
-        # Runtime extraction job payload often stores business data under extracted_data.data
-        # (from ingestion row_document shape).
         core = raw
         nested_data = raw.get("data") if isinstance(raw.get("data"), dict) else None
-        if isinstance(nested_data, dict):
+        if nested_data:
             core = nested_data
 
         header_raw = core.get("header")
         if not isinstance(header_raw, dict):
-            # flat payload support: let alias resolver read directly from root keys
             header_raw = core if isinstance(core, dict) else {}
 
         nghiep_vu_raw = core.get("phan_I_va_II_chi_tiet_nghiep_vu")
         if not isinstance(nghiep_vu_raw, dict):
             nghiep_vu_raw = core.get("nghiep_vu") if isinstance(core.get("nghiep_vu"), dict) else {}
         if not isinstance(nghiep_vu_raw, dict) or not nghiep_vu_raw:
-            # flat payload support for nghiệp vụ scalar fields
             nghiep_vu_raw = core if isinstance(core, dict) else {}
 
         btk_raw = core.get("bang_thong_ke")
@@ -311,9 +485,10 @@ class SheetExtractionPipeline:
             btk_raw = core.get("chi_tieu") if isinstance(core.get("chi_tieu"), list) else []
 
         if not btk_raw:
-            btk_raw = _build_bang_thong_ke_from_flat(mapping, core if isinstance(core, dict) else {})
+            btk_raw = _build_bang_thong_ke_from_flat(_load_sheet_mapping(), core if isinstance(core, dict) else {})
 
         return {
+            "_core": core,  # expose core for custom mapping
             "header": header_raw,
             "nghiep_vu": nghiep_vu_raw,
             "bang_thong_ke": btk_raw,
@@ -577,10 +752,15 @@ class SheetExtractionPipeline:
         _assert_contract_or_raise(output)
         return output
 
-    def run(self, sheet_data: dict[str, Any] | None) -> PipelineResult:
+    def run(self, sheet_data: dict[str, Any] | None, schema_path: str | None = None) -> PipelineResult:
         try:
             normalized = self.normalize(sheet_data)
-            output = self.map_to_schema(normalized)
+            core = normalized.get("_core") or {}
+            if schema_path:
+                custom_mapping = _load_custom_mapping(schema_path)
+                output = _build_output_custom(core, custom_mapping)
+            else:
+                output = self.map_to_schema(normalized)
             return PipelineResult(
                 status="ok",
                 attempts=1,

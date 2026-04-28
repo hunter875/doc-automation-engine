@@ -1251,6 +1251,327 @@ class AggregationService:
 
         return report
 
+    def aggregate_data_only(
+        self,
+        template_id: str,
+        job_ids: list[str],
+        tenant_id: str,
+    ) -> dict:
+        """Aggregate multiple approved extraction jobs and return data without persisting.
+
+        Used by DailyReportService for legacy row-level fallback.
+        Does NOT create an AggregationReport record.
+        """
+        import pandas as pd
+
+        # 1. Validate template
+        template = (
+            self.db.query(ExtractionTemplate)
+            .filter(
+                ExtractionTemplate.id == template_id,
+                ExtractionTemplate.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not template:
+            raise ProcessingError(message=f"Template {template_id} not found")
+
+        # 2. Load jobs — approved ones belonging to this tenant
+        jobs = (
+            self.db.query(ExtractionJob)
+            .filter(
+                ExtractionJob.id.in_(job_ids),
+                ExtractionJob.tenant_id == tenant_id,
+                ExtractionJob.status == ExtractionJobStatus.APPROVED,
+            )
+            .all()
+        )
+
+        if not jobs:
+            any_jobs = (
+                self.db.query(ExtractionJob)
+                .filter(
+                    ExtractionJob.id.in_(job_ids),
+                    ExtractionJob.tenant_id == tenant_id,
+                )
+                .all()
+            )
+            if any_jobs:
+                statuses = sorted({str(j.status) for j in any_jobs})
+                raise ProcessingError(
+                    message=(
+                        f"Jobs exist but are not approved yet. "
+                        f"Current statuses: {', '.join(statuses)}. "
+                        "Please approve the jobs before aggregating."
+                    )
+                )
+            raise ProcessingError(message="No jobs found for the given IDs under this tenant.")
+
+        # 3. Collect data using job.final_data
+        _placeholder_keys = {"_manual_review_path", "_manual_review_metadata"}
+        data_rows: list[dict] = []
+        enrichment_audit: list[dict] = []
+        for job in jobs:
+            fd = job.final_data
+            if isinstance(job.reviewed_data, dict) and set(job.reviewed_data.keys()) <= _placeholder_keys:
+                fd = job.extracted_data
+            row = dict(fd) if isinstance(fd, dict) else fd
+            if isinstance(row, dict):
+                # Use module-level helper functions directly (no import needed)
+                row = flatten_block_output(row)
+                _derive_missing_additive_stt_fields(row)
+                _sync_derived_stt_fields_to_bang_thong_ke(row)
+                if "cong_tac_an_ninh" in row:
+                    row["cong_tac_an_ninh"] = _clean_cong_tac_an_ninh_text(row.get("cong_tac_an_ninh"))
+            if row:
+                data_rows.append(row)
+            # Record data source
+            if job.reviewed_data and not (
+                isinstance(job.reviewed_data, dict)
+                and set(job.reviewed_data.keys()) <= _placeholder_keys
+            ):
+                data_source = "reviewed"
+            elif job.enriched_data:
+                data_source = "stage1+stage2"
+            else:
+                data_source = "stage1_only"
+            enrichment_audit.append({
+                "job_id": str(job.id),
+                "enrichment_status": job.enrichment_status,
+                "data_source": data_source,
+            })
+
+        if not data_rows:
+            raise ProcessingError(message="No extraction data available in jobs")
+
+        # 4. Get aggregation rules
+        agg_rules = template.aggregation_rules or {}
+        rules = agg_rules.get("rules", [])
+        sort_by = agg_rules.get("sort_by")
+
+        # 5. Build DataFrame
+        try:
+            df = pd.json_normalize(data_rows, sep="_")
+        except Exception:
+            df = pd.DataFrame(data_rows)
+
+        # 6. Sort if requested
+        if sort_by:
+            try:
+                from decimal import Decimal
+                data_rows = sorted(
+                    data_rows,
+                    key=lambda row: (
+                        _extract_number_from_garbage((row or {}).get(sort_by))
+                        if isinstance(row, dict) else Decimal("0")
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("Cannot sort by '%s': %s", sort_by, exc)
+
+        # 7. Apply aggregation rules
+        aggregated_data: dict[str, Any] = {}
+
+        for rule in rules:
+            output_field = rule["output_field"]
+            source_field = rule["source_field"]
+            method = rule.get("method", "SUM").upper()
+            round_digits = rule.get("round_digits")
+
+            try:
+                if method == "CONCAT":
+                    all_arrays = []
+                    for row in data_rows:
+                        val = row.get(source_field)
+                        if isinstance(val, list):
+                            all_arrays.extend(val)
+                        elif val is not None:
+                            all_arrays.append(val)
+                    aggregated_data[output_field] = all_arrays
+
+                elif method == "LAST":
+                    val = None
+                    for row in reversed(data_rows):
+                        if source_field in row and row[source_field] is not None:
+                            val = row[source_field]
+                            break
+                    aggregated_data[output_field] = val
+
+                elif method in {"SUM", "AVG", "MAX", "MIN", "COUNT"}:
+                    from decimal import Decimal
+                    extracted_numbers: list[Decimal] = []
+                    for row in data_rows:
+                        val = row.get(source_field)
+                        if val is None:
+                            continue
+                        if method == "COUNT":
+                            extracted_numbers.append(Decimal("1"))
+                        else:
+                            extracted_numbers.append(_extract_number_from_garbage(val))
+
+                    if not extracted_numbers:
+                        result: Decimal | None = Decimal("0") if method != "AVG" else None
+                    else:
+                        if method in {"SUM", "COUNT"}:
+                            result = sum(extracted_numbers)
+                        elif method == "AVG":
+                            result = sum(extracted_numbers) / Decimal(len(extracted_numbers))
+                        elif method == "MAX":
+                            result = max(extracted_numbers)
+                        else:
+                            result = min(extracted_numbers)
+
+                    if result is not None:
+                        if round_digits is not None:
+                            result_value: Any = round(float(result), round_digits)
+                        else:
+                            result_value = int(result) if result == int(result) else float(result)
+                    else:
+                        result_value = None
+
+                    aggregated_data[output_field] = result_value
+
+                elif method == "BANG_THONG_KE_STT_SUM":
+                    stt_target = str(rule.get("stt", "")).strip()
+                    total_stt = Decimal("0")
+                    for data_row in data_rows:
+                        btk = data_row.get("bang_thong_ke") or []
+                        if not isinstance(btk, list):
+                            continue
+                        for btk_item in btk:
+                            if not isinstance(btk_item, dict):
+                                continue
+                            if str(btk_item.get("stt", "")).strip() == stt_target:
+                                total_stt += _extract_number_from_garbage(btk_item.get("ket_qua"))
+                    stt_result = int(total_stt) if total_stt == int(total_stt) else float(total_stt)
+                    aggregated_data[output_field] = stt_result
+                else:
+                    aggregated_data[output_field] = None
+                    logger.warning(f"Unknown aggregation method '{method}'")
+
+            except Exception as e:
+                logger.error(f"Aggregation error for rule '{output_field}': {e}")
+                aggregated_data[output_field] = None
+
+        # 8. Build summary record
+        summary_record: dict[str, Any] = {}
+        for rule in rules:
+            output_field = rule["output_field"]
+            val = aggregated_data.get(output_field)
+            summary_record[output_field] = val
+
+        # Add passthrough fields from last row
+        if data_rows:
+            last_row = data_rows[-1]
+            rule_outputs = {r["output_field"] for r in rules}
+            _passthrough_dicts = {
+                "header", "phan_I_va_II_chi_tiet_nghiep_vu", "narrative",
+            }
+            for k, v in last_row.items():
+                if k not in summary_record and k not in rule_outputs:
+                    if not isinstance(v, dict) or k in _passthrough_dicts:
+                        summary_record[k] = v
+
+            # Multi-row reporting window
+            if len(data_rows) > 1:
+                window = _derive_reporting_window_from_rows(data_rows)
+                if window is not None:
+                    tu_ngay, den_ngay = window
+                    interval = f"Từ ngày {tu_ngay} đến ngày {den_ngay}"
+                    aggregated_data["tu_ngay"] = tu_ngay
+                    aggregated_data["den_ngay"] = den_ngay
+                    aggregated_data["thoi_gian_tu_den"] = interval
+                    summary_record["tu_ngay"] = tu_ngay
+                    summary_record["den_ngay"] = den_ngay
+                    summary_record["thoi_gian_tu_den"] = interval
+                    header = summary_record.get("header")
+                    if isinstance(header, dict):
+                        patched_header = dict(header)
+                        patched_header["thoi_gian_tu_den"] = interval
+                        summary_record["header"] = patched_header
+
+                merged_cnch = _collect_cnch_items(data_rows)
+                if merged_cnch:
+                    summary_record["danh_sach_cnch"] = merged_cnch
+                    aggregated_data["danh_sach_cnch"] = merged_cnch
+                    if _is_empty_cnch_detail(summary_record.get("chi_tiet_cnch")):
+                        detail_text = _build_cnch_detail_from_items(merged_cnch)
+                        summary_record["chi_tiet_cnch"] = detail_text
+                        aggregated_data["chi_tiet_cnch"] = detail_text
+                        nghiep_vu = summary_record.get("phan_I_va_II_chi_tiet_nghiep_vu")
+                        if isinstance(nghiep_vu, dict):
+                            patched_nghiep_vu = dict(nghiep_vu)
+                            patched_nghiep_vu["chi_tiet_cnch"] = detail_text
+                            summary_record["phan_I_va_II_chi_tiet_nghiep_vu"] = patched_nghiep_vu
+
+                merged_cong_van = _collect_cong_van_items(data_rows)
+                merged_cong_tac_khac = _collect_cong_tac_khac_items(data_rows)
+                summary_record["danh_sach_cong_van_tham_muu"] = merged_cong_van
+                aggregated_data["danh_sach_cong_van_tham_muu"] = merged_cong_van
+                summary_record["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
+                aggregated_data["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
+
+                for counter_field in ("tong_cong_van", "tong_bao_cao", "tong_ke_hoach"):
+                    summed = _sum_row_int_field(data_rows, counter_field)
+                    summary_record[counter_field] = summed
+                    aggregated_data[counter_field] = summed
+
+                cleaned_an_ninh = _clean_cong_tac_an_ninh_text(summary_record.get("cong_tac_an_ninh"))
+                if cleaned_an_ninh:
+                    summary_record["cong_tac_an_ninh"] = cleaned_an_ninh
+                    aggregated_data["cong_tac_an_ninh"] = cleaned_an_ninh
+                    nghiep_vu = summary_record.get("phan_I_va_II_chi_tiet_nghiep_vu")
+                    if isinstance(nghiep_vu, dict):
+                        patched_nghiep_vu = dict(nghiep_vu)
+                        patched_nghiep_vu["cong_tac_an_ninh"] = cleaned_an_ninh
+                        summary_record["phan_I_va_II_chi_tiet_nghiep_vu"] = patched_nghiep_vu
+
+        # 9. Normalize master payload
+        summary_record = _normalize_master_payload(template.schema_definition or {}, summary_record)
+        normalized_top_level = _normalize_master_payload(template.schema_definition or {}, aggregated_data)
+        for key, value in normalized_top_level.items():
+            if key not in aggregated_data or aggregated_data.get(key) is None:
+                aggregated_data[key] = value
+
+        aggregated_data["records"] = [summary_record] if summary_record else []
+        aggregated_data["_source_records"] = data_rows
+
+        try:
+            flat_df = pd.json_normalize(data_rows, sep="_")
+            aggregated_data["_flat_records"] = flat_df.to_dict(orient="records")
+        except Exception:
+            aggregated_data["_flat_records"] = data_rows
+
+        # 10. Metadata & metrics
+        enrichment_counts: dict[str, int] = {}
+        for entry in enrichment_audit:
+            src = entry["data_source"]
+            enrichment_counts[src] = enrichment_counts.get(src, 0) + 1
+        fully_enriched = enrichment_counts.get("stage1+stage2", 0)
+        enrichment_partial = fully_enriched > 0 and fully_enriched < len(jobs)
+
+        aggregated_data["_metadata"] = {
+            "total_jobs": len(jobs),
+            "total_data_rows": len(data_rows),
+            "generated_at": datetime.utcnow().isoformat(),
+            "template_name": template.name,
+            "template_version": template.version,
+            "enrichment_summary": enrichment_counts,
+            "enrichment_partial": enrichment_partial,
+            "enrichment_audit": enrichment_audit,
+            "sources_used": self._build_sources_used(jobs, template.name),
+        }
+        aggregated_data["metrics"] = {
+            "total_records": len(data_rows),
+            "total_jobs": len(jobs),
+            "rules_applied": len(rules),
+        }
+
+        # Sanitize
+        aggregated_data = _sanitize_for_json(aggregated_data)
+
+        return aggregated_data
+
     def get_report(self, report_id: str, tenant_id: str) -> AggregationReport:
         """Get a report by ID."""
         report = (

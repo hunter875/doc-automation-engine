@@ -14,9 +14,9 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api } from "@/lib/api";
-import { formatDate, downloadBlob } from "@/lib/utils";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { CalendarPicker } from "./calendar-picker";
+import { api } from "@/lib/api";
 import type { Template, ExtractionJob, AggregationReport } from "@/lib/types";
 import { toast } from "sonner";
 
@@ -95,13 +95,20 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
   const [reportDetail, setReportDetail] = useState<AggregationReport | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  // Create report form
+  // Create aggregation report form (from selected jobs)
   const [selTplId, setSelTplId] = useState<string>("");
   const [reportName, setReportName] = useState(
     `Báo cáo ${new Date().toLocaleDateString("vi-VN")}`
   );
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+
+  // Create daily report form (from template + date)
+  const [dailySelectedTemplateId, setDailySelectedTemplateId] = useState<string>("");
+  const [dailySelectedGroupName, setDailySelectedGroupName] = useState<string>("__none");
+  const [dailyReportDate, setDailyReportDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [dailyReportName, setDailyReportName] = useState<string>("");
+  const [generatingDaily, setGeneratingDaily] = useState(false);
 
   // Export state
   const [exporting, setExporting] = useState<string | null>(null);
@@ -156,7 +163,7 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
     setCreating(true);
     const res = await api.reports.create({
       template_id: selTplId,
-        job_ids: Array.from(selectedJobIds),
+      job_ids: Array.from(selectedJobIds),
       report_name: reportName.trim() || `Báo cáo ${new Date().toLocaleDateString("vi-VN")}`,
     });
     setCreating(false);
@@ -169,6 +176,39 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
       toast.error(`Tổng hợp thất bại: ${res.error}`);
     }
   }
+
+  async function handleGenerateDaily() {
+    if (!dailySelectedTemplateId) {
+      toast.warning("Vui lòng chọn template đại diện");
+      return;
+    }
+    if (!dailyReportDate) {
+      toast.warning("Vui lòng chọn ngày báo cáo");
+      return;
+    }
+    setGeneratingDaily(true);
+    const payload: any = {
+      template_id: dailySelectedTemplateId,
+      report_date: dailyReportDate,
+      name: dailyReportName || undefined,
+      status: "approved",
+    };
+    if (dailySelectedGroupName !== "__none") {
+      payload.group_name = dailySelectedGroupName;
+    }
+    const res = await api.reports.generateDaily(payload);
+    setGeneratingDaily(false);
+    if (res.ok) {
+      const result = res.data as any; // DailyReportResponse
+      toast.success(`Đã tạo báo cáo: ${result.report_name} (${result.jobs_selected} hồ sơ)`);
+      setDailyReportName("");
+      loadReports();
+      onRefreshJobs();
+    } else {
+      toast.error(`Tạo báo cáo thất bại: ${res.error}`);
+    }
+  }
+
 
   async function handleExportExcel() {
     if (!selectedReportId) return;
@@ -369,6 +409,71 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
         )}
       </div>
 
+      {/* Section 1.5 — Create Daily Report (from Reports tab) */}
+      <div className="space-y-4">
+        <h3 className="font-semibold text-base">📅 Tạo báo cáo ngày</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Template</Label>
+            <Select value={dailySelectedTemplateId} onValueChange={setDailySelectedTemplateId}>
+              <SelectTrigger className="mt-1.5">
+                <SelectValue placeholder="Chọn template…" />
+              </SelectTrigger>
+              <SelectContent>
+                {templates.map(t => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Ngày báo cáo</Label>
+            <input
+              type="date"
+              value={dailyReportDate}
+              onChange={(e) => setDailyReportDate(e.target.value)}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+        <div>
+          <Label>Tên báo cáo (tuỳ chọn)</Label>
+          <Input
+            value={dailyReportName}
+            onChange={(e) => setDailyReportName(e.target.value)}
+            placeholder="Ví dụ: Báo cáo ngày 24/04"
+            className="mt-1.5"
+          />
+        </div>
+        <div>
+          <Label>Nhóm tổng hợp (Aggregation Group)</Label>
+          <Select value={dailySelectedGroupName} onValueChange={setDailySelectedGroupName}>
+            <SelectTrigger className="mt-1.5">
+              <SelectValue placeholder="Tất cả nhóm…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none">Tất cả (không nhóm)</SelectItem>
+              {Array.from(new Set(templates.map(t => t.aggregation_group).filter(Boolean))).map(group => (
+                <SelectItem key={group} value={group}>{group}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            Chọn nhóm để tổng hợp chỉ các mẫu thuộc nhóm đó. Để trống để tổng hợp tất cả.
+          </p>
+        </div>
+        <Button
+          onClick={handleGenerateDaily}
+          disabled={generatingDaily || !dailySelectedTemplateId}
+          className="w-full"
+        >
+          {generatingDaily ? "Đang tạo…" : "🚀 Tạo báo cáo ngày"}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Hệ thống sẽ tổng hợp tất cả hồ sơ đã duyệt cho template đã chọn trong ngày cụ thể.
+        </p>
+      </div>
+
       <Separator />
 
       {/* Section 2 — Report list + export */}
@@ -430,7 +535,10 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
 
                 {/* Aggregated data preview */}
                 {loadingDetail ? (
-                  <p className="text-sm text-muted-foreground">Đang tải…</p>
+                  <div className="rounded-md border p-4">
+                    <p className="text-sm font-semibold mb-3">🔍 Dữ liệu tổng hợp:</p>
+                    <TableSkeleton rows={8} columns={5} />
+                  </div>
                 ) : reportDetail?.aggregated_data && (
                   <div className="rounded-md border p-4">
                     <p className="text-sm font-semibold mb-3">🔍 Dữ liệu tổng hợp:</p>

@@ -11,21 +11,21 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { api } from "@/lib/api";
-import { downloadBlob, getMonthName, getDaysInMonth } from "@/lib/utils";
-import { CalendarPicker } from "./calendar-picker";
+import { downloadBlob, getMonthName } from "@/lib/utils";
 import type {
   SheetInspectDay,
   SheetInspectJob,
   SheetIssue,
   ColumnMappingRow,
-  CalendarDay,
 } from "@/lib/types";
 import { toast } from "sonner";
+import { CalendarGrid } from "./calendar-grid";
 
 // ─── Types for internal use ────────────────────────────────────────────────────
 
-type TabKey = "grid" | "calendar" | "mapping" | "issues";
+type TabKey = "grid" | "mapping" | "issues";
 
 const SHEETS = [
   { id: "BC NGÀY", label: "📋 BC NGÀY", color: "bg-green-100 dark:bg-green-900/30" },
@@ -166,33 +166,17 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
     ? inspectData.find((d) => d.date === selectedDay) ?? null
     : null;
 
-  // ── Reuse CalendarPicker for calendar tab ─────────────────────────────────
-
-  const calendarDays: CalendarDay[] = inspectData.map((d) => ({
-    date: d.date,
-    job_count: d.job_count,
-    approved_count: d.approved_count,
-    has_issues: d.has_issues,
-    jobs: d.jobs.map((j) => ({
-      id: j.id,
-      file_name: j.file_name,
-      status: j.status,
-      template_id: "",
-      created_at: j.created_at,
-    })),
-  }));
-
   return (
     <div className="space-y-3">
       {/* ── Header: filters + actions ──────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Button variant="ghost" size="icon" onClick={prevMonth}>
+        <Button variant="ghost" size="icon" onClick={prevMonth} aria-label="Tháng trước">
           <ChevronLeft className="h-4 w-4" />
         </Button>
         <span className="font-semibold min-w-36 text-center">
           {getMonthName(month, year)}
         </span>
-        <Button variant="ghost" size="icon" onClick={nextMonth}>
+        <Button variant="ghost" size="icon" onClick={nextMonth} aria-label="Tháng sau">
           <ChevronRight className="h-4 w-4" />
         </Button>
 
@@ -279,8 +263,8 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
         <div className="flex-1 min-w-0">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
             <TabsList className="mb-3">
-              <TabsTrigger value="grid">📊 Grid</TabsTrigger>
               <TabsTrigger value="calendar">📅 Calendar</TabsTrigger>
+              <TabsTrigger value="grid">📊 Grid</TabsTrigger>
               <TabsTrigger value="mapping">🔗 Mapping</TabsTrigger>
               <TabsTrigger value="issues">
                 ⚠️ Issues
@@ -292,7 +276,17 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
               </TabsTrigger>
             </TabsList>
 
-            {/* ── Tab 1: Grid ────────────────────────────────────────── */}
+            {/* ── Tab 1: Calendar ───────────────────────────────────────── */}
+            <TabsContent value="calendar" className="mt-0">
+              <CalendarTab
+                month={month}
+                year={year}
+                inspectData={inspectData}
+                loading={loadingInspect}
+              />
+            </TabsContent>
+
+            {/* ── Tab 2: Grid ────────────────────────────────────────── */}
             <TabsContent value="grid" className="mt-0">
               <GridTab
                 inspectData={inspectData}
@@ -302,16 +296,6 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
               />
             </TabsContent>
 
-            {/* ── Tab 2: Calendar ─────────────────────────────────────── */}
-            <TabsContent value="calendar" className="mt-0">
-              <CalendarTab
-                calendarDays={calendarDays}
-                selectedDay={selectedDay}
-                onSelectDay={setSelectedDay}
-                onPrevMonth={prevMonth}
-                onNextMonth={nextMonth}
-              />
-            </TabsContent>
 
             {/* ── Tab 3: Mapping ─────────────────────────────────────── */}
             <TabsContent value="mapping" className="mt-0">
@@ -361,9 +345,7 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
   const days = inspectData.filter((d) => d.job_count > 0);
 
   if (loading) {
-    return <div className="h-48 flex items-center justify-center">
-      <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
-    </div>;
+    return <TableSkeleton rows={8} columns={14} headerHeight="h-10" rowHeight="h-12" />;
   }
 
   if (days.length === 0) {
@@ -379,6 +361,7 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
       {/* Header row */}
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-xs">
+          <caption className="sr-only">Lưới theo dõi hồ sơ theo ngày và STT</caption>
           <thead>
             <tr className="bg-muted/50">
               <th className="text-left px-3 py-2 font-semibold w-24 sticky left-0 bg-muted/50">Ngày</th>
@@ -503,123 +486,103 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
   );
 }
 
+
 // ─── Tab 2: Calendar ────────────────────────────────────────────────────────────
 
 interface CalendarTabProps {
-  calendarDays: CalendarDay[];
-  selectedDay: string | null;
-  onSelectDay: (date: string) => void;
-  onPrevMonth: () => void;
-  onNextMonth: () => void;
+  month: number;
+  year: number;
+  inspectData: SheetInspectDay[];
+  loading: boolean;
 }
 
-function CalendarTab({ calendarDays, selectedDay, onSelectDay, onPrevMonth, onNextMonth }: CalendarTabProps) {
-  // Use a simplified read-only calendar (reuse CalendarPicker logic)
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
+function CalendarTab({ month, year, inspectData, loading }: CalendarTabProps) {
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
-  // We need month/year from calendarDays — use a prop or default
-  // For this tab we show the current inspector month
-  const [displayMonth] = useState(currentMonth);
-  const [displayYear] = useState(currentYear);
-
-  const numDays = getDaysInMonth(displayYear, displayMonth);
-  const firstDow = (() => {
-    const js = new Date(displayYear, displayMonth - 1, 1).getDay();
-    return js === 0 ? 6 : js - 1; // Mon-based
-  })();
-
-  const WEEKDAYS_VI = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
-
-  // Build day map
-  const dayMap = new Map(calendarDays.map((d) => [d.date, d]));
-  const rows: (CalendarDay | null)[][] = [];
-  const cells: (CalendarDay | null)[] = [
-    ...Array(firstDow).fill(null),
-    ...calendarDays,
-  ];
-  for (let i = 0; i < cells.length; i += 7) {
-    rows.push(cells.slice(i, i + 7));
+  if (loading) {
+    return (
+      <div className="h-48 flex items-center justify-center">
+        <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
-  const lastRow = rows[rows.length - 1];
-  while (lastRow.length < 7) lastRow.push(null);
+
+  // Status helpers (same as CalendarPicker)
+  type DayStatus = "complete" | "partial" | "issues" | "empty";
+
+  function inspectDayStatus(day: SheetInspectDay): DayStatus {
+    if (day.job_count === 0) return "empty";
+    if (day.has_issues) return "issues";
+    if (day.approved_count > 0) return "complete";
+    return "partial";
+  }
+
+  function inspectDayBgClass(s: DayStatus): string {
+    switch (s) {
+      case "complete": return "bg-green-100 dark:bg-green-900/40";
+      case "partial": return "bg-yellow-100 dark:bg-yellow-900/40";
+      case "issues": return "bg-red-100 dark:bg-red-900/40";
+      case "empty": return "bg-muted/30";
+    }
+    return "";
+  }
+
+  function inspectDayBorderClass(s: DayStatus, selected: boolean): string {
+    if (selected) return "border-blue-600 border-2 ring-2 ring-blue-200 dark:ring-blue-800";
+    switch (s) {
+      case "complete": return "border-green-300 dark:border-green-700";
+      case "partial": return "border-yellow-300 dark:border-yellow-700";
+      case "issues": return "border-red-300 dark:border-red-700";
+      case "empty": return "border-transparent";
+    }
+    return "";
+  }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="icon" onClick={onPrevMonth}>
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <span className="font-semibold">{getMonthName(displayMonth, displayYear)}</span>
-        <Button variant="ghost" size="icon" onClick={onNextMonth}>
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-7 gap-1">
-        {WEEKDAYS_VI.map((d) => (
-          <div key={d} className="text-center text-xs font-medium text-muted-foreground py-1">{d}</div>
-        ))}
-        {rows.flat().map((day, i) => {
-          if (!day) return <div key={`e-${i}`} className="h-12" />;
-          const isSelected = selectedDay === day.date;
-          const s = day.job_count === 0 ? "empty"
-            : day.has_issues ? "issues"
-            : day.approved_count > 0 ? "complete"
-            : "partial";
-          const bgClass = s === "complete" ? "bg-green-100 dark:bg-green-900/40"
-            : s === "partial" ? "bg-yellow-100 dark:bg-yellow-900/40"
-            : s === "issues" ? "bg-red-100 dark:bg-red-900/40"
-            : "bg-muted/30";
-          const borderClass = isSelected ? "border-blue-600 border-2 ring-2 ring-blue-200"
-            : s === "complete" ? "border-green-300"
-            : s === "issues" ? "border-red-300"
-            : s === "partial" ? "border-yellow-300"
-            : "border-transparent";
-          const dayNum = parseInt(day.date.split("-")[2], 10);
+    <div className="space-y-4">
+      <CalendarGrid
+        month={month}
+        year={year}
+        days={inspectData}
+        selectedDay={selectedDay}
+        onSelectDay={setSelectedDay}
+        showHeader={false}
+        showLegend={true}
+        renderDay={(dayData, dayNumber, isSelected) => {
+          const s = inspectDayStatus(dayData);
           return (
-            <button
-              key={day.date}
-              onClick={() => onSelectDay(day.date)}
-              title={`${day.job_count} hồ sơ · ${day.approved_count} duyệt`}
-              className={`h-12 rounded-md flex flex-col items-center justify-center
-                transition-all cursor-pointer hover:shadow-md hover:scale-105
-                ${bgClass} ${borderClass}`}
-            >
+            <>
               <span className={`text-sm font-medium ${s !== "empty" ? "text-foreground" : "text-muted-foreground"}`}>
-                {dayNum}
+                {dayNumber}
               </span>
-              {day.job_count > 0 && (
-                <span className="text-[10px] text-muted-foreground">{day.job_count}</span>
+              {dayData.job_count > 0 && (
+                <span className="text-[10px] leading-none text-muted-foreground">
+                  {dayData.job_count}
+                </span>
               )}
-            </button>
+            </>
           );
-        })}
-      </div>
-
-      {/* Day detail panel */}
-      {selectedDay && (() => {
-        const dayData = calendarDays.find((d) => d.date === selectedDay);
-        if (!dayData) return null;
-        return (
-          <div className="rounded-md border p-4 space-y-3">
-            <h4 className="font-semibold text-sm">
-              📋 Chi tiết {selectedDay} — {dayData.jobs.length} hồ sơ
-            </h4>
-            <div className="flex gap-2 flex-wrap">
-              {dayData.jobs.map((job) => (
-                <Badge key={job.id} variant={job.status === "approved" ? "success" : "secondary"}>
-                  {job.file_name}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
+        }}
+        getCellClassName={(dayData, isSelected) => {
+          const s = inspectDayStatus(dayData);
+          return `${inspectDayBgClass(s)} ${inspectDayBorderClass(s, isSelected)}`;
+        }}
+        getCellTitle={(dayData) => `${dayData.job_count} hồ sơ · ${dayData.approved_count} duyệt${dayData.has_issues ? " · ⚠️" : ""}`}
+      />
+      {selectedDay && (
+        <div className="mt-4 border rounded-md p-4">
+          <h4 className="font-semibold mb-2">
+            Chi tiết ngày {selectedDay}
+          </h4>
+          <p className="text-sm text-muted-foreground">
+            Xem chi tiết trong tab Grid hoặc chức năng đang phát triển.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─── Tab 3: Mapping ────────────────────────────────────────────────────────────
 
@@ -630,9 +593,7 @@ interface MappingTabProps {
 
 function MappingTab({ mapping, loading }: MappingTabProps) {
   if (loading) {
-    return <div className="h-48 flex items-center justify-center">
-      <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
-    </div>;
+    return <TableSkeleton rows={8} columns={5} />;
   }
 
   if (!mapping.length) {
@@ -653,6 +614,7 @@ function MappingTab({ mapping, loading }: MappingTabProps) {
 
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-xs">
+          <caption className="sr-only">Ánh xạ cột Excel sang trường dữ liệu</caption>
           <thead>
             <tr className="bg-muted/50">
               <th className="text-left px-3 py-2">Col</th>
@@ -702,9 +664,7 @@ interface IssuesTabProps {
 
 function IssuesTab({ issues, loading, onReload }: IssuesTabProps) {
   if (loading) {
-    return <div className="h-48 flex items-center justify-center">
-      <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
-    </div>;
+    return <TableSkeleton rows={6} columns={5} />;
   }
 
   if (!issues.length) {
@@ -743,6 +703,7 @@ function IssuesTab({ issues, loading, onReload }: IssuesTabProps) {
           <h4 className="text-sm font-semibold">{date}</h4>
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-xs">
+              <caption className="sr-only">Danh sách sự khác biệt giữa Excel và hệ thống</caption>
               <thead>
                 <tr className="bg-muted/50">
                   <th className="text-left px-3 py-2">STT</th>

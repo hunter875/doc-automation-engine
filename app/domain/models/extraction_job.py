@@ -57,6 +57,11 @@ class ExtractionTemplate(Base):
     google_sheet_worksheet = Column(String(100), nullable=True)
     google_sheet_range = Column(String(50), nullable=True, default="A1:ZZZ")
     google_sheet_schema_path = Column(String(500), nullable=True, default="/tmp/sheet_schema.yaml")
+    google_sheet_configs = Column(JSONB, nullable=True)
+
+    # Aggregation group for cross-template daily reports
+    # Templates with the same aggregation_group will be aggregated together
+    aggregation_group = Column(String(100), nullable=True, index=True)
 
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True, index=True)
@@ -193,6 +198,17 @@ class ExtractionJob(Base):
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
 
+    # Snapshot ingestion fields (v5.0)
+    sheet_revision_hash = Column(String(64), nullable=True, index=True)
+    report_date = Column(Date, nullable=True, index=True)
+    report_version = Column(Integer, nullable=True)
+    validation_report = Column(JSONB, nullable=True)
+    supersedes_job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -208,6 +224,13 @@ class ExtractionJob(Base):
     document = relationship("Document", backref="extraction_jobs")
     creator = relationship("User", foreign_keys=[created_by], backref="created_extraction_jobs")
     reviewer = relationship("User", foreign_keys=[reviewed_by])
+    # Self-referential for snapshot versioning
+    superseded_by = relationship(
+        "ExtractionJob",
+        remote_side=[id],
+        backref="supersedes",
+        foreign_keys=[supersedes_job_id],
+    )
 
     def __repr__(self) -> str:
         return f"<ExtractionJob {self.id} status={self.status}>"
@@ -288,6 +311,9 @@ class AggregationReport(Base):
     approved_jobs = Column(Integer, nullable=False)
 
     status = Column(String(20), default="draft")  # draft | finalized
+
+    # Optional: aggregation group for cross-template reports
+    aggregation_group = Column(String(100), nullable=True, index=True)
 
     created_by = Column(
         UUID(as_uuid=True),

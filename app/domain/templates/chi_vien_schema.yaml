@@ -1,0 +1,12 @@
+sheet_mapping:
+  danh_sach_chi_vien:
+    fields:
+      stt: ["STT", "stt"]
+      ngay: ["NGÀY XẢY RA", "Ngày", "ngay"]
+      dia_diem: ["ĐỊA ĐIỂM", "dia_diem"]
+      khu_vuc_quan_ly: ["KHU VỰC QUẢN LÝ", "khu_vuc"]
+      so_luong_xe: ["SỐ LƯỢNG XE", "so_xe"]
+      thoi_gian_di: ["THỜI GIAN ĐI", "thoi_gian_di"]
+      thoi_gian_ve: ["THỜI GIAN VỀ", "thoi_gian_ve"]
+      chi_huy: ["CHỈ HUY CHỮA CHÁY", "chi_huy"]
+      ghi_chu: ["Ghi chú", "ghi_chu"]

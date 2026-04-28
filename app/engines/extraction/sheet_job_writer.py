@@ -94,7 +94,10 @@ class JobWriter:
             reason="google sheet ingestion processing",
         )
 
-        pipeline_result = SheetExtractionPipeline().run(row_document)
+        pipeline_result = SheetExtractionPipeline().run(
+            row_document,
+            schema_path=source_references.get("schema_path")
+        )
         if pipeline_result.status == "ok" and pipeline_result.output is not None:
             canonical_payload: dict[str, Any] = pipeline_result.output.model_dump()
         else:

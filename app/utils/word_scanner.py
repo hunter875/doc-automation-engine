@@ -130,13 +130,36 @@ def _is_metadata_field(var_name: str) -> bool:
     return any(keyword in name_lower for keyword in METADATA_KEYWORDS)
 
 def _to_snake_case(name: str) -> str:
+    """Convert a name to snake_case, ensuring valid Python identifier.
+
+    Handles:
+    - Vietnamese diacritics: strip to ASCII equivalents or keep as-is? We strip non-ASCII for simplicity.
+    - Spaces/hyphens/dots → underscores
+    - Leading digits → prepend 'field_'
+    - Empty result → 'unnamed_field'
+    - Multiple consecutive underscores → single underscore
+    """
+    original = name
+    # First, try to normalize Vietnamese diacritics by removing them
+    # Simple approach: replace common Vietnamese chars with ASCII equivalents
+    # For more thorough normalization, we'd use unidecode, but keeping it simple
+    # We'll just convert to ASCII by ignoring non-ASCII in the regex
     s = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     s = re.sub(r"_+", "_", s).strip("_").lower()
     if s and s[0].isdigit():
         s = "field_" + s
-    return s or "unnamed_field"
+    if not s:
+        s = "unnamed_field"
+        logger.warning(
+            f"Placeholder '{original}' converted to empty snake_case, using fallback '{s}'"
+        )
+    return s
 
 def _extract_loop_arrays(full_text: str) -> dict[str, dict[str, Any]]:
+    """Extract for-loop arrays from the document text.
+
+    Returns: {array_name: {item_alias: str, fields: {field_key: FieldDefinition}}}
+    """
     arrays: dict[str, dict[str, Any]] = {}
     stack: list[dict[str, Any]] = []
 
@@ -182,6 +205,12 @@ def _extract_loop_arrays(full_text: str) -> dict[str, dict[str, Any]]:
             if loop_info["alias"] != alias:
                 continue
             field_key = _to_snake_case(field_name)
+            # Log if we see a field that might duplicate within the same array
+            if field_key in loop_info["fields"]:
+                logger.debug(
+                    f"Duplicate subfield '{field_key}' in array '{loop_info['array_name']}' "
+                    f"(from '{field_name}') — will overwrite previous definition"
+                )
             loop_info["fields"][field_key] = {
                 "name": field_key,
                 "type": _infer_subfield_type(field_key),
@@ -202,16 +231,22 @@ def _extract_loop_arrays(full_text: str) -> dict[str, dict[str, Any]]:
             "item_alias": info["item_alias"],
             "fields": field_list,
         }
+
+    logger.info(f"WORD_SCAN: Extracted {len(normalized)} arrays from loops")
+    for arr_name, arr_info in normalized.items():
+        logger.debug(f"  Array '{arr_name}': {len(arr_info['fields'])} subfields: {[f['name'] for f in arr_info['fields']]}")
+
     return normalized
 
 def _extract_all_placeholders(full_text: str) -> list[dict[str, Any]]:
+    """Extract all unique placeholders with their raw and normalized names."""
     seen: dict[str, dict[str, Any]] = {}
     for match in PLACEHOLDER_RE.finditer(full_text):
         # ĐÃ FIX: Lấy group 1 (biến trong {{}}) hoặc group 2 (biến trong {% if %})
         raw_name = match.group(1) or match.group(2)
         if not raw_name:
             continue
-            
+
         key = raw_name.strip()
         if key not in seen:
             seen[key] = {
@@ -221,12 +256,35 @@ def _extract_all_placeholders(full_text: str) -> list[dict[str, Any]]:
                 "occurrences": 0,
             }
         seen[key]["occurrences"] += 1
+
+    # Log detailed mapping for debugging
+    logger.info(f"WORD_SCAN: Found {len(seen)} unique raw placeholders")
+    for raw, info in sorted(seen.items(), key=lambda x: x[1]["snake_name"]):
+        logger.debug(f"  '{raw}' -> '{info['snake_name']}' (occurrences: {info['occurrences']})")
+
     return list(seen.values())
 
 # ── Main entry point ──────────────────────────────────────────
 
 def scan_word_template(file_bytes: bytes, use_llm: bool = True) -> dict[str, Any]:
-    doc = DocxDocument(io.BytesIO(file_bytes))
+    """Scan a Word template and extract placeholder fields and schema.
+
+    Args:
+        file_bytes: Raw bytes of the .docx file
+        use_llm: Whether to use LLM for field extraction (currently unused but kept for compatibility)
+
+    Returns:
+        Dict with schema_definition, aggregation_rules, variables, stats, etc.
+    """
+    logger.info(f"WORD_SCAN_START: file_size={len(file_bytes)} bytes, use_llm={use_llm}")
+
+    try:
+        doc = DocxDocument(io.BytesIO(file_bytes))
+    except Exception as e:
+        logger.error(f"WORD_SCAN_FAILED_DOCX_LOAD: {type(e).__name__}: {e}")
+        raise
+
+    logger.info(f"Document: {len(doc.paragraphs)} paragraphs, {len(doc.tables)} tables")
 
     all_text_parts: list[str] = []
 
@@ -248,23 +306,26 @@ def scan_word_template(file_bytes: bytes, use_llm: bool = True) -> dict[str, Any
                         all_text_parts.append(para.text)
 
     full_text = "\n".join(all_text_parts)
+    logger.debug(f"Full text preview (first 500 chars): {full_text[:500]}")
 
     loop_arrays = _extract_loop_arrays(full_text)
     all_placeholders = _extract_all_placeholders(full_text)
 
+    # Build field dictionary, skipping nested (those with dots)
     found: dict[str, dict[str, Any]] = {}
     for match in PLACEHOLDER_RE.finditer(full_text):
-        # ĐÃ FIX: Lấy group chuẩn xác
         raw_name = match.group(1) or match.group(2)
         if not raw_name:
             continue
-            
+
         if "." in raw_name:
             continue
+
         snake_name = _to_snake_case(raw_name)
 
         if snake_name in found:
             found[snake_name]["occurrences"] += 1
+            logger.debug(f"Duplicate placeholder '{snake_name}' (from '{raw_name}'), incremented count to {found[snake_name]['occurrences']}")
             continue
 
         field_type = _infer_type(snake_name)
@@ -278,8 +339,10 @@ def scan_word_template(file_bytes: bytes, use_llm: bool = True) -> dict[str, Any
             "occurrences": 1,
         }
 
+    # Add array fields (from loops)
     for array_name, info in loop_arrays.items():
         if array_name in found:
+            logger.info(f"Array '{array_name}' already exists as scalar, converting to array type")
             found[array_name]["type"] = "array"
             continue
         found[array_name] = {
@@ -292,6 +355,15 @@ def scan_word_template(file_bytes: bytes, use_llm: bool = True) -> dict[str, Any
         }
 
     variables = list(found.values())
+
+    # Check for duplicate snake_names (shouldn't happen due to dict, but log for safety)
+    snake_names = [v["name"] for v in variables]
+    dupes = [n for n in snake_names if snake_names.count(n) > 1]
+    if dupes:
+        logger.warning(f"WORD_SCAN: Duplicate field names detected after normalization: {set(dupes)}")
+        # This shouldn't happen with dict-based deduplication, but log if it does
+
+    logger.info(f"WORD_SCAN: Extracted {len(variables)} variables before building fields")
 
     fields: list[dict[str, Any]] = []
     for var in variables:
@@ -310,10 +382,15 @@ def scan_word_template(file_bytes: bytes, use_llm: bool = True) -> dict[str, Any
                     "description": f"Một hàng trong bảng {var['name']}",
                     "fields": cols,
                 }
+                logger.debug(f"  Array field '{var['name']}' with {len(cols)} subfields: {[f['name'] for f in cols]}")
             else:
                 field["items"] = {"type": "string", "description": "Phần tử"}
+                logger.debug(f"  Array field '{var['name']}' with no subfields, using generic string item")
 
         fields.append(field)
+        logger.debug(f"  Field: name='{var['name']}', type='{var['type']}'")
+
+    logger.info(f"WORD_SCAN: Built schema with {len(fields)} top-level fields")
 
     schema_definition = {"fields": fields}
 
@@ -347,6 +424,16 @@ def scan_word_template(file_bytes: bytes, use_llm: bool = True) -> dict[str, Any
             })
 
     aggregation_rules = {"rules": agg_rules} if agg_rules else None
+
+    # Log final schema summary for debugging
+    logger.info(
+        f"WORD_SCAN_COMPLETE: fields={len(fields)}, "
+        f"arrays={sum(1 for f in fields if f['type']=='array')}, "
+        f"aggregation_rules={len(agg_rules)}"
+    )
+    # Log field names for easy copy-paste debugging
+    field_names = [f["name"] for f in fields]
+    logger.debug(f"Final field names: {field_names}")
 
     return {
         "field_count": len(variables),

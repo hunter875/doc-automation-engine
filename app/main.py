@@ -86,6 +86,14 @@ async def lifespan(app: FastAPI):
         conn.execute(
             text(
                 """
+                ALTER TABLE IF EXISTS extraction_templates
+                ADD COLUMN IF NOT EXISTS google_sheet_configs JSONB
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
                 ALTER TABLE IF EXISTS extraction_jobs
                 ADD COLUMN IF NOT EXISTS debug_traces JSONB DEFAULT '[]'::jsonb
                 """
@@ -171,6 +179,7 @@ Most endpoints require `X-Tenant-ID` header to specify the tenant context.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

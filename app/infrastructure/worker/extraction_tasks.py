@@ -53,6 +53,7 @@ def ingest_google_sheet_task(self, payload: dict):
             schema_path=str(payload.get("schema_path") or ""),
             source_document_id=str(payload.get("source_document_id")) if payload.get("source_document_id") else None,
             range_a1=str(payload.get("range_a1")) if payload.get("range_a1") else None,
+            configs=payload.get("configs") if payload.get("configs") else None,
         )
         summary = asyncio.run(GoogleSheetIngestionService(db).ingest(req))
         return summary

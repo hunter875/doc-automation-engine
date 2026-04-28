@@ -19,6 +19,7 @@ class FieldSchema:
     required: bool
     default: Any
     transform: str | None
+    section: str | None = None  # top-level section in BlockExtractionOutput
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,66 @@ def _normalize_aliases(raw: Any, fallback: str) -> list[str]:
     return aliases or [fallback]
 
 
+def _infer_field_type(field_name: str) -> str:
+    name = str(field_name).strip().lower()
+    integer_prefixes = (
+        "tong_",
+        "so_",
+        "stt",
+        "cai_",
+        "kiem_tra_",
+        "phat_",
+    )
+    if name.startswith(integer_prefixes):
+        return "integer"
+    return "string"
+
+
+def _collect_sheet_mapping_fields(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    mapping = raw.get("sheet_mapping")
+    if not isinstance(mapping, dict):
+        return {}
+
+    collected: dict[str, dict[str, Any]] = {}
+
+    def _upsert(field_name: str, aliases: list[str]) -> None:
+        normalized_name = str(field_name).strip()
+        if not normalized_name:
+            return
+        if normalized_name not in collected:
+            collected[normalized_name] = {
+                "type": _infer_field_type(normalized_name),
+                "aliases": aliases or [normalized_name],
+                "required": False,
+            }
+            return
+        existing_aliases = set(collected[normalized_name].get("aliases", []))
+        merged = list(existing_aliases.union(set(aliases or [])))
+        collected[normalized_name]["aliases"] = merged or [normalized_name]
+
+    for section_data in mapping.values():
+        if not isinstance(section_data, dict):
+            continue
+
+        for key, value in section_data.items():
+            if key == "stt_map":
+                continue
+
+            if key == "fields" and isinstance(value, dict):
+                for sub_field_name, sub_aliases in value.items():
+                    aliases = _normalize_aliases(sub_aliases, str(sub_field_name).strip())
+                    _upsert(str(sub_field_name).strip(), aliases)
+                continue
+
+            if isinstance(value, dict):
+                aliases = value.get("aliases")
+                if isinstance(aliases, list):
+                    normalized_aliases = _normalize_aliases(aliases, str(key).strip())
+                    _upsert(str(key).strip(), normalized_aliases)
+
+    return collected
+
+
 def load_schema(schema_path: str) -> IngestionSchema:
     path = Path(schema_path).expanduser().resolve()
     if not path.is_file():
@@ -53,7 +114,9 @@ def load_schema(schema_path: str) -> IngestionSchema:
 
     field_block = raw.get("fields")
     if not isinstance(field_block, dict) or not field_block:
-        raise ProcessingError(message="Schema YAML must contain non-empty 'fields' object")
+        field_block = _collect_sheet_mapping_fields(raw)
+    if not isinstance(field_block, dict) or not field_block:
+        raise ProcessingError(message="Schema YAML must contain non-empty 'fields' object or valid 'sheet_mapping' object")
 
     fields: list[FieldSchema] = []
     for field_name, spec in field_block.items():
@@ -72,6 +135,7 @@ def load_schema(schema_path: str) -> IngestionSchema:
                 required=bool(spec.get("required", False)),
                 default=spec.get("default", None),
                 transform=str(spec.get("transformation", "")).strip() or None,
+                section=str(spec.get("section", "")) or None,
             )
         )
 

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef } from "react";
@@ -8,32 +9,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { VirtualTable } from "@/components/ui/virtual-table";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import type { Template, ExtractionJob } from "@/lib/types";
 import { toast } from "sonner";
-
-const STATUS_VI: Record<string, string> = {
-  pending:          "⏳ Đang tiếp nhận…",
-  processing:       "🔄 AI đang đọc tài liệu…",
-  extracted:        "🔄 AI đang phân tích…",
-  enriching:        "🔄 AI đang phân tích chi tiết…",
-  ready_for_review: "✅ Sẵn sàng duyệt",
-  approved:         "✅ Đã duyệt",
-  rejected:         "🚫 Từ chối",
-  failed:           "⚠️ Cần xem lại",
-  aggregated:       "📊 Có trong báo cáo",
-};
-
-function statusBadgeVariant(s: string): "info" | "success" | "warning" | "destructive" | "secondary" | "purple" {
-  if (["processing", "extracted", "enriching", "pending"].includes(s)) return "info";
-  if (["ready_for_review", "approved"].includes(s)) return "success";
-  if (s === "failed") return "warning";
-  if (s === "rejected") return "destructive";
-  if (s === "aggregated") return "purple";
-  return "secondary";
-}
+import { STATUS_VI, statusBadgeVariant } from "@/lib/constants";
 
 interface JobsTabProps {
   templates: Template[];
@@ -43,6 +26,43 @@ interface JobsTabProps {
 }
 
 type StatusFilter = "all" | "processing" | "ready_for_review" | "approved" | "failed";
+
+// Helper function outside component to avoid parser issues
+async function waitForIngestionTask(
+  taskId: string,
+  setSheetProgress: (v: string) => void,
+  onRefreshJobs: () => void
+): Promise<void> {
+  const maxAttempts = 120;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const statusRes = await api.jobs.getBatchStatus(taskId);
+    if (!statusRes.ok) {
+      setSheetProgress("Lỗi đọc trạng thái ingestion");
+      return;
+    }
+
+    const payload = statusRes.data;
+    const total = Number(payload.total || 0);
+    const processed = Math.max(0, total - Number(payload.pending || 0) - Number(payload.processing || 0));
+    setSheetProgress(`Đang chạy: ${processed}/${total || 1} (${payload.progress_percent}%)`);
+
+    if (Number(payload.progress_percent || 0) >= 100) {
+      const inserted = Number(payload.ready_for_review || 0);
+      const failed = Number(payload.failed || 0);
+      if (failed > 0) {
+        toast.warning(`Đồng bộ hoàn tất có lỗi: ${inserted} thành công, ${failed} lỗi.`);
+      } else {
+        toast.success(`✅ Đồng bộ xong: ${inserted} bản ghi.`);
+      }
+      setSheetProgress(`Hoàn tất: ${inserted} bản ghi`);
+      onRefreshJobs();
+      return;
+    }
+  }
+  toast.warning("Đồng bộ vẫn đang chạy, vui lòng kiểm tra lại sau.");
+  setSheetProgress("Đang chạy nền…");
+}
 
 export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTabProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -57,7 +77,6 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [tplFilter, setTplFilter] = useState<string>("__all");
 
-  const [actionJobId, setActionJobId] = useState<string>("");
   const [retrying, setRetrying] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -128,28 +147,34 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
   jobs.forEach((j) => { sc[j.status] = (sc[j.status] ?? 0) + 1; });
   const processing = (sc.processing ?? 0) + (sc.pending ?? 0) + (sc.enriching ?? 0) + (sc.extracted ?? 0);
 
-  const actionJob = jobs.find((j) => j.id === actionJobId);
-
   async function handleSheetIngestionFromTemplate(templateId: string) {
     const selectedTpl = templates.find(t => t.id === templateId);
-    if (!selectedTpl?.google_sheet_id) {
+    if (!selectedTpl) return;
+
+    if (!selectedTpl.google_sheet_id) {
       toast.warning("Template chưa được cấu hình Google Sheets (thiếu Sheet ID).");
       return;
     }
-    if (!selectedTpl?.google_sheet_worksheet) {
-      toast.warning("Template chưa được cấu hình Google Sheets (thiếu worksheet name).");
-      return;
-    }
-    if (!selectedTpl?.google_sheet_schema_path) {
-      toast.warning("Template chưa được cấu hình Google Sheets (thiếu schema path).");
+
+    // Check for multi-config or legacy single config
+    const hasConfigs = selectedTpl.google_sheet_configs && selectedTpl.google_sheet_configs.length > 0;
+    const hasLegacy = selectedTpl.google_sheet_worksheet && selectedTpl.google_sheet_schema_path;
+
+    if (!hasConfigs && !hasLegacy) {
+      toast.warning("Template chưa được cấu hình Google Sheets (thiếu worksheet hoặc schema path).");
       return;
     }
 
     setSheetIngesting(true);
     setSheetProgress("Đang đưa vào hàng đợi…");
-    const res = await api.jobs.ingestGoogleSheet({
-      template_id: templateId,
-    });
+
+    const payload: any = { template_id: templateId };
+    if (hasConfigs) {
+      payload.configs = selectedTpl.google_sheet_configs;
+    }
+    // If legacy only, no configs field; backend will use template's old fields
+
+    const res = await api.jobs.ingestGoogleSheet(payload);
 
     if (!res.ok) {
       setSheetIngesting(false);
@@ -159,40 +184,8 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
     }
 
     setSheetProgress("Đã nhận task, đang theo dõi tiến độ…");
-    await waitForIngestionTask(res.data.batch_id || res.data.task_id);
+    await waitForIngestionTask(res.data.batch_id || res.data.task_id, setSheetProgress, onRefreshJobs);
     setSheetIngesting(false);
-  }
-
-  async function waitForIngestionTask(taskId: string): Promise<void> {
-    const maxAttempts = 120;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const statusRes = await api.jobs.getBatchStatus(taskId);
-      if (!statusRes.ok) {
-        setSheetProgress("Lỗi đọc trạng thái ingestion");
-        return;
-      }
-
-      const payload = statusRes.data;
-      const total = Number(payload.total || 0);
-      const processed = Math.max(0, total - Number(payload.pending || 0) - Number(payload.processing || 0));
-      setSheetProgress(`Đang chạy: ${processed}/${total || 1} (${payload.progress_percent}%)`);
-
-      if (Number(payload.progress_percent || 0) >= 100) {
-        const inserted = Number(payload.ready_for_review || 0);
-        const failed = Number(payload.failed || 0);
-        if (failed > 0) {
-          toast.warning(`Đồng bộ hoàn tất có lỗi: ${inserted} thành công, ${failed} lỗi.`);
-        } else {
-          toast.success(`✅ Đồng bộ xong: ${inserted} bản ghi.`);
-        }
-        setSheetProgress(`Hoàn tất: ${inserted} bản ghi`);
-        onRefreshJobs();
-        return;
-      }
-    }
-    toast.warning("Đồng bộ vẫn đang chạy, vui lòng kiểm tra lại sau.");
-    setSheetProgress("Đang chạy nền…");
   }
 
   return (
@@ -239,19 +232,21 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
             const hasSheetConfig = selectedTpl?.google_sheet_id;
             if (hasSheetConfig) {
               return (
-                <Button
-                  variant="outline"
-                  onClick={() => handleSheetIngestionFromTemplate(overrideTplId)}
-                  disabled={sheetIngesting}
-                  className="w-full"
-                >
-                  {sheetIngesting ? (
-                    <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang đồng bộ…</>
-                  ) : (
-                    <>📥 Đồng bộ từ Google Sheets</>
-                  )}
-                </Button>
-                {sheetProgress && <p className="text-sm text-muted-foreground mt-1">{sheetProgress}</p>}
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSheetIngestionFromTemplate(overrideTplId)}
+                    disabled={sheetIngesting}
+                    className="w-full"
+                  >
+                    {sheetIngesting ? (
+                      <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang đồng bộ…</>
+                    ) : (
+                      <>📥 Đồng bộ từ Google Sheets</>
+                    )}
+                  </Button>
+                  {sheetProgress && <p className="text-sm text-muted-foreground mt-1">{sheetProgress}</p>}
+                </>
               );
             }
             return null;
@@ -322,69 +317,90 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
           </Select>
         </div>
 
-        {jobs.length === 0 ? (
+        {loadingJobs ? (
+          <TableSkeleton rows={10} columns={5} />
+        ) : jobs.length === 0 ? (
           <p className="text-sm text-muted-foreground">Chưa có hồ sơ nào.</p>
         ) : filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">Không có hồ sơ nào phù hợp bộ lọc.</p>
         ) : (
           <div className="rounded-md border overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tên file</TableHead>
-                  <TableHead>Mẫu</TableHead>
-                  <TableHead>Trạng thái</TableHead>
-                  <TableHead>Thời gian</TableHead>
-                  <TableHead>Thao tác</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((j) => {
-                  const fname = j.file_name ?? j.display_name ?? "(no name)";
-                  const tplName = tplMap[j.template_id ?? ""] ?? "—";
-                  return (
-                    <TableRow key={j.id} className={actionJobId === j.id ? "bg-accent" : ""}>
-                      <TableCell className="font-medium max-w-xs truncate" title={fname}>
-                        {fname}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{tplName}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusBadgeVariant(j.status)}>
-                          {STATUS_VI[j.status] ?? j.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {formatDate(j.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          {j.status === "failed" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRetry(j.id)}
-                              disabled={retrying}
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {!["processing", "pending"].includes(j.status) && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleDelete(j.id)}
-                              disabled={deletingId === j.id}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <VirtualTable
+              data={filtered}
+              columns={[
+                {
+                  key: "file_name",
+                  header: "Tên file",
+                  width: "30%",
+                  renderCell: (j: ExtractionJob) => (
+                    <span className="font-medium max-w-xs truncate block" title={j.file_name ?? j.display_name ?? "(no name)"}>
+                      {j.file_name ?? j.display_name ?? "(no name)"}
+                    </span>
+                  ),
+                },
+                {
+                  key: "template",
+                  header: "Mẫu",
+                  width: "25%",
+                  renderCell: (j: ExtractionJob) => (
+                    <span className="text-sm text-muted-foreground">{tplMap[j.template_id ?? ""] ?? "—"}</span>
+                  ),
+                },
+                {
+                  key: "status",
+                  header: "Trạng thái",
+                  width: "20%",
+                  renderCell: (j: ExtractionJob) => (
+                    <Badge variant={statusBadgeVariant(j.status)} role="status">
+                      {STATUS_VI[j.status] ?? j.status}
+                    </Badge>
+                  ),
+                },
+                {
+                  key: "time",
+                  header: "Thời gian",
+                  width: "15%",
+                  renderCell: (j: ExtractionJob) => (
+                    <span className="text-sm text-muted-foreground">{formatDate(j.created_at)}</span>
+                  ),
+                },
+                {
+                  key: "actions",
+                  header: "Thao tác",
+                  width: "10%",
+                  renderCell: (j: ExtractionJob) => {
+                    const fname = j.file_name ?? j.display_name ?? "(no name)";
+                    return (
+                      <div className="flex gap-1">
+                        {j.status === "failed" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRetry(j.id)}
+                            disabled={retrying}
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {!["processing", "pending"].includes(j.status) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDelete(j.id)}
+                            disabled={deletingId === j.id}
+                            aria-label="Xoá hồ sơ"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  },
+                },
+              ]}
+              containerHeight="500px"
+              rowHeight={45}
+            />
           </div>
         )}
       </div>

@@ -1,0 +1,79 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.psutil_socks
+.hypothesis/
+.pytest_cache/
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+.next/
+out/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitmodules
+.gitattributes
+
+# Project specific
+logs/
+*.sqlite
+*.db
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.vercel
+docker-compose.override.yml
+
+# Frontend build artifacts
+frontend/.next/
+frontend/out/
+frontend/dist/
+
+# Test artifacts
+htmlcov/
+test-results/
+
+# Misc
+.cursor/
+.claude/

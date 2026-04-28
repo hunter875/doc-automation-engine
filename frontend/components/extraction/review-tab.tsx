@@ -12,32 +12,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { VirtualTable } from "@/components/ui/virtual-table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import type { Template, ExtractionJob } from "@/lib/types";
 import { toast } from "sonner";
-
-const STATUS_VI: Record<string, string> = {
-  pending:          "⏳ Đang tiếp nhận…",
-  processing:       "🔄 AI đang đọc tài liệu…",
-  extracted:        "🔄 AI đang phân tích…",
-  enriching:        "🔄 AI đang phân tích chi tiết…",
-  ready_for_review: "✅ Sẵn sàng duyệt",
-  approved:         "✅ Đã duyệt",
-  rejected:         "🚫 Từ chối",
-  failed:           "⚠️ Cần xem lại",
-  aggregated:       "📊 Có trong báo cáo",
-};
-
-function statusBadgeVariant(s: string): "info" | "success" | "warning" | "destructive" | "secondary" | "purple" {
-  if (["processing", "extracted", "enriching", "pending"].includes(s)) return "info";
-  if (["ready_for_review", "approved"].includes(s)) return "success";
-  if (s === "failed") return "warning";
-  if (s === "rejected") return "destructive";
-  if (s === "aggregated") return "purple";
-  return "secondary";
-}
+import { STATUS_VI, statusBadgeVariant } from "@/lib/constants";
 
 /** Render extracted_data as a smart visual layout */
 function RenderExtractedData({ data }: { data: Record<string, unknown> }) {
@@ -137,6 +120,12 @@ export function ReviewTab({ templates, jobs, onRefreshJobs, loadingJobs }: Revie
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
 
+  // Bulk actions
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [bulkApproving, setBulkApproving] = useState(false);
+  const [bulkRejecting, setBulkRejecting] = useState(false);
+  const [bulkNotes, setBulkNotes] = useState("");
+
   const tplMap: Record<string, string> = {};
   templates.forEach((t) => { tplMap[t.id] = t.name; });
 
@@ -154,6 +143,134 @@ export function ReviewTab({ templates, jobs, onRefreshJobs, loadingJobs }: Revie
     if (search && !fname.includes(search.toLowerCase())) return false;
     return true;
   });
+
+  // Bulk actions: compute approvable job IDs (only these can be selected)
+  const approvableIds = new Set(
+    filtered.filter((j) => ["ready_for_review", "extracted"].includes(j.status)).map((j) => j.id)
+  );
+  const allSelected = approvableIds.size > 0 && selectedJobIds.size === approvableIds.size;
+
+  function toggleJobSelection(jobId: string) {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedJobIds((prev) => {
+      if (prev.size === approvableIds.size) return new Set(); // clear
+      return new Set(approvableIds);
+    });
+  }
+
+  async function handleBulkApprove() {
+    const idsToApprove = Array.from(selectedJobIds).filter((id) => approvableIds.has(id));
+    if (idsToApprove.length === 0) return;
+    if (!confirm(`Duyệt ${idsToApprove.length} hồ sơ?`)) return;
+    setBulkApproving(true);
+    const results = await Promise.all(
+      idsToApprove.map(async (id) => {
+        const job = jobs.find((j) => j.id === id)!;
+        const finalData = job.reviewed_data ?? job.extracted_data ?? {};
+        const res = await api.review.approve(id, { reviewed_data: finalData, notes: bulkNotes || null });
+        return res.ok;
+      })
+    );
+    const successCount = results.filter(Boolean).length;
+    const failCount = results.length - successCount;
+    setBulkApproving(false);
+    setSelectedJobIds(new Set());
+    setBulkNotes("");
+    onRefreshJobs();
+    toast.success(`Đã duyệt ${successCount} hồ sơ.${failCount > 0 ? ` ${failCount} thất bại.` : ""}`);
+  }
+
+  async function handleBulkReject() {
+    if (!bulkNotes.trim()) {
+      toast.warning("Bắt buộc nhập ghi chú lý do từ chối.");
+      return;
+    }
+    const idsToReject = Array.from(selectedJobIds).filter((id) => approvableIds.has(id));
+    if (idsToReject.length === 0) return;
+    if (!confirm(`Từ chối ${idsToReject.length} hồ sơ?`)) return;
+    setBulkRejecting(true);
+    const results = await Promise.all(
+      idsToReject.map(async (id) => {
+        const res = await api.review.reject(id, { notes: bulkNotes });
+        return res.ok;
+      })
+    );
+    const successCount = results.filter(Boolean).length;
+    const failCount = results.length - successCount;
+    setBulkRejecting(false);
+    setSelectedJobIds(new Set());
+    setBulkNotes("");
+    onRefreshJobs();
+    toast.success(`Đã từ chối ${successCount} hồ sơ.${failCount > 0 ? ` ${failCount} thất bại.` : ""}`);
+  }
+
+  // Virtual table columns configuration
+  const virtualColumns = [
+    {
+      key: "checkbox",
+      header: (
+        <div className="flex items-center justify-center">
+          <Checkbox
+            checked={allSelected}
+            onCheckedChange={toggleSelectAll}
+            aria-label="Chọn tất cả"
+          />
+        </div>
+      ),
+      width: "48px",
+      renderCell: (j: ExtractionJob) => (
+        <div onClick={(e) => e.stopPropagation()}>
+          <Checkbox
+            checked={selectedJobIds.has(j.id)}
+            onCheckedChange={() => toggleJobSelection(j.id)}
+            disabled={!approvableIds.has(j.id)}
+          />
+        </div>
+      ),
+    },
+    {
+      key: "file_name",
+      header: "Tên file",
+      width: "30%",
+      renderCell: (j: ExtractionJob) => (
+        <span className="font-medium max-w-xs truncate block">{j.file_name ?? j.display_name ?? "(no name)"}</span>
+      ),
+    },
+    {
+      key: "template",
+      header: "Mẫu",
+      width: "25%",
+      renderCell: (j: ExtractionJob) => (
+        <span className="text-sm text-muted-foreground">{tplMap[j.template_id ?? ""] ?? "—"}</span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Trạng thái",
+      width: "20%",
+      renderCell: (j: ExtractionJob) => (
+        <Badge variant={statusBadgeVariant(j.status)} role="status">
+          {STATUS_VI[j.status] ?? j.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "time",
+      header: "Thời gian",
+      width: "15%",
+      renderCell: (j: ExtractionJob) => (
+        <span className="text-sm text-muted-foreground">{formatDate(j.created_at)}</span>
+      ),
+    },
+  ];
 
   // Load detail when job is selected
   useEffect(() => {
@@ -283,42 +400,47 @@ export function ReviewTab({ templates, jobs, onRefreshJobs, loadingJobs }: Revie
       </div>
 
       {/* Job table */}
-      {filtered.length === 0 ? (
+      {loadingJobs ? (
+        <TableSkeleton rows={10} columns={5} />
+      ) : filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground">Không tìm thấy hồ sơ nào.</p>
       ) : (
-        <div className="rounded-md border overflow-auto max-h-72">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Tên file</TableHead>
-                <TableHead>Mẫu</TableHead>
-                <TableHead>Trạng thái</TableHead>
-                <TableHead>Thời gian</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((j) => {
-                const fname = j.file_name ?? j.display_name ?? "(no name)";
-                return (
-                  <TableRow
-                    key={j.id}
-                    className={`cursor-pointer ${selectedJobId === j.id ? "bg-accent" : ""}`}
-                    onClick={() => setSelectedJobId(j.id)}
-                  >
-                    <TableCell className="font-medium max-w-xs truncate">{fname}</TableCell>
-                    <TableCell className="text-sm">{tplMap[j.template_id ?? ""] ?? "—"}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusBadgeVariant(j.status)}>
-                        {STATUS_VI[j.status] ?? j.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{formatDate(j.created_at)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <>
+          {selectedJobIds.size > 0 && (
+            <div className="bg-accent/50 border rounded-md p-3 mb-3 flex items-center gap-3">
+              <Checkbox
+                checked={allSelected}
+                onCheckedChange={toggleSelectAll}
+                aria-label="Chọn tất cả"
+              />
+              <span className="font-medium text-sm">{selectedJobIds.size} hồ sơ được chọn</span>
+              <Input
+                placeholder="Ghi chú (bắt buộc cho từ chối)"
+                value={bulkNotes}
+                onChange={(e) => setBulkNotes(e.target.value)}
+                className="max-w-xs h-8 text-sm"
+              />
+              <Button size="sm" onClick={handleBulkApprove} disabled={bulkApproving}>
+                {bulkApproving ? "Đang duyệt…" : "✅ Duyệt"}
+              </Button>
+              <Button size="sm" variant="destructive" onClick={handleBulkReject} disabled={bulkRejecting}>
+                {bulkRejecting ? "Đang từ chối…" : "❌ Từ chối"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedJobIds(new Set())} aria-label="Xoá chọn">
+                ✕
+              </Button>
+            </div>
+          )}
+          <VirtualTable
+            data={filtered}
+            columns={virtualColumns}
+            containerHeight="288px"
+            className="rounded-md border"
+            getRowClassName={(j) => `cursor-pointer ${selectedJobId === j.id ? "bg-accent" : ""}`}
+            onRowClick={(j) => setSelectedJobId(j.id)}
+            caption="Danh sách hồ sơ, chọn để duyệt hoặc từ chối"
+          />
+        </>
       )}
 
       {/* Detail panel */}
@@ -342,7 +464,7 @@ export function ReviewTab({ templates, jobs, onRefreshJobs, loadingJobs }: Revie
                     )}
                   </p>
                 </div>
-                <Badge variant={statusBadgeVariant(detail.status)}>
+                <Badge variant={statusBadgeVariant(detail.status)} role="status">
                   {STATUS_VI[detail.status] ?? detail.status}
                 </Badge>
               </div>

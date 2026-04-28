@@ -1,0 +1,38 @@
+ĐỀ XUẤT CẢI THIỆN UX/UI
+Priority 1 - Critical:
+Remove duplicate workflows:
+
+Merge Reports tab vào Export tab, hoặc xóa Reports tab.
+Merge CalendarPicker vào sheet-inspector, hoặc xóa tab "calendar" trong sheet-inspector.
+Fix sentinel values: Chuẩn hóa tất cả Select value="" → value="__none".
+
+Add visual pipeline indicator: Dashboard hoặc Extraction page cần flowchart: Template → Jobs → Review → Export. Highlight current stage.
+
+Template creation wizard: Chia thành steps: (1) Scan/Upload → (2) Configure fields → (3) Google Sheets (optional) → (4) Review & Create.
+
+Add bulk actions: Trong Review tab, chọn nhiều jobs → bulk approve.
+
+Priority 2 - Important:
+Improve loading states: Thêm skeleton screens cho tables.
+
+Add diff view: Trong Review tab, khi có reviewed_data, show diff giữa original vs edited.
+
+Mobile responsive: Sidebar collapse vào hamburger menu.
+
+Accessibility fixes:
+
+Thêm htmlFor cho Label inputs.
+Kiểm tra contrast ratios.
+Focus visible outlines.
+Error handling: Retry button, offline detection, undo toast.
+
+Priority 3 - Nice to have:
+Search trong job selection (Export tab) → thêm <Input> filter.
+
+Export progress: Word/Excel export là sync download, nếu file lớn có thể mất thời gian. Thêm progress bar hoặc spinner overlay.
+
+Template preview: Trong Templates list, click để xem preview schema (modal) thay vì expand inline.
+
+Job timeline: Trong Job detail, show timeline: Upload → Extract → Enrich → Review (với timestamps).
+
+Internationalization: Tất cả text hard-coded tiếng Việt → nên dùng i18n (next-intl) nếu cần multi-language.
