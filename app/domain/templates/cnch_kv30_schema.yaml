@@ -1,0 +1,37 @@
+# Schema cho sheet "CNCH" - CỨU NẠN, CỨU HỘ
+# Row 0 = group header "CỨU NẠN, CỨU HỘ", Row 1 = sub-headers, Row 2+ = data
+# Column mapping (from excel_headers.json row_1):
+#   col_0=STT, col_1=Loại hình CNCH, col_2=Ngày xảy ra sự cố,
+#   col_3=Thời gian đến, col_4=Địa điểm, col_5=Địa chỉ,
+#   col_6=Chỉ huy CNCH, col_7=Thiệt hại về người, col_8=Số người cứu được
+
+sheet_mapping:
+  danh_sach_cnch:
+    fields:
+      stt:
+        aliases: ["STT", "stt"]
+        type: integer
+      noi_dung_tin_bao:
+        aliases: ["Loại hình CNCH", "Loai hinh CNCH"]
+        type: string
+      ngay_xay_ra:
+        aliases: ["Ngày xảy ra sự cố", "Ngày xảy ra sự cố"]
+        type: string
+      thoi_gian:
+        aliases: ["Thời gian đến", "Thời gian"]
+        type: string
+      dia_diem:
+        aliases: ["Địa điểm", "Dia diem"]
+        type: string
+      dia_chi:
+        aliases: ["Địa chỉ", "Dia chi"]
+        type: string
+      chi_huy:
+        aliases: ["Chỉ huy CNCH", "Chỉ huy"]
+        type: string
+      thiet_hai:
+        aliases: ["Thiệt hại về người", "Thiet hai ve nguoi"]
+        type: string
+      so_nguoi_cuu:
+        aliases: ["Số người cứu được", "Số người cứu được"]
+        type: integer

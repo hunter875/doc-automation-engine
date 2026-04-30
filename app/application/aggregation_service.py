@@ -82,12 +82,62 @@ WORD_STT_MAP: dict[int, str] = {
 }
 
 STT_DISPLAY_LABELS: dict[int, str] = {
+    # Phần I: Tình hình cháy, nổ (STT 2-13)
+    2: "Tổng số vụ cháy",
+    3: "Số người chết",
+    4: "Số người bị thương",
+    5: "Số người cứu được",
+    6: "Tài sản thiệt hại (ước tính triệu đồng)",
+    7: "Tài sản cứu được (ước tính triệu đồng)",
+    8: "Tổng số vụ nổ",
+    9: "Số người chết",
+    10: "Số người bị thương",
+    11: "Số người cứu được",
+    12: "Tài sản thiệt hại (ước tính triệu đồng)",
+    13: "Tài sản cứu được (ước tính triệu đồng)",
+    # Phần I: Tình hình tai nạn, sự cố (STT 14-19)
+    14: "Tổng số vụ tai nạn, sự cố",
     15: "Số người cứu được (=STT 16+STT 17)",
+    16: "Trong đó, số người trực tiếp cứu được",
+    17: "Trong đó, số người tổ chức hướng dẫn tự thoát nạn",
+    18: "Số thi thể nạn nhân tìm được",
+    19: "Số tài sản cứu được (ước tính triệu đồng)",
+    # Phần II: Tuyên truyền MXH (STT 22-29)
+    22: "Số tin, bài đã đăng phát",
+    23: "Số hình ảnh được đăng tải",
+    24: "Số lượt cài đặt ứng dụng HELP 114",
+    25: "Tổng tuyên truyền qua MXH",
+    27: "Số cuộc",
+    28: "Số người tham dự",
+    29: "Số khuyến cáo, tờ rơi đã phát hành",
+    # Phần II: Kiểm tra PCCC (STT 31-40)
+    31: "Số cơ sở được kiểm an toàn PCCC (=STT 31+STT 33)",
     32: "Kiểm tra định kỳ",
     33: "Kiểm tra đột xuất theo chuyên đề",
+    34: "Số vi phạm được phát hiện",
     35: "Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT 36+…+STT 39)",
+    36: "Trong đó, phạt cảnh cáo",
+    37: "Trong đó, tạm đình chỉ hoạt động",
+    38: "Trong đó, đình chỉ hoạt động",
+    39: "Trong đó, phạt tiền",
+    40: "Số tiền phạt thu được (triệu đồng)",
+    # Phần II: Phương án PCCC (STT 43-53)
+    43: "Số phương án được xây dựng và phê duyệt",
+    44: "Số phương án được thực tập",
+    46: "Số phương án được xây dựng và phê duyệt",
+    47: "Số phương án được thực tập",
+    49: "Số phương án được xây dựng và phê duyệt",
+    50: "Số phương án được thực tập",
+    52: "Số phương án được xây dựng và phê duyệt",
+    53: "Số phương án được thực tập",
+    # Phần II: Huấn luyện (STT 55-61)
     55: "Tổng số CBCS tham gia huấn luyện (=STT 56+…+STT 61)",
+    56: "Chỉ huy phòng",
+    57: "Chỉ huy Đội",
+    58: "Cán bộ tiểu đội",
+    59: "Chiến sỹ CC và CNCH",
     60: "Lái xe CC và CNCH",
+    61: "Lái tàu CC và CNCH",
 }
 
 WORD_STT_REVERSE_MAP: dict[str, int] = {field_name: stt for stt, field_name in WORD_STT_MAP.items()}
@@ -675,6 +725,45 @@ def _collect_cong_tac_khac_items(rows: list[dict[str, Any]]) -> list[str]:
     return merged
 
 
+def _collect_specialized_list_items(rows: list[dict[str, Any]], list_key: str) -> list[dict[str, Any]]:
+    """Collect and de-duplicate a specialized list (chi_vien / chay / sclq) from all rows.
+
+    Each list type uses a different set of signature fields to detect duplicates:
+      - danh_sach_chi_vien: ngay + dia_diem + chi_huy_chua_chay
+      - danh_sach_chay:    ngay_xay_ra + dia_diem + ten_vu_chay
+      - danh_sach_sclq:    ngay + dia_diem + nguyen_nhan
+    """
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    sig_fields: tuple[str, str, str]
+    if list_key == "danh_sach_chi_vien":
+        sig_fields = ("ngay", "dia_diem", "chi_huy_chua_chay")
+    elif list_key == "danh_sach_chay":
+        sig_fields = ("ngay_xay_ra", "dia_diem", "ten_vu_chay")
+    elif list_key == "danh_sach_sclq":
+        sig_fields = ("ngay", "dia_diem", "nguyen_nhan")
+    else:
+        return merged
+
+    for row in rows:
+        items = row.get(list_key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            sig = tuple(str(item.get(f, "") or "").strip() for f in sig_fields)
+            if not any(sig):
+                continue
+            if sig in seen:
+                continue
+            seen.add(sig)
+            merged.append(dict(item))
+
+    return merged
+
+
 def _sum_row_int_field(rows: list[dict[str, Any]], field_name: str) -> int:
     total = 0
     for row in rows:
@@ -1112,6 +1201,14 @@ class AggregationService:
                     if not isinstance(v, dict) or k in _passthrough_dicts:
                         summary_record[k] = v
 
+            # Merge specialized lists across rows (these bypass the dict-passthrough above
+            # since they are lists, not dicts — handle explicitly here).
+            for list_key in ("danh_sach_chi_vien", "danh_sach_chay", "danh_sach_sclq"):
+                merged_list = _collect_specialized_list_items(data_rows, list_key)
+                if merged_list:
+                    summary_record[list_key] = merged_list
+                    aggregated_data[list_key] = merged_list
+
             # For multi-row reports, use the full reporting window instead of
             # blindly inheriting the last row's interval.
             if len(data_rows) > 1:
@@ -1160,6 +1257,16 @@ class AggregationService:
                 aggregated_data["danh_sach_cong_van_tham_muu"] = merged_cong_van
                 summary_record["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
                 aggregated_data["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
+
+                merged_chi_vien = _collect_specialized_list_items(data_rows, "danh_sach_chi_vien")
+                merged_chay = _collect_specialized_list_items(data_rows, "danh_sach_chay")
+                merged_sclq = _collect_specialized_list_items(data_rows, "danh_sach_sclq")
+                summary_record["danh_sach_chi_vien"] = merged_chi_vien
+                aggregated_data["danh_sach_chi_vien"] = merged_chi_vien
+                summary_record["danh_sach_chay"] = merged_chay
+                aggregated_data["danh_sach_chay"] = merged_chay
+                summary_record["danh_sach_sclq"] = merged_sclq
+                aggregated_data["danh_sach_sclq"] = merged_sclq
 
                 for counter_field in ("tong_cong_van", "tong_bao_cao", "tong_ke_hoach"):
                     summed = _sum_row_int_field(data_rows, counter_field)
@@ -1472,6 +1579,14 @@ class AggregationService:
                     if not isinstance(v, dict) or k in _passthrough_dicts:
                         summary_record[k] = v
 
+            # Merge specialized lists across rows (these bypass the dict-passthrough above
+            # since they are lists, not dicts — handle explicitly here).
+            for list_key in ("danh_sach_chi_vien", "danh_sach_chay", "danh_sach_sclq"):
+                merged_list = _collect_specialized_list_items(data_rows, list_key)
+                if merged_list:
+                    summary_record[list_key] = merged_list
+                    aggregated_data[list_key] = merged_list
+
             # Multi-row reporting window
             if len(data_rows) > 1:
                 window = _derive_reporting_window_from_rows(data_rows)
@@ -1510,6 +1625,16 @@ class AggregationService:
                 aggregated_data["danh_sach_cong_van_tham_muu"] = merged_cong_van
                 summary_record["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
                 aggregated_data["danh_sach_cong_tac_khac"] = merged_cong_tac_khac
+
+                merged_chi_vien = _collect_specialized_list_items(data_rows, "danh_sach_chi_vien")
+                merged_chay = _collect_specialized_list_items(data_rows, "danh_sach_chay")
+                merged_sclq = _collect_specialized_list_items(data_rows, "danh_sach_sclq")
+                summary_record["danh_sach_chi_vien"] = merged_chi_vien
+                aggregated_data["danh_sach_chi_vien"] = merged_chi_vien
+                summary_record["danh_sach_chay"] = merged_chay
+                aggregated_data["danh_sach_chay"] = merged_chay
+                summary_record["danh_sach_sclq"] = merged_sclq
+                aggregated_data["danh_sach_sclq"] = merged_sclq
 
                 for counter_field in ("tong_cong_van", "tong_bao_cao", "tong_ke_hoach"):
                     summed = _sum_row_int_field(data_rows, counter_field)

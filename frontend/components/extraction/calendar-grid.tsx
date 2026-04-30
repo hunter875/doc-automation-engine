@@ -93,7 +93,7 @@ export function CalendarGrid<T extends { date: string }>({
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <span className="font-semibold text-base">
-              {getMonthName(month, year)}
+              {getMonthName(month)}
             </span>
             <Button variant="ghost" size="icon" onClick={onNextMonth} aria-label="Tháng sau">
               <ChevronRight className="h-4 w-4" />

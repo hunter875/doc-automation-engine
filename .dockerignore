@@ -77,3 +77,7 @@ test-results/
 # Misc
 .cursor/
 .claude/
+.mypy_cache/
+.ruff_cache/
+tmp/
+temp_excel/

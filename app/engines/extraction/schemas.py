@@ -21,12 +21,14 @@ class CNCHItem(BaseModel):
       luc_luong_tham_gia  → vu.luc_luong_tham_gia (forces/vehicles deployed)
       ket_qua_xu_ly       → vu.ket_qua_xu_ly      (outcome)
       thong_tin_nan_nhan  → vu.thong_tin_nan_nhan  (victim info)
+      chi_huy             → vu.chi_huy             (CNCH commander)
+      so_nguoi_cuu        → vu.so_nguoi_cuu        (rescued count)
     """
 
     # extra="ignore" so LLM-returned unknown keys don't cause ValidationError
     model_config = ConfigDict(extra="ignore")
 
-    stt: int = Field(default=0, strict=True)
+    stt: int = Field(default=0)
     ngay_xay_ra: str = Field(default="")
     thoi_gian: str = Field(default="")
     dia_diem: str = Field(default="")
@@ -35,6 +37,9 @@ class CNCHItem(BaseModel):
     ket_qua_xu_ly: str = Field(default="", description="Kết quả xử lý sự cố")
     thiet_hai: str = Field(default="", description="Thiệt hại về người / tài sản")
     thong_tin_nan_nhan: str = Field(default="", description="Thông tin nạn nhân")
+    # Fields from KV30 sheet CNCH
+    chi_huy: str = Field(default="", description="Chỉ huy CNCH")
+    so_nguoi_cuu: int = Field(default=0, description="Số người được cứu")
     # Internal use only — kept for backward compat with business-rules path
     mo_ta: str = Field(default="")
 
@@ -137,10 +142,11 @@ class BlockNghiepVu(BaseModel):
 
     tong_so_vu_chay: int = Field(default=0)
     tong_so_vu_no: int = Field(default=0)
+    tong_sclq: int = Field(default=0, description="Tổng số SCLQ đến PCCC&CNCH")
     tong_so_vu_cnch: int = Field(default=0)
     chi_tiet_cnch: str = Field(default="")
     quan_so_truc: int = Field(default=0)
-    tong_chi_vien: int = Field(default=0, description="Tổng số lượt chi viện")
+    tong_chi_vien: int = Field(default=0, description="Tổng số chi viện")
     tong_cong_van: int = Field(default=0, description="Tổng số công văn tham mưu")
     tong_bao_cao: int = Field(default=0, description="Tổng số báo cáo tham mưu")
     tong_ke_hoach: int = Field(default=0, description="Tổng số kế hoạch tham mưu")
@@ -209,7 +215,8 @@ class ChiVienItem(BaseModel):
     so_luong_xe: int = Field(default=0, description="Số lượng xe tham gia")
     thoi_gian_di: str = Field(default="", description="Thời gian xuất phát")
     thoi_gian_ve: str = Field(default="", description="Thời gian quay về")
-    chi_huy_chua_chay: str = Field(default="", description="Chỉ huy chữa cháy")
+    chi_huy: str = Field(default="", description="Chỉ huy chữa cháy")
+    chi_huy_chua_chay: str = Field(default="", description="Chỉ huy chữa cháy (alias)")
     ghi_chu: str = Field(default="", description="Ghi chú bổ sung")
 
 
@@ -238,12 +245,16 @@ class VuChayItem(BaseModel):
     ten_vu_chay: str = Field(default="", description="Tên/tình huống vụ cháy")
     dia_diem: str = Field(default="", description="Địa điểm xảy ra")
     nguyen_nhan: str = Field(default="", description="Nguyên nhân vụ cháy")
+    phan_loai: str = Field(default="", description="Phân loại vụ cháy")
     thiet_hai_nguoi: str = Field(default="", description="Thiệt hại về người")
     thiet_hai_tai_san: str = Field(default="", description="Thiệt hại về tài sản (VNĐ)")
+    tai_san_cuu: str = Field(default="", description="Tài sản cứu chữa được")
+    thoi_gian_toi: str = Field(default="", description="Thời gian tới đám cháy")
     thoi_gian_khong_che: str = Field(default="", description="Thời gian khống chế đám cháy")
     thoi_gian_dap_tat: str = Field(default="", description="Thời gian dập tắt hoàn toàn")
     so_luong_xe: int = Field(default=0, description="Số lượng xe chữa cháy")
     chi_huy: str = Field(default="", description="Chỉ huy chữa cháy")
+    ghi_chu: str = Field(default="", description="Ghi chú")
 
 
 class TuyenTruyenOnline(BaseModel):
@@ -271,6 +282,15 @@ class CNCHListOutput(BaseModel):
 
 
 class BlockExtractionOutput(BaseModel):
+    """Canonical block extraction output with optional per-date report date.
+
+    ``_report_date`` is set by DailyReportBuilder when building multi-date reports.
+    It is used by the ingestion service to determine the job's report_date.
+    It is not serialized into the JSONB column.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
     header: BlockHeader
     phan_I_va_II_chi_tiet_nghiep_vu: BlockNghiepVu
     bang_thong_ke: list[ChiTieu] = Field(default_factory=list)

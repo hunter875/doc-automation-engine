@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     # NEW: from Excel sheets chuyên biệt
     "danh_sach_chi_vien",
     "danh_sach_chay",
+    "danh_sach_sclq",
     "tuyen_truyen_online",
 }
 
@@ -67,6 +70,76 @@ def _to_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _coerce_value(raw_value: Any, field_type: str) -> Any:
+    """Coerce a raw sheet value to the schema's declared field_type.
+
+    Handles common mismatches:
+      - int ``0`` / ``1`` from checkboxes → ``str`` ("0", "1") for string fields
+      - ``str`` "0" / "1" → ``int`` for integer fields
+      - ``float`` values → ``int`` for integer fields
+    """
+    if raw_value is None:
+        return None
+
+    ft = str(field_type or "string").strip().lower()
+
+    if ft == "string":
+        if isinstance(raw_value, (int, float)):
+            return str(raw_value)
+        return raw_value
+
+    if ft in ("integer", "int"):
+        if isinstance(raw_value, bool):
+            return int(raw_value)
+        if isinstance(raw_value, (int, float)):
+            return int(raw_value)
+        if isinstance(raw_value, str):
+            text = raw_value.strip().replace(".", "").replace(",", "")
+            try:
+                return int(float(text))
+            except (ValueError, TypeError):
+                return raw_value
+        return raw_value
+
+    if ft in ("float", "double"):
+        if isinstance(raw_value, str):
+            text = raw_value.strip().replace(",", "")
+            try:
+                return float(text)
+            except (ValueError, TypeError):
+                return raw_value
+        return raw_value
+
+    if ft == "boolean":
+        if isinstance(raw_value, bool):
+            return raw_value
+        if isinstance(raw_value, (int, float)):
+            return bool(raw_value)
+        if isinstance(raw_value, str):
+            t = raw_value.strip().lower()
+            if t in ("1", "true", "yes", "co", "có"):
+                return True
+            if t in ("0", "false", "no", "khong", "không"):
+                return False
+        return raw_value
+
+    return raw_value
+
+
+def _get_schema_field_types(schema_path: str, field_map: dict) -> dict[str, str]:
+    """Return field_name → field_type from a loaded schema.
+
+    Reads the schema YAML once (cached by load_schema) and maps canonical field
+    names to their declared types, so that callers can coerce raw sheet values.
+    """
+    try:
+        from app.engines.extraction.mapping.schema_loader import load_schema
+        schema = load_schema(schema_path)
+        return {f.name: f.field_type for f in schema.fields}
+    except Exception:
+        return {}
+
+
 def _get_first(data: dict[str, Any], aliases: list[str], default: Any = "") -> Any:
     normalized = {str(k).strip().lower(): v for k, v in data.items()}
     for key in aliases:
@@ -90,6 +163,182 @@ def _is_blank(value: Any) -> bool:
     if value is None:
         return True
     return str(value).strip() == ""
+
+
+def _normalize_key(value: str) -> str:
+    """Normalize a column name or alias for space-separated matching.
+
+    All keys are normalized to: NFC form + lowercase + diacritics-removed + spaces-only.
+    Diacritics removal is critical because daily_report_builder normalizes sheet header keys
+    (via normalize_unicode_text) to ASCII form, and schema aliases are written without
+    diacritics — so both sides need to normalize to the same ASCII form for matching.
+    """
+    # NFC converts NFD (decomposed) → NFC (precomposed), ensuring consistent form
+    t = unicodedata.normalize("NFC", str(value or "")).strip()
+    # Remove diacritics so "VỤ CHÁY" → "VU CHAY", "ngày" → "ngay"
+    nfkd = unicodedata.normalize("NFKD", t)
+    t = "".join(c for c in nfkd if not unicodedata.combining(c))
+    # Normalize underscores and spaces to single space, then lowercase
+    return re.sub(r"[_\s]+", " ", t).strip().lower()
+
+
+def _normalize_for_alias(value: str) -> str:
+    """Alias-specific normalization (same as _normalize_key for consistency)."""
+    return _normalize_key(value)
+
+
+def _resolve_field_value(
+    core_norm: dict[str, Any],
+    field_name: str,
+    aliases: list[str],
+) -> Any:
+    """Look up a value by trying the canonical field_name and its aliases.
+
+    Candidate lookup order:
+      1. Exact NFC match on canonical field_name and all aliases
+      2. Diacritics-stripped exact match (ASCII core vs diacritics aliases)
+      3. Prefix match for single-word candidates only
+
+    ``field_name`` is the snake_case internal name (e.g. "ngay_bao_cao_month")
+    and is always included as the first candidate — this handles the case where
+    the core dict key is already the normalized field_name and no alias matches.
+    """
+    import unicodedata
+
+    def _strip_diacritics(text: str) -> str:
+        nfkd = unicodedata.normalize("NFKD", text)
+        return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+    # Build deduplicated candidate list: field_name first, then aliases
+    candidates: list[str] = [field_name]
+    seen: set[str] = {field_name}
+    for a in aliases:
+        norm = _normalize_key(a)
+        if norm not in seen:
+            candidates.append(norm)
+            seen.add(norm)
+
+    # Build diacritics-stripped core dict (underscores preserved)
+    core_no_diac: dict[str, Any] = {}
+    for key, val in core_norm.items():
+        core_no_diac[_strip_diacritics(key)] = val
+
+    # 1. Exact NFC match
+    for cand in candidates:
+        lookup = _normalize_key(cand)
+        if lookup in core_norm:
+            return core_norm[lookup]
+
+    # 2. Diacritics-stripped exact match
+    for cand in candidates:
+        lookup = _normalize_key(cand)
+        no_diac = _strip_diacritics(lookup)
+        if no_diac in core_no_diac:
+            return core_no_diac[no_diac]
+
+    # 3. Prefix match for single-word candidates
+    for cand in candidates:
+        lookup = _normalize_key(cand)
+        if " " not in lookup:
+            for key in core_norm:
+                if key.startswith(lookup + " ") or (lookup == key):
+                    return core_norm[key]
+
+    return None
+
+
+def _build_output_custom_header(core: dict, mapping: dict, year: int = 2026) -> BlockHeader:
+    """Build BlockHeader from raw worksheet columns using schema aliases.
+
+    The ``core`` dict contains raw column names as keys (e.g. "ngày", "Số báo cáo").
+    The schema mapping uses aliases (e.g. ["ngày"] for ngay_bao_cao_day).
+    We resolve values via alias lookup, not by field name.
+
+    ``mapping`` may be either:
+      - {"sheet_mapping": {"header": {...}, ...}}  (raw YAML structure)
+      - {"header": {...}, ...}                   (already unwrapped by _load_custom_mapping)
+    """
+    # Unwrap nested sheet_mapping key if present; handle both formats
+    sheet_mapping = mapping.get("sheet_mapping") if isinstance(mapping, dict) else None
+    if sheet_mapping is None:
+        sheet_mapping = mapping if isinstance(mapping, dict) else {}
+
+    header_dict: dict[str, Any] = {}
+    header_spec = sheet_mapping.get("header")
+    if not isinstance(header_spec, dict):
+        return BlockHeader(**header_dict)
+
+    # Build normalized lookup: normalized_col_name → raw_value
+    core_norm = {_normalize_key(k): v for k, v in core.items()}
+
+    # Check each header_spec entry. The key is the internal field name (e.g. "so_bao_cao_day").
+    # We accept it if it maps to a known BlockHeader field name.
+    HEADER_FIELDS = {"so_bao_cao", "ngay_bao_cao", "thoi_gian_tu_den", "don_vi_bao_cao"}
+
+    # Support both direct format and fields sub-dict
+    def get_aliases_from_spec(spec, field_name: str) -> list[str]:
+        """Extract aliases from spec in various formats."""
+        # Format 1: direct list: field_name: ["alias1", "alias2"]
+        if isinstance(spec, list):
+            return [str(item) for item in spec if str(item).strip()]
+        # Format 2: dict with aliases: field_name: {aliases: [...]}
+        if isinstance(spec, dict):
+            # Check for aliases key first
+            aliases = spec.get("aliases", [])
+            if isinstance(aliases, list):
+                return [str(item) for item in aliases if str(item).strip()]
+            # Check for fields sub-dict: field_name: {fields: {field_name: [...]}}
+            fields_dict = spec.get("fields", {})
+            if isinstance(fields_dict, dict):
+                # Look up this field_name within the fields dict
+                field_aliases = fields_dict.get(field_name, [])
+                if isinstance(field_aliases, list):
+                    return [str(item) for item in field_aliases if str(item).strip()]
+        return []
+
+    # Determine the actual fields dict to iterate
+    # If header_spec has a 'fields' key, use that as the field definitions
+    fields_dict = header_spec.get("fields") if isinstance(header_spec.get("fields"), dict) else header_spec
+
+    for field_name, spec in fields_dict.items():
+        if field_name in HEADER_FIELDS:
+            aliases = get_aliases_from_spec(spec, field_name)
+            raw_val = _resolve_field_value(core_norm, field_name, aliases)
+            if raw_val is not None:
+                header_dict[field_name] = raw_val
+
+    # Build ngay_bao_cao from separate day/month fields in header_spec
+    if "ngay_bao_cao" not in header_dict:
+        day_val = None
+        month_val = None
+        # Use fields_dict (the actual field definitions) to look for day/month fields
+        for field_name, spec in fields_dict.items():
+            # Check both direct and nested formats
+            aliases = get_aliases_from_spec(spec, field_name)
+            if field_name == "ngay_bao_cao_day":
+                day_val = _resolve_field_value(core_norm, field_name, aliases)
+            elif field_name == "ngay_bao_cao_month":
+                month_val = _resolve_field_value(core_norm, field_name, aliases)
+        if day_val is not None and month_val is not None:
+            try:
+                day_int = int(str(day_val).strip())
+                month_int = int(str(month_val).strip())
+                # All worksheets in this ingestion run share the same year
+                header_dict["ngay_bao_cao"] = f"{day_int:02d}/{month_int:02d}/{year}"
+            except Exception:
+                pass
+
+    return BlockHeader(**header_dict)
+
+
+def _extract_core(sheet_data: dict[str, Any] | None) -> dict[str, Any]:
+    raw = sheet_data or {}
+    core = raw
+    if isinstance(raw, dict):
+        nested_data = raw.get("data") if isinstance(raw.get("data"), dict) else None
+        if nested_data:
+            core = nested_data
+    return core if isinstance(core, dict) else {}
 
 
 @lru_cache(maxsize=1)
@@ -204,55 +453,55 @@ def _build_bang_thong_ke_from_flat(
     return rows
 
 
-def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
+def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> BlockExtractionOutput:
     sheet_mapping = mapping.get("sheet_mapping", mapping)
 
-    # Build header
-    header_dict: dict[str, Any] = {}
-    if "header" in sheet_mapping:
-        header_spec = sheet_mapping["header"]
-        if isinstance(header_spec, dict) and "fields" in header_spec:
-            field_names = list(header_spec["fields"].keys())
-        else:
-            field_names = [k for k in header_spec.keys() if k not in ("stt_map",)]
-        for field_name in field_names:
-            if field_name in core:
-                header_dict[field_name] = core[field_name]
-        # Special bc_ngay date building
-        if "ngay_bao_cao_day" in field_names and "ngay_bao_cao_month" in field_names:
-            if not header_dict.get("ngay_bao_cao"):
-                day = header_dict.get("ngay_bao_cao_day") or core.get("ngay_bao_cao_day")
-                month = header_dict.get("ngay_bao_cao_month") or core.get("ngay_bao_cao_month")
-                if day is not None and month is not None:
-                    try:
-                        day_int = int(day)
-                        month_int = int(month)
-                        year = "2026" if month_int <= 2 else "2025"
-                        header_dict["ngay_bao_cao"] = f"{day_int:02d}/{month_int:02d}/{year}"
-                    except Exception:
-                        pass
-    header = BlockHeader(**header_dict)
+    # Pre-load schema field types for type coercion
+    field_types = _get_schema_field_types(schema_path, {}) if schema_path else {}
+
+    # Build header (uses case-insensitive key matching)
+    header = _build_output_custom_header(core, mapping)
+
+    # Helper to extract aliases from field spec (supports multiple formats)
+    def _extract_aliases(spec) -> list[str]:
+        """Extract aliases from field specification.
+
+        Supports:
+        - Direct list: ["alias1", "alias2"]
+        - Dict with aliases key: {"aliases": ["alias1", ...]}
+        - Dict with fields sub-dict (handled at higher level)
+        """
+        if isinstance(spec, list):
+            return [str(item) for item in spec if str(item).strip()]
+        if isinstance(spec, dict):
+            aliases = spec.get("aliases", [])
+            if isinstance(aliases, list):
+                return [str(item) for item in aliases if str(item).strip()]
+        return []
 
     # Build phan_I_va_II_chi_tiet_nghiep_vu
     nghiep_vu_dict: dict[str, Any] = {}
     if "nghiep_vu" in sheet_mapping:
         nv_spec = sheet_mapping["nghiep_vu"]
-        if isinstance(nv_spec, dict) and "fields" in nv_spec:
-            nv_field_names = list(nv_spec["fields"].keys())
-        else:
-            nv_field_names = [k for k in nv_spec.keys() if k not in ("stt_map",)]
-        for field_name in nv_field_names:
-            if field_name in core:
-                nghiep_vu_dict[field_name] = core[field_name]
+        # Determine actual fields dict (support both direct and fields sub-dict)
+        nv_fields = nv_spec.get("fields") if isinstance(nv_spec, dict) and isinstance(nv_spec.get("fields"), dict) else nv_spec
+        core_norm = {_normalize_key(k): v for k, v in core.items()}
+        for field_name, spec in nv_fields.items():
+            if field_name in ("stt_map", "fields"):
+                continue
+            aliases = _extract_aliases(spec)
+            val = _resolve_field_value(core_norm, field_name, aliases)
+            if val is not None:
+                nghiep_vu_dict[field_name] = val
     nghiep_vu = BlockNghiepVu(**nghiep_vu_dict)
 
     # Build bang_thong_ke from flat if section present
     btk_items: list[ChiTieu] = []
     if "bang_thong_ke" in sheet_mapping:
-        raw_btk = _build_bang_thong_ke_from_flat(sheet_mapping, core)
+        raw_btk = _build_bang_thong_ke_from_flat(sheet_mapping, core_norm)
         btk_items = [ChiTieu(**item) for item in raw_btk]
 
-    # Build danh_sach_cnch (single item)
+    # Build danh_sach_cnch (single item from list of rows)
     cnch_items: list[CNCHItem] = []
     if "danh_sach_cnch" in sheet_mapping:
         fields_spec = sheet_mapping["danh_sach_cnch"]
@@ -260,14 +509,30 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
             field_map = fields_spec["fields"]
         else:
             field_map = fields_spec
-        item_dict: dict[str, Any] = {}
-        for field_name in field_map.keys():
-            if field_name in core:
-                item_dict[field_name] = core[field_name]
-        if item_dict:
-            cnch_items = [CNCHItem(**item_dict)]
+        raw_list = core.get("danh_sach_cnch") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                if not isinstance(row, dict):
+                    continue
+                row_norm = {_normalize_key(k): v for k, v in row.items()}
+                item_dict: dict[str, Any] = {}
+                for field_name, spec in field_map.items():
+                    if field_name in ("stt_map", "fields"):
+                        continue
+                    aliases = _extract_aliases(spec)
+                    val = _resolve_field_value(row_norm, field_name, aliases)
+                    if val is not None:
+                        ft = field_types.get(field_name, "string")
+                        coerced = _coerce_value(val, ft)
+                        if coerced is not None:
+                            item_dict[field_name] = coerced
+                if item_dict:
+                    try:
+                        cnch_items.append(CNCHItem(**item_dict))
+                    except Exception:
+                        pass
 
-    # Build danh_sach_phuong_tien_hu_hong (single item)
+    # Build danh_sach_phuong_tien_hu_hong (list of items)
     phuong_tien_items: list[PhuongTienHuHongItem] = []
     if "danh_sach_phuong_tien_hu_hong" in sheet_mapping:
         fields_spec = sheet_mapping["danh_sach_phuong_tien_hu_hong"]
@@ -275,14 +540,30 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
             field_map = fields_spec["fields"]
         else:
             field_map = fields_spec
-        item_dict = {}
-        for field_name in field_map.keys():
-            if field_name in core:
-                item_dict[field_name] = core[field_name]
-        if item_dict:
-            phuong_tien_items = [PhuongTienHuHongItem(**item_dict)]
+        raw_list = core.get("danh_sach_phuong_tien_hu_hong") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                if not isinstance(row, dict):
+                    continue
+                row_norm = {_normalize_key(k): v for k, v in row.items()}
+                item_dict: dict[str, Any] = {}
+                for field_name, spec in field_map.items():
+                    if field_name in ("stt_map", "fields"):
+                        continue
+                    aliases = _extract_aliases(spec)
+                    val = _resolve_field_value(row_norm, field_name, aliases)
+                    if val is not None:
+                        ft = field_types.get(field_name, "string")
+                        coerced = _coerce_value(val, ft)
+                        if coerced is not None:
+                            item_dict[field_name] = coerced
+                if item_dict:
+                    try:
+                        phuong_tien_items.append(PhuongTienHuHongItem(**item_dict))
+                    except Exception:
+                        pass
 
-    # Build danh_sach_cong_van_tham_muu (single item)
+    # Build danh_sach_cong_van_tham_muu (list of items)
     cong_van_items: list[CongVanItem] = []
     if "danh_sach_cong_van_tham_muu" in sheet_mapping:
         fields_spec = sheet_mapping["danh_sach_cong_van_tham_muu"]
@@ -290,12 +571,28 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
             field_map = fields_spec["fields"]
         else:
             field_map = fields_spec
-        item_dict = {}
-        for field_name in field_map.keys():
-            if field_name in core:
-                item_dict[field_name] = core[field_name]
-        if item_dict:
-            cong_van_items = [CongVanItem(**item_dict)]
+        raw_list = core.get("danh_sach_cong_van_tham_muu") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                if not isinstance(row, dict):
+                    continue
+                row_norm = {_normalize_key(k): v for k, v in row.items()}
+                item_dict: dict[str, Any] = {}
+                for field_name, spec in field_map.items():
+                    if field_name in ("stt_map", "fields"):
+                        continue
+                    aliases = _extract_aliases(spec)
+                    val = _resolve_field_value(row_norm, field_name, aliases)
+                    if val is not None:
+                        ft = field_types.get(field_name, "string")
+                        coerced = _coerce_value(val, ft)
+                        if coerced is not None:
+                            item_dict[field_name] = coerced
+                if item_dict:
+                    try:
+                        cong_van_items.append(CongVanItem(**item_dict))
+                    except Exception:
+                        pass
 
     # Build danh_sach_cong_tac_khac (list of strings)
     cong_tac_khac: list[str] = []
@@ -305,15 +602,29 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
             field_map = fields_spec["fields"]
         else:
             field_map = fields_spec
-        for field_name in field_map.keys():
-            if field_name in core:
-                val = core[field_name]
-                if isinstance(val, list):
-                    cong_tac_khac.extend([str(v) for v in val if v is not None])
-                else:
-                    cong_tac_khac.append(str(val))
+        raw_list = core.get("danh_sach_cong_tac_khac") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                # Each row could be a string or a dict with a field
+                if isinstance(row, str):
+                    text = _to_text(row)
+                    if text:
+                        cong_tac_khac.append(text)
+                elif isinstance(row, dict):
+                    row_norm = {_normalize_key(k): v for k, v in row.items()}
+                    # Find the first field value that matches any field in field_map
+                    for field_name, spec in field_map.items():
+                        if field_name in ("stt_map", "fields"):
+                            continue
+                        aliases = _extract_aliases(spec)
+                        val = _resolve_field_value(row_norm, field_name, aliases)
+                        if val is not None:
+                            text = _to_text(val)
+                            if text:
+                                cong_tac_khac.append(text)
+                            break  # take first match
 
-    # Build danh_sach_chi_vien (single item)
+    # Build danh_sach_chi_vien (list of items)
     chi_vien_items: list[ChiVienItem] = []
     if "danh_sach_chi_vien" in sheet_mapping:
         fields_spec = sheet_mapping["danh_sach_chi_vien"]
@@ -321,14 +632,30 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
             field_map = fields_spec["fields"]
         else:
             field_map = fields_spec
-        item_dict = {}
-        for field_name in field_map.keys():
-            if field_name in core:
-                item_dict[field_name] = core[field_name]
-        if item_dict:
-            chi_vien_items = [ChiVienItem(**item_dict)]
+        raw_list = core.get("danh_sach_chi_vien") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                if not isinstance(row, dict):
+                    continue
+                row_norm = {_normalize_key(k): v for k, v in row.items()}
+                item_dict: dict[str, Any] = {}
+                for field_name, spec in field_map.items():
+                    if field_name in ("stt_map", "fields"):
+                        continue
+                    aliases = _extract_aliases(spec)
+                    val = _resolve_field_value(row_norm, field_name, aliases)
+                    if val is not None:
+                        ft = field_types.get(field_name, "string")
+                        coerced = _coerce_value(val, ft)
+                        if coerced is not None:
+                            item_dict[field_name] = coerced
+                if item_dict:
+                    try:
+                        chi_vien_items.append(ChiVienItem(**item_dict))
+                    except Exception:
+                        pass
 
-    # Build danh_sach_chay (single item)
+    # Build danh_sach_chay (list of items)
     chay_items: list[VuChayItem] = []
     if "danh_sach_chay" in sheet_mapping:
         fields_spec = sheet_mapping["danh_sach_chay"]
@@ -336,18 +663,35 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
             field_map = fields_spec["fields"]
         else:
             field_map = fields_spec
-        item_dict = {}
-        for field_name in field_map.keys():
-            if field_name in core:
-                item_dict[field_name] = core[field_name]
-        if item_dict:
-            chay_items = [VuChayItem(**item_dict)]
+        raw_list = core.get("danh_sach_chay") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                if not isinstance(row, dict):
+                    continue
+                row_norm = {_normalize_key(k): v for k, v in row.items()}
+                item_dict: dict[str, Any] = {}
+                for field_name, spec in field_map.items():
+                    if field_name in ("stt_map", "fields"):
+                        continue
+                    aliases = _extract_aliases(spec)
+                    val = _resolve_field_value(row_norm, field_name, aliases)
+                    if val is not None:
+                        ft = field_types.get(field_name, "string")
+                        coerced = _coerce_value(val, ft)
+                        if coerced is not None:
+                            item_dict[field_name] = coerced
+                if item_dict:
+                    try:
+                        chay_items.append(VuChayItem(**item_dict))
+                    except Exception:
+                        pass
 
-    # Build tuyen_truyen_online from fields in core
+    # Build tuyen_truyen_online from nghiep_vu resolved values
+    # (reads from nghiep_vu which has resolved aliases, not raw unnormalized keys)
     tuyen_truyen_online = TuyenTruyenOnline(
-        so_tin_bai=_to_int(core.get("tong_tin_bai", 0)),
-        so_hinh_anh=_to_int(core.get("tong_hinh_anh", 0)),
-        cai_app_114=_to_int(core.get("so_lan_cai_app_114", 0)),
+        so_tin_bai=getattr(nghiep_vu, "tong_tin_bai", 0) or _to_int(nghiep_vu_dict.get("tong_tin_bai", 0)),
+        so_hinh_anh=getattr(nghiep_vu, "tong_hinh_anh", 0) or _to_int(nghiep_vu_dict.get("tong_hinh_anh", 0)),
+        cai_app_114=getattr(nghiep_vu, "so_lan_cai_app_114", 0) or _to_int(nghiep_vu_dict.get("so_lan_cai_app_114", 0)),
     )
 
     return BlockExtractionOutput(
@@ -360,6 +704,7 @@ def _build_output_custom(core: dict, mapping: dict) -> BlockExtractionOutput:
         danh_sach_cong_tac_khac=cong_tac_khac,
         danh_sach_chi_vien=chi_vien_items,
         danh_sach_chay=chay_items,
+        danh_sach_sclq=[],
         tuyen_truyen_online=tuyen_truyen_online,
     )
 
@@ -754,12 +1099,12 @@ class SheetExtractionPipeline:
 
     def run(self, sheet_data: dict[str, Any] | None, schema_path: str | None = None) -> PipelineResult:
         try:
-            normalized = self.normalize(sheet_data)
-            core = normalized.get("_core") or {}
             if schema_path:
+                core = _extract_core(sheet_data)
                 custom_mapping = _load_custom_mapping(schema_path)
-                output = _build_output_custom(core, custom_mapping)
+                output = _build_output_custom(core, custom_mapping, schema_path=schema_path)
             else:
+                normalized = self.normalize(sheet_data)
                 output = self.map_to_schema(normalized)
             return PipelineResult(
                 status="ok",

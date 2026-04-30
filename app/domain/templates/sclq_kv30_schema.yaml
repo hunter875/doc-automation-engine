@@ -1,0 +1,30 @@
+# Schema cho sheet "SCLQ ĐẾN PCCC&CNCH" - Sự cố liên quan đến PCCC&CNCH
+# Row 0 = group header "SỰ CỐ LIÊN QUAN ĐẾN PCCC&CNCH", Row 1 = sub-headers, Row 2+ = data
+# Column mapping (from excel_headers.json row_1):
+#   col_0=STT, col_1=VỤ CHÁY NGÀY, col_2=ĐỊA ĐIỂM, col_3=NGUYÊN NHÂN,
+#   col_4=THIỆT HẠI, col_5=CHỈ HUY CHỮA CHÁY, col_6=GHI CHÚ
+
+sheet_mapping:
+  danh_sach_sclq:
+    fields:
+      stt:
+        aliases: ["STT", "stt"]
+        type: integer
+      ngay:
+        aliases: ["VỤ CHÁY NGÀY", "Vụ cháy ngày", "NGÀY"]
+        type: string
+      dia_diem:
+        aliases: ["ĐỊA ĐIỂM", "Dia diem"]
+        type: string
+      nguyen_nhan:
+        aliases: ["NGUYÊN NHÂN", "Nguyên nhân"]
+        type: string
+      thiet_hai:
+        aliases: ["THIỆT HẠI", "Thiệt hại", "THIỆT HẠI TÀI SẢN"]
+        type: string
+      chi_huy:
+        aliases: ["CHỈ HUY CHỮA CHÁY", "Chỉ huy chữa cháy", "CHỈ HUY"]
+        type: string
+      ghi_chu:
+        aliases: ["GHI CHÚ", "Ghi chú"]
+        type: string

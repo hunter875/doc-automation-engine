@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,10 @@ class IngestionSchema:
     def all_aliases(self) -> set[str]:
         output: set[str] = set()
         for field in self.fields:
+            # Field name: normalize underscores to spaces and remove diacritics
+            # so that worksheet column headers like "STT" and "Ngày xảy ra sự cố"
+            # can be matched against field names like "stt" and "ngay_xay_ra"
+            output.add(_normalize_aliases([field.name], field.name)[0])
             output.update(field.aliases)
         return output
 
@@ -40,8 +46,23 @@ ALLOWED_TYPES = {"string", "integer", "float", "boolean", "date", "object", "arr
 def _normalize_aliases(raw: Any, fallback: str) -> list[str]:
     if not isinstance(raw, list):
         return [fallback]
-    aliases = [str(item).strip() for item in raw if str(item).strip()]
-    return aliases or [fallback]
+
+    def _norm(text: str) -> str:
+        t = unicodedata.normalize("NFC", str(text or "")).strip()
+        nfkd = unicodedata.normalize("NFKD", t)
+        t = "".join(c for c in nfkd if not unicodedata.combining(c))
+        t = t.lower()
+        return re.sub(r"\s+", " ", t)
+
+    # Normalize to NFC, deduplicate, preserve order
+    normalized = [_norm(str(item)) for item in raw if str(item).strip()]
+    seen: set[str] = set()
+    unique: list[str] = []
+    for a in normalized:
+        if a not in seen:
+            seen.add(a)
+            unique.append(a)
+    return unique if unique else [_norm(fallback)]
 
 
 def _infer_field_type(field_name: str) -> str:
@@ -123,7 +144,11 @@ def load_schema(schema_path: str) -> IngestionSchema:
         if not isinstance(spec, dict):
             raise ProcessingError(message=f"Invalid schema for field '{field_name}'")
 
-        field_type = str(spec.get("type", "string")).strip().lower()
+        # Prefer explicit type from YAML spec; fall back to inference only when absent
+        if "type" in spec:
+            field_type = str(spec["type"]).strip().lower()
+        else:
+            field_type = _infer_field_type(str(field_name).strip())
         if field_type not in ALLOWED_TYPES:
             raise ProcessingError(message=f"Unsupported type '{field_type}' for field '{field_name}'")
 

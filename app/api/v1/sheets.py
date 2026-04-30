@@ -71,6 +71,7 @@ class SheetIssue(BaseModel):
     date: str
     job_id: str
     file_name: str
+    worksheet: str = ""  # e.g. "BC NGÀY", "VỤ CHÁY THỐNG KÊ", "CNCH", "CHI VIỆN"
     severity: str  # "missing" | "zero" | "mismatch"
     excel_value: Optional[int] = None
     system_value: int = 0
@@ -126,11 +127,18 @@ def inspect_issues(
     year: int = Query(..., ge=2020, le=2100),
     document_id: Optional[uuid.UUID] = Query(None, description="Compare with raw Excel from MinIO"),
     job_id: Optional[uuid.UUID] = Query(None, description="Focus on a single job"),
+    worksheet: Optional[str] = Query(
+        None,
+        description="Filter issues by worksheet: 'BC NGÀY', 'VỤ CHÁY THỐNG KÊ', 'CNCH', 'CHI VIỆN'. "
+                     "If omitted, returns issues for all worksheets.",
+    ),
 ):
     """Find STT fields that are missing or zero in extracted data.
 
     If document_id is provided, also reads the raw Excel from MinIO
     and flags mismatches between Excel cell values and system values.
+
+    If worksheet is provided, only returns issues for that worksheet's schema.
     """
     service = SheetInspectService(db)
     return service.get_issues(
@@ -139,6 +147,7 @@ def inspect_issues(
         year=year,
         document_id=document_id,
         job_id=job_id,
+        worksheet=worksheet,
     )
 
 

@@ -1,81 +1,81 @@
 sheet_mapping:
   header:
     ngay_bao_cao_day:
-      aliases: ["ngày"]
+      aliases: ["NGÀY", "ngày", "Ngay", "ngay"]
       type: integer
       required: false
     ngay_bao_cao_month:
-      aliases: ["tháng"]
+      aliases: ["THÁNG", "tháng", "Thang", "thang"]
       type: integer
       required: false
     so_bao_cao:
-      aliases: ["Số báo cáo"]
+      aliases: ["Số báo cáo", "So bao cao", "so_bao_cao"]
       type: string
       required: false
     thoi_gian_tu_den:
-      aliases: ["thời gian từ đến"]
+      aliases: ["thời gian từ đến", "Thoi gian tu den", "thoi_gian_tu_den"]
       type: string
       required: false
     don_vi_bao_cao:
-      aliases: ["đơn vị báo cáo"]
+      aliases: ["đơn vị báo cáo", "Don vi", "don_vi_bao_cao"]
       type: string
       required: false
 
   nghiep_vu:
     tong_so_vu_chay:
-      aliases: ["Tổng số vụ cháy"]
+      aliases: ["VỤ CHÁY THỐNG KÊ", "Vụ cháy thống kê", "VỤ CHÁY VÀ CNCH", "vu_chay", "tong_so_vu_chay"]
       type: integer
       required: false
     tong_so_vu_no:
-      aliases: ["Tổng số vụ nổ"]
+      aliases: ["Tổng số vụ nổ", "Tong so vu no", "tong_so_vu_no"]
       type: integer
       required: false
     tong_so_vu_cnch:
-      aliases: ["Tổng số vụ CNCH"]
+      aliases: ["SCLQ PCCC&CNCH", "SCLQ PCCC CNCH", "SCLQ ĐẾN PCCC&CNCH", "CNCH", "cnch", "su_co_lien_quan", "Tổng số vụ CNCH", "tong_so_vu_cnch"]
       type: integer
       required: false
     tong_chi_vien:
-      aliases: ["Tổng chi viện"]
+      aliases: ["VỤ CHÁY CHI VIỆN", "Vụ cháy chi viện", "CHI VIỆN", "chi_vien", "tong_chi_vien"]
       type: integer
       required: false
     tong_cong_van:
-      aliases: ["Tổng công văn"]
+      aliases: ["Tổng công văn", "Tong cong van", "tong_cong_van"]
       type: integer
       required: false
     tong_bao_cao:
-      aliases: ["Tổng báo cáo"]
+      aliases: ["Tổng báo cáo", "Tong bao cao", "tong_bao_cao"]
       type: integer
       required: false
     tong_ke_hoach:
-      aliases: ["Tổng kế hoạch"]
+      aliases: ["Tổng kế hoạch", "Tong ke hoach", "tong_ke_hoach"]
       type: integer
       required: false
     cong_tac_an_ninh:
-      aliases: ["Công tác an ninh"]
+      aliases: ["Công tác an ninh", "Cong tac an ninh", "cong_tac_an_ninh"]
       type: string
       required: false
     tong_xe_hu_hong:
-      aliases: ["Tổng số xe hư hỏng"]
+      aliases: ["Tổng số xe hư hỏng", "Tong so xe hu hong", "tong_xe_hu_hong"]
       type: integer
       required: false
     tong_tin_bai:
-      aliases: ["Tổng tin bài"]
+      aliases: ["TIN BÀI, PHÓNG SỰ", "Tin bài phóng sự", "Tổng tin bài", "tin_bai", "tong_tin_bai"]
       type: integer
       required: false
     tong_hinh_anh:
-      aliases: ["Tổng hình ảnh"]
+      aliases: ["Tổng hình ảnh", "Tong hinh anh", "tong_hinh_anh"]
       type: integer
       required: false
     so_lan_cai_app_114:
-      aliases: ["Số lượt cài app 114"]
-      type: integer
-      required: false
-    kiem_tra_dot_xuat:
-      aliases: ["Đột xuất Nhóm I"]
+      aliases: ["Số lượt cài app 114", "So lan cai app 114", "so_lan_cai_app_114"]
       type: integer
       required: false
     kiem_tra_dinh_ky:
-      aliases: ["Đột xuất Nhóm II"]
+      aliases: ["KIỂM TRA ĐỊNH KỲ NHÓM I", "KIỂM TRA ĐỊNH KỲ NHÓM II", "kt_dinh_ky_n1", "kt_dinh_ky_n2", "kiem_tra_dinh_ky"]
+      type: integer
+      required: false
+    kiem_tra_dot_xuat:
+      aliases: ["KIỂM TRA ĐỘT XUẤT NHÓM I", "KIỂM TRA ĐỘT XUẤT NHÓM II", "kt_dot_xuat_n1", "kt_dot_xuat_n2", "kiem_tra_dot_xuat"]
       type: integer
       required: false
 

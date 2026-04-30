@@ -2,10 +2,10 @@ sheet_mapping:
   danh_sach_cnch:
     fields:
       stt: ["STT", "stt"]
-      ngay_xay_ra: ["Ngày xảy ra sự cố", "ngay_xay_ra"]
-      thoi_gian: ["Thời gian đến", "thoi_gian"]
-      dia_diem: ["Địa điểm", "dia_diem"]
-      dia_chi: ["Địa chỉ", "dia_chi"]
-      noi_dung_tin_bao: ["Loại hình CNCH", "noi_dung_tin_bao", "noi_dung"]
-      thiet_hai: ["Thiệt hại về người", "thiet_hai"]
-      thong_tin_nan_nhan: ["Số người cứu được", "thong_tin_nan_nhan"]
+      ngay_xay_ra: ["NGÀY XẢY RA", "Ngày xảy ra sự cố", "Ngày xảy ra", "NGÀY", "Ngay xay ra", "ngay_xay_ra"]
+      thoi_gian: ["THỜI GIAN ĐẾN", "Thời gian đến", "THỜI GIAN", "Thoi gian", "thoi_gian"]
+      dia_diem: ["ĐỊA ĐIỂM", "Địa điểm", "Dia diem", "dia_diem"]
+      dia_chi: ["ĐỊA CHỈ", "Địa chỉ", "Dia chi", "dia_chi"]
+      noi_dung_tin_bao: ["LOẠI HÌNH CNCH", "Loại hình CNCH", "Loai hinh", "noi_dung_tin_bao", "noi_dung"]
+      thiet_hai: ["THIỆT HẠI VỀ NGƯỜI", "Thiệt hại về người", "THIỆT HẠI", "Thiet hai", "thiet_hai"]
+      thong_tin_nan_nhan: ["SỐ NGƯỜI CỨU ĐƯỢC", "Số người cứu được", "SỐ NGƯỜI", "So nguoi", "thong_tin_nan_nhan"]

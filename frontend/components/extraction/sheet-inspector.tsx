@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { RefreshCw, Download, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { RefreshCw, Download, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -31,23 +31,72 @@ const SHEETS = [
   { id: "BC NGÀY", label: "📋 BC NGÀY", color: "bg-green-100 dark:bg-green-900/30" },
   { id: "CNCH",    label: "🚑 CNCH",     color: "bg-blue-100 dark:bg-blue-900/30" },
   { id: "CHI VIỆN", label: "🏢 CHI VIỆN", color: "bg-purple-100 dark:bg-purple-900/30" },
-  { id: "VỤ CHÁY", label: "🔥 VỤ CHÁY", color: "bg-red-100 dark:bg-red-900/30" },
+  { id: "VỤ CHÁY THỐNG KÊ", label: "🔥 VỤ CHÁY THỐNG KÊ", color: "bg-red-100 dark:bg-red-900/30" },
 ];
 
-// Key STTs to display in the grid
+// Key STTs to display in the grid — sourced from bc_ngay_schema.yaml stt_map
 const GRID_STTS = [
-  { stt: "2",  label: "STT 2",  desc: "Vụ cháy" },
-  { stt: "14", label: "STT 14", desc: "CNCH" },
-  { stt: "22", label: "STT 22", desc: "Tin bài MXH" },
-  { stt: "31", label: "STT 31", desc: "Tổng kiểm tra" },
-  { stt: "32", label: "STT 32", desc: "Định kỳ" },
-  { stt: "33", label: "STT 33", desc: "Đột xuất" },
-  { stt: "43", label: "STT 43", desc: "PA PC06" },
-  { stt: "47", label: "STT 47", desc: "PA PC08" },
-  { stt: "50", label: "STT 50", desc: "PA PC09" },
-  { stt: "55", label: "STT 55", desc: "CBCS HL" },
-  { stt: "60", label: "STT 60", desc: "Lái xe" },
-  { stt: "61", label: "STT 61", desc: "Lái tàu" },
+  { stt: "1",  label: "STT 1",  desc: "TÌNH HÌNH CHÁY, NỔ, SỰ CỐ TAI NẠN" },
+  { stt: "2",  label: "STT 2",  desc: "1. Tổng số vụ cháy" },
+  { stt: "3",  label: "STT 3",  desc: "Số người chết" },
+  { stt: "4",  label: "STT 4",  desc: "Số người bị thương" },
+  { stt: "5",  label: "STT 5",  desc: "Số người cứu được" },
+  { stt: "6",  label: "STT 6",  desc: "Tài sản thiệt hại" },
+  { stt: "7",  label: "STT 7",  desc: "Tài sản cứu được" },
+  { stt: "8",  label: "STT 8",  desc: "2. Tổng số vụ nổ" },
+  { stt: "9",  label: "STT 9",  desc: "Số người chết" },
+  { stt: "10", label: "STT 10", desc: "Số người bị thương" },
+  { stt: "11", label: "STT 11", desc: "Số người cứu được" },
+  { stt: "12", label: "STT 12", desc: "Tài sản thiệt hại" },
+  { stt: "13", label: "STT 13", desc: "Tài sản cứu được" },
+  { stt: "14", label: "STT 14", desc: "3. Tổng số vụ tai nạn, sự cố" },
+  { stt: "15", label: "STT 15", desc: "Số người cứu được (=16+17)" },
+  { stt: "16", label: "STT 16", desc: "Trực tiếp cứu được" },
+  { stt: "17", label: "STT 17", desc: "Hướng dẫn thoát nạn" },
+  { stt: "18", label: "STT 18", desc: "Số thi thể" },
+  { stt: "19", label: "STT 19", desc: "Tài sản cứu được" },
+  { stt: "20", label: "STT 20", desc: "KẾT QUẢ CÔNG TÁC PCCC VÀ CNCH" },
+  { stt: "21", label: "STT 21", desc: "1. Tuyên truyền về PCCC và CNCH" },
+  { stt: "22", label: "STT 22", desc: "1.1 Tuyên truyền qua các phương tiện thông tin" },
+  { stt: "23", label: "STT 23", desc: "Số tin, bài đã đăng phát" },
+  { stt: "24", label: "STT 24", desc: "Số hình ảnh được đăng tải" },
+  { stt: "25", label: "STT 25", desc: "Số lượt cài đặt ứng dụng HELP 114" },
+  { stt: "26", label: "STT 26", desc: "1.2 Tuyên truyền trực tiếp tại cơ sở, doanh nghiệp" },
+  { stt: "27", label: "STT 27", desc: "Số cuộc" },
+  { stt: "28", label: "STT 28", desc: "Số người tham dự" },
+  { stt: "29", label: "STT 29", desc: "Số khuyến cáo, tờ rơi đã phát hành" },
+  { stt: "30", label: "STT 30", desc: "2. Hướng dẫn, kiểm tra về PCCC và CNCH" },
+  { stt: "31", label: "STT 31", desc: "Số cơ sở được kiểm an toàn PCCC (=STT 32+STT 33)" },
+  { stt: "32", label: "STT 32", desc: "Kiểm tra định kỳ" },
+  { stt: "33", label: "STT 33", desc: "Kiểm tra đột xuất theo chuyên đề" },
+  { stt: "34", label: "STT 34", desc: "Số vi phạm được phát hiện" },
+  { stt: "35", label: "STT 35", desc: "Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT 36+...+STT 39)" },
+  { stt: "36", label: "STT 36", desc: "Trong đó, phạt cảnh cáo" },
+  { stt: "37", label: "STT 37", desc: "Trong đó, tạm đình chỉ hoạt động" },
+  { stt: "38", label: "STT 38", desc: "Trong đó, đình chỉ hoạt động" },
+  { stt: "39", label: "STT 39", desc: "Trong đó, phạt tiền" },
+  { stt: "40", label: "STT 40", desc: "Số tiền phạt thu được (triệu đồng)" },
+  { stt: "41", label: "STT 41", desc: "3. Xây dựng, thực tập phương án chữa cháy, CNCH" },
+  { stt: "42", label: "STT 42", desc: "3.1 Cơ sở theo Mẫu số PC06" },
+  { stt: "43", label: "STT 43", desc: "Số phương án được xây dựng và phê duyệt" },
+  { stt: "44", label: "STT 44", desc: "Số phương án được thực tập" },
+  { stt: "45", label: "STT 45", desc: "3.2 Phương tiện giao thông theo Mẫu số PC07" },
+  { stt: "46", label: "STT 46", desc: "Số phương án được xây dựng và phê duyệt" },
+  { stt: "47", label: "STT 47", desc: "Số phương án được thực tập" },
+  { stt: "48", label: "STT 48", desc: "3.3 CQ Công an thực hiện theo Mẫu số PC08" },
+  { stt: "49", label: "STT 49", desc: "Số phương án được xây dựng và phê duyệt" },
+  { stt: "50", label: "STT 50", desc: "Số phương án được thực tập" },
+  { stt: "51", label: "STT 51", desc: "3.4 CNCH CQ Công an thực hiện theo Mẫu số PC09" },
+  { stt: "52", label: "STT 52", desc: "Số phương án được xây dựng và phê duyệt" },
+  { stt: "53", label: "STT 53", desc: "Số phương án được thực tập" },
+  { stt: "54", label: "STT 54", desc: "4. Công tác huấn luyện nghiệp vụ chữa cháy và CNCH" },
+  { stt: "55", label: "STT 55", desc: "Tổng số CBCS tham gia huấn luyện (=STT 56+...+STT 61)" },
+  { stt: "56", label: "STT 56", desc: "Chỉ huy phòng" },
+  { stt: "57", label: "STT 57", desc: "Chỉ huy Đội" },
+  { stt: "58", label: "STT 58", desc: "Cán bộ tiểu đội" },
+  { stt: "59", label: "STT 59", desc: "Chiến sĩ CC và CNCH" },
+  { stt: "60", label: "STT 60", desc: "Chiến sĩ nghĩa vụ (hợp đồng lao động)" },
+  { stt: "61", label: "STT 61", desc: "Lái tàu CC và CNCH" },
 ];
 
 // ─── Cell color helpers ────────────────────────────────────────────────────────
@@ -108,14 +157,14 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
 
   const loadIssues = useCallback(async () => {
     setLoadingIssues(true);
-    const res = await api.sheets.issues(month, year, documentId);
+    const res = await api.sheets.issues(month, year, documentId, selectedSheet);
     setLoadingIssues(false);
     if (res.ok) {
       setIssues(res.data as SheetIssue[]);
     } else {
       toast.error(`Lỗi tải issues: ${res.error}`);
     }
-  }, [month, year, documentId]);
+  }, [month, year, documentId, selectedSheet]);
 
   const loadMapping = useCallback(async () => {
     setLoadingMapping(true);
@@ -130,26 +179,39 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
 
   useEffect(() => { loadInspect(); }, [loadInspect]);
   useEffect(() => { loadMapping(); }, [loadMapping]);
+  useEffect(() => { loadIssues(); }, [loadIssues]);
 
-  // ── Coverage summary ────────────────────────────────────────────────────────
-
-  const totalJobs = inspectData.reduce((s, d) => s + d.job_count, 0);
-  const jobsWithIssues = inspectData.reduce((s, d) => s + (d.has_issues ? 1 : 0), 0);
-  const totalIssues = issues.length;
-  const missingCount = issues.filter((i) => i.severity === "missing").length;
-  const mappedCols = mapping.filter((m) => m.status === "mapped").length;
-  const totalCols = mapping.length;
-
-  // ── Month navigation ────────────────────────────────────────────────────
+  // ── Month navigation ─────────────────────────────────────────────────────
 
   function prevMonth() {
+    setSelectedDay(null);
     if (month === 1) { setMonth(12); setYear((y) => y - 1); }
     else setMonth((m) => m - 1);
   }
   function nextMonth() {
+    setSelectedDay(null);
     if (month === 12) { setMonth(1); setYear((y) => y + 1); }
     else setMonth((m) => m + 1);
   }
+
+  // ── Coverage summary (per-sheet filtered) ─────────────────────────────────
+
+  /** Jobs for the currently selected worksheet only. */
+  const filteredJobs = inspectData.flatMap((d) =>
+    d.jobs.filter(
+      (j) =>
+        selectedSheet === "BC NGÀY" ||
+        (j.parser_used ?? j.file_name ?? "").includes(selectedSheet),
+    ),
+  );
+
+  const totalJobs = filteredJobs.length;
+  const jobsWithIssues = filteredJobs.filter((j) => (j.issue_count ?? 0) > 0).length;
+  const totalIssues = issues.length;
+  const missingCount = issues.filter((i) => i.severity === "missing").length;
+  const mappedCols = mapping.filter((m) => m.status === "mapped").length;
+  const totalCols = mapping.length;
+  const isBcNgay = selectedSheet === "BC NGÀY";
 
   // ── Export JSON ──────────────────────────────────────────────────────────
 
@@ -174,13 +236,13 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
           <ChevronLeft className="h-4 w-4" />
         </Button>
         <span className="font-semibold min-w-36 text-center">
-          {getMonthName(month, year)}
+          {getMonthName(month)}
         </span>
         <Button variant="ghost" size="icon" onClick={nextMonth} aria-label="Tháng sau">
           <ChevronRight className="h-4 w-4" />
         </Button>
 
-        <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
+        <Select value={String(month)} onValueChange={(v) => { setSelectedDay(null); setMonth(Number(v)); }}>
           <SelectTrigger className="w-24">
             <SelectValue />
           </SelectTrigger>
@@ -191,7 +253,7 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
           </SelectContent>
         </Select>
 
-        <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+        <Select value={String(year)} onValueChange={(v) => { setSelectedDay(null); setYear(Number(v)); }}>
           <SelectTrigger className="w-28">
             <SelectValue />
           </SelectTrigger>
@@ -229,7 +291,7 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
             {SHEETS.map((s) => (
               <button
                 key={s.id}
-                onClick={() => setSelectedSheet(s.id)}
+                onClick={() => { setSelectedDay(null); setSelectedSheet(s.id); }}
                 className={`
                   w-full text-left px-3 py-2 rounded-md text-sm
                   transition-colors cursor-pointer
@@ -282,18 +344,30 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
                 month={month}
                 year={year}
                 inspectData={inspectData}
-                loading={loadingInspect}
-              />
-            </TabsContent>
-
-            {/* ── Tab 2: Grid ────────────────────────────────────────── */}
-            <TabsContent value="grid" className="mt-0">
-              <GridTab
-                inspectData={inspectData}
                 selectedDay={selectedDay}
                 onSelectDay={setSelectedDay}
                 loading={loadingInspect}
               />
+            </TabsContent>
+
+            {/* ── Tab 2: Grid / Event List ───────────────────────────────── */}
+            <TabsContent value="grid" className="mt-0">
+              {isBcNgay ? (
+                <GridTab
+                  inspectData={inspectData}
+                  selectedDay={selectedDay}
+                  onSelectDay={setSelectedDay}
+                  loading={loadingInspect}
+                />
+              ) : (
+                <EventListTab
+                  sheetId={selectedSheet}
+                  inspectData={inspectData}
+                  selectedDay={selectedDay}
+                  onSelectDay={setSelectedDay}
+                  loading={loadingInspect}
+                />
+              )}
             </TabsContent>
 
 
@@ -317,11 +391,11 @@ export function SheetInspector({ month: initMonth, year: initYear, documentId }:
       {/* ── Status bar ──────────────────────────────────────────────────── */}
       <Separator />
       <div className="flex gap-4 flex-wrap text-xs text-muted-foreground">
-        <span>Tổng STT: <strong>61</strong></span>
+        <span>Tổng STT: <strong>{isBcNgay ? "61" : "—"}</strong></span>
         <span>·</span>
         <span>Cột đã map: <strong className="text-green-600">{mappedCols}/{totalCols}</strong></span>
         <span>·</span>
-        <span>Hồ sơ tháng: <strong>{totalJobs}</strong></span>
+        <span>Báo cáo ngày: <strong>{totalJobs}</strong></span>
         <span>·</span>
         <span>Issues: <strong className={totalIssues > 0 ? "text-red-600" : "text-green-600"}>
           {totalIssues} ({missingCount} missing)
@@ -381,7 +455,7 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
               const isComplete = totalCoverage > 0 && populatedCoverage === totalCoverage;
               const isEmpty = populatedCoverage === 0;
               const isPartial = !isComplete && !isEmpty;
-              const rowClass = day.has_issues
+              const rowClass = (day.issue_count ?? 0) > 0
                 ? "bg-red-50/50 dark:bg-red-950/10"
                 : isComplete
                   ? "bg-green-50/30 dark:bg-green-950/10"
@@ -408,7 +482,7 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
                       {isComplete && <span className="ml-1">✅</span>}
                       {isPartial && <span className="ml-1">⚠️</span>}
                       {isEmpty && <span className="ml-1">❌</span>}
-                      {day.has_issues && <span className="ml-1 text-red-500">⚠️</span>}
+                      {(day.issue_count ?? 0) > 0 && <span className="ml-1 text-red-500">⚠️</span>}
                     </td>
                     {GRID_STTS.map((s) => {
                       const key = `stt_${s.stt.padStart(2, "0")}`;
@@ -487,17 +561,239 @@ function GridTab({ inspectData, selectedDay, onSelectDay, loading }: GridTabProp
 }
 
 
-// ─── Tab 2: Calendar ────────────────────────────────────────────────────────────
+// ─── Tab 2: Event List (for non-BC-NGÀY sheets) ──────────────────────────────
+
+interface EventListTabProps {
+  sheetId: string;
+  inspectData: SheetInspectDay[];
+  selectedDay: string | null;
+  onSelectDay: (date: string) => void;
+  loading: boolean;
+}
+
+function EventListTab({ sheetId, inspectData, selectedDay, onSelectDay, loading }: EventListTabProps) {
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+
+  if (loading) {
+    return <TableSkeleton rows={6} columns={5} />;
+  }
+
+  /** Filter jobs matching the selected sheet by parser_used or file_name. */
+  const filteredDays = inspectData
+    .map((d) => ({
+      ...d,
+      jobs: d.jobs.filter(
+        (j) =>
+          (j.parser_used ?? j.file_name ?? "").includes(sheetId),
+      ),
+    }))
+    .filter((d) => d.jobs.length > 0);
+
+  if (filteredDays.length === 0) {
+    return (
+      <Alert variant="warning">
+        <AlertDescription>Không có dữ liệu cho sheet "{sheetId}" trong tháng này.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  const sheetConfig: Record<string, { label: string; columns: string[]; renderRow: (j: SheetInspectJob) => React.ReactNode }> = {
+    "VỤ CHÁY THỐNG KÊ": {
+      label: "Danh sách vụ cháy",
+      columns: ["Thời gian", "Địa điểm", "Nguyên nhân", "Thiệt hại", "Tình trạng"],
+      renderRow: (j) => {
+        const chayRows = (j as any).danh_sach_chay ?? j.btk_rows;
+        if (!chayRows || chayRows.length === 0) {
+          return (
+            <div className="text-muted-foreground italic text-xs py-2">
+              Chưa có dữ liệu danh_sach_chay cho job này
+            </div>
+          );
+        }
+        return (
+          <div className="overflow-auto rounded border max-h-64">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/50">
+                  {["STT", "Thời gian", "Địa điểm", "Nguyên nhân", "Thiệt hại (kết quả)"].map((h) => (
+                    <th key={h} className="text-left px-2 py-1 font-semibold">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {chayRows.map((r: any, i: number) => (
+                  <tr key={i} className="border-t hover:bg-accent/30">
+                    <td className="px-2 py-1">{r.stt ?? i + 1}</td>
+                    <td className="px-2 py-1">{r.thoi_gian ?? r.tg ?? r.time ?? "—"}</td>
+                    <td className="px-2 py-1">{r.dia_diem ?? r.dia_diem_chay ?? "—"}</td>
+                    <td className="px-2 py-1">{r.nguyen_nhan ?? r.ly_do ?? "—"}</td>
+                    <td className="px-2 py-1 font-mono">{r.ket_qua ?? r.thiet_hai ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      },
+    },
+    "CNCH": {
+      label: "Danh sách sự cố CNCH",
+      columns: ["STT", "Thời gian", "Địa điểm", "Nội dung", "Kết quả"],
+      renderRow: (j) => {
+        const cnchRows = (j as any).danh_sach_cnch ?? j.btk_rows;
+        if (!cnchRows || cnchRows.length === 0) {
+          return (
+            <div className="text-muted-foreground italic text-xs py-2">
+              Chưa có dữ liệu danh_sach_cnch cho job này
+            </div>
+          );
+        }
+        return (
+          <div className="overflow-auto rounded border max-h-64">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/50">
+                  {["STT", "Thời gian", "Địa điểm", "Nội dung tin báo", "Kết quả"].map((h) => (
+                    <th key={h} className="text-left px-2 py-1 font-semibold">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cnchRows.map((r: any, i: number) => (
+                  <tr key={i} className="border-t hover:bg-accent/30">
+                    <td className="px-2 py-1">{r.stt ?? i + 1}</td>
+                    <td className="px-2 py-1">{r.thoi_gian ?? r.tg ?? "—"}</td>
+                    <td className="px-2 py-1">{r.dia_diem ?? "—"}</td>
+                    <td className="px-2 py-1">{r.noi_dung_tin_bao ?? r.noi_dung ?? "—"}</td>
+                    <td className="px-2 py-1 font-mono">{r.ket_qua ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      },
+    },
+    "CHI VIỆN": {
+      label: "Danh sách chi viện",
+      columns: ["STT", "Thời gian", "Địa điểm", "Nội dung", "Phương tiện"],
+      renderRow: (j) => {
+        const cvRows = (j as any).danh_sach_chi_vien ?? j.btk_rows;
+        if (!cvRows || cvRows.length === 0) {
+          return (
+            <div className="text-muted-foreground italic text-xs py-2">
+              Chưa có dữ liệu danh_sach_chi_vien cho job này
+            </div>
+          );
+        }
+        return (
+          <div className="overflow-auto rounded border max-h-64">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/50">
+                  {["STT", "Thời gian", "Địa điểm", "Nội dung", "Phương tiện"].map((h) => (
+                    <th key={h} className="text-left px-2 py-1 font-semibold">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cvRows.map((r: any, i: number) => (
+                  <tr key={i} className="border-t hover:bg-accent/30">
+                    <td className="px-2 py-1">{r.stt ?? i + 1}</td>
+                    <td className="px-2 py-1">{r.thoi_gian ?? "—"}</td>
+                    <td className="px-2 py-1">{r.dia_diem ?? "—"}</td>
+                    <td className="px-2 py-1">{r.noi_dung ?? "—"}</td>
+                    <td className="px-2 py-1">{r.phuong_tien ?? r.phuong_tien_chi_vien ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      },
+    },
+  };
+
+  const cfg = sheetConfig[sheetId] ?? {
+    label: `Dữ liệu sheet "${sheetId}"`,
+    columns: ["Job ID", "File", "Status", "STT Rows"],
+    renderRow: (j) => (
+      <div className="text-xs text-muted-foreground">
+        {j.btk_rows.length} bản ghi · {Object.keys(j.stt_values).length} giá trị STT
+      </div>
+    ),
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="text-sm text-muted-foreground">
+        {cfg.label} — {filteredDays.reduce((s, d) => s + d.jobs.length, 0)} jobs
+      </div>
+
+      {filteredDays.map((day) => {
+        const isExpanded = expandedDay === day.date;
+        return (
+          <div key={day.date} className="border rounded-md overflow-hidden">
+            {/* Day header */}
+            <button
+              onClick={() => setExpandedDay(isExpanded ? null : day.date)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors text-left"
+            >
+              <span className="font-semibold w-20">
+                {day.date.slice(8, 10)}/{day.date.slice(5, 7)}
+              </span>
+              <Badge variant={day.has_issues ? "destructive" : "secondary"} className="text-[10px]">
+                {day.jobs.length} job{day.jobs.length !== 1 ? "s" : ""}
+              </Badge>
+              <span className="text-muted-foreground text-xs ml-auto">
+                {isExpanded ? "▲ Thu gọn" : "▼ Mở rộng"}
+              </span>
+            </button>
+
+            {/* Expanded: job rows */}
+            {isExpanded && day.jobs.map((job) => (
+              <div key={job.id} className="border-t px-4 py-3 bg-muted/10">
+                <div className="flex items-center gap-2 mb-2 text-xs">
+                  <span className="font-medium truncate flex-1">{job.file_name}</span>
+                  <Badge variant={job.status === "approved" ? "success" : job.status === "failed" ? "destructive" : "secondary"} className="text-[10px]">
+                    {job.status}
+                  </Badge>
+                  {job.parser_used && (
+                    <span className="text-muted-foreground">{job.parser_used}</span>
+                  )}
+                  <span className="text-muted-foreground font-mono ml-auto">{job.id.slice(0, 8)}…</span>
+                  <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" asChild>
+                    <a href={`/extraction?tab=review&job=${job.id}`} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </Button>
+                </div>
+                {cfg.renderRow(job)}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+// ─── Tab 3: Calendar ────────────────────────────────────────────────────────────
 
 interface CalendarTabProps {
   month: number;
   year: number;
   inspectData: SheetInspectDay[];
+  selectedDay: string | null;
+  onSelectDay: (date: string) => void;
   loading: boolean;
 }
 
-function CalendarTab({ month, year, inspectData, loading }: CalendarTabProps) {
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+function CalendarTab({ month, year, inspectData, selectedDay, onSelectDay, loading }: CalendarTabProps) {
+  const selectedDayData = selectedDay
+    ? inspectData.find((d) => d.date === selectedDay) ?? null
+    : null;
 
   if (loading) {
     return (
@@ -512,7 +808,7 @@ function CalendarTab({ month, year, inspectData, loading }: CalendarTabProps) {
 
   function inspectDayStatus(day: SheetInspectDay): DayStatus {
     if (day.job_count === 0) return "empty";
-    if (day.has_issues) return "issues";
+    if ((day.issue_count ?? 0) > 0) return "issues";
     if (day.approved_count > 0) return "complete";
     return "partial";
   }
@@ -527,8 +823,8 @@ function CalendarTab({ month, year, inspectData, loading }: CalendarTabProps) {
     return "";
   }
 
-  function inspectDayBorderClass(s: DayStatus, selected: boolean): string {
-    if (selected) return "border-blue-600 border-2 ring-2 ring-blue-200 dark:ring-blue-800";
+  function inspectDayBorderClass(s: DayStatus, isSelected: boolean): string {
+    if (isSelected) return "border-blue-600 border-2 ring-2 ring-blue-200 dark:ring-blue-800";
     switch (s) {
       case "complete": return "border-green-300 dark:border-green-700";
       case "partial": return "border-yellow-300 dark:border-yellow-700";
@@ -545,19 +841,19 @@ function CalendarTab({ month, year, inspectData, loading }: CalendarTabProps) {
         year={year}
         days={inspectData}
         selectedDay={selectedDay}
-        onSelectDay={setSelectedDay}
+        onSelectDay={onSelectDay}
         showHeader={false}
         showLegend={true}
         renderDay={(dayData, dayNumber, isSelected) => {
-          const s = inspectDayStatus(dayData);
+          const s = inspectDayStatus(dayData!);
           return (
             <>
               <span className={`text-sm font-medium ${s !== "empty" ? "text-foreground" : "text-muted-foreground"}`}>
                 {dayNumber}
               </span>
-              {dayData.job_count > 0 && (
+              {dayData!.job_count > 0 && (
                 <span className="text-[10px] leading-none text-muted-foreground">
-                  {dayData.job_count}
+                  {dayData!.job_count}
                 </span>
               )}
             </>
@@ -567,16 +863,63 @@ function CalendarTab({ month, year, inspectData, loading }: CalendarTabProps) {
           const s = inspectDayStatus(dayData);
           return `${inspectDayBgClass(s)} ${inspectDayBorderClass(s, isSelected)}`;
         }}
-        getCellTitle={(dayData) => `${dayData.job_count} hồ sơ · ${dayData.approved_count} duyệt${dayData.has_issues ? " · ⚠️" : ""}`}
+        getCellTitle={(dayData) => `${dayData.job_count} hồ sơ · ${dayData.approved_count} duyệt${(dayData.issue_count ?? 0) > 0 ? " · ⚠️" : ""}`}
       />
-      {selectedDay && (
-        <div className="mt-4 border rounded-md p-4">
-          <h4 className="font-semibold mb-2">
-            Chi tiết ngày {selectedDay}
-          </h4>
-          <p className="text-sm text-muted-foreground">
-            Xem chi tiết trong tab Grid hoặc chức năng đang phát triển.
-          </p>
+
+      {/* ── Detail panel (was placeholder) ───────────────────────────────── */}
+      {selectedDayData && (
+        <div className="border rounded-md p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="font-semibold text-sm">
+              Chi tiết ngày {selectedDay}
+            </h4>
+            <Badge variant={(selectedDayData.issue_count ?? 0) > 0 ? "destructive" : selectedDayData.approved_count > 0 ? "success" : "secondary"}>
+              {selectedDayData.job_count} job{selectedDayData.job_count !== 1 ? "s" : ""}
+            </Badge>
+          </div>
+
+          {selectedDayData.jobs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Không có job nào trong ngày này.</p>
+          ) : (
+            <div className="space-y-2">
+              {selectedDayData.jobs.map((job) => (
+                <div key={job.id} className="flex items-start gap-2 rounded border p-2 bg-muted/20 text-xs">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                      <span className="font-medium truncate">{job.file_name}</span>
+                      <Badge variant={job.status === "approved" ? "success" : job.status === "failed" ? "destructive" : "secondary"} className="text-[10px] px-1 py-0">
+                        {job.status}
+                      </Badge>
+                      {job.parser_used && (
+                        <span className="text-muted-foreground text-[10px]">{job.parser_used}</span>
+                      )}
+                    </div>
+                    <div className="text-muted-foreground flex gap-3 flex-wrap">
+                      <span>ID: <span className="font-mono">{job.id.slice(0, 8)}…</span></span>
+                      {job.stt_coverage && (
+                        <span>STT: {job.stt_coverage.populated}/{job.stt_coverage.total}</span>
+                      )}
+                      {job.named_lists && (
+                        <span>
+                          CNCH:{job.named_lists.cnch} · Ch:{job.named_lists.chay} · CV:{job.named_lists.chi_vien}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    asChild
+                  >
+                    <a href={`/extraction?tab=review&job=${job.id}`} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

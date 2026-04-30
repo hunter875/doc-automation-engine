@@ -1,0 +1,62 @@
+# Schema cho sheet "VỤ CHÁY THỐNG KÊ"
+# Row 0 = group header "Vụ cháy CÓ Thống kê", Row 1 = sub-headers, Row 2+ = data
+# Column mapping (from excel_headers.json row_1):
+#   col_0=STT, col_1=NGÀY XẢY RA VỤ CHÁY, col_2=VỤ CHÁY,
+#   col_3=THỜI GIAN, col_4=ĐỊA ĐIỂM, col_5=PHÂN LOẠI,
+#   col_6=NGUYÊN NHÂN, col_7=THIỆT HẠI VỀ NGƯỜI,
+#   col_8=THIỆT HẠI TÀI SẢN, col_9=TÀI SẢN CỨU CHỮA,
+#   col_10=THỜI GIAN TỚI ĐÁM CHÁY, col_11=THỜI GIAN KHỐNG CHẾ,
+#   col_12=THỜI GIAN DẬP TẮT HOÀN TOÀN, col_13=SỐ LƯỢNG XE,
+#   col_14=CHỈ HUY CHỮA CHÁY, col_15=GHI CHÚ
+
+sheet_mapping:
+  danh_sach_chay:
+    fields:
+      stt:
+        aliases: ["STT", "stt"]
+        type: integer
+      ngay_xay_ra:
+        aliases: ["NGÀY XẢY RA VỤ CHÁY", "NGÀY"]
+        type: string
+      thoi_gian:
+        aliases: ["THỜI GIAN", "Thời gian"]
+        type: string
+      ten_vu_chay:
+        aliases: ["VỤ CHÁY", "Vụ cháy"]
+        type: string
+      dia_diem:
+        aliases: ["ĐỊA ĐIỂM", "Dia diem"]
+        type: string
+      phan_loai:
+        aliases: ["PHÂN LOẠI", "Phân loại"]
+        type: string
+      nguyen_nhan:
+        aliases: ["NGUYÊN NHÂN", "Nguyên nhân"]
+        type: string
+      thiet_hai_nguoi:
+        aliases: ["THIỆT HẠI VỀ NGƯỜI", "Thiệt hại về người"]
+        type: string
+      thiet_hai_tai_san:
+        aliases: ["THIỆT HẠI TÀI SẢN", "Thiệt hại tài sản"]
+        type: string
+      tai_san_cuu:
+        aliases: ["TÀI SẢN CỨU CHỮA", "Tài sản cứu chữa"]
+        type: string
+      thoi_gian_toi:
+        aliases: ["THỜI GIAN TỚI ĐÁM CHÁY", "Thời gian tới đám cháy"]
+        type: string
+      thoi_gian_khong_che:
+        aliases: ["THỜI GIAN KHỐNG CHẾ", "Thời gian khống chế"]
+        type: string
+      thoi_gian_dap_tat:
+        aliases: ["THỜI GIAN DẬP TẮT HOÀN TOÀN", "Thời gian dập tắt hoàn toàn", "THỜI GIAN DẬP TẮT"]
+        type: string
+      so_luong_xe:
+        aliases: ["SỐ LƯỢNG XE", "Số lượng xe", "SỐ XE"]
+        type: integer
+      chi_huy:
+        aliases: ["CHỈ HUY CHỮA CHÁY", "Chỉ huy chữa cháy", "CHỈ HUY"]
+        type: string
+      ghi_chu:
+        aliases: ["GHI CHÚ", "Ghi chú"]
+        type: string

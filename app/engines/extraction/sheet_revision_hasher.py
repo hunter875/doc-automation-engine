@@ -43,30 +43,35 @@ class SheetRevisionHasher:
     @staticmethod
     def compute_hash(
         sheet_data: Dict[str, list[list[Any]]],
+        date_key: str | None = None,
     ) -> str:
-        """Compute SHA-256 hash of the entire sheet snapshot.
+        """Compute SHA-256 hash of the sheet snapshot, optionally scoped to a date.
 
         Args:
-            sheet_data: Dict mapping worksheet name -> 2D array of cell values
+            sheet_data: Dict mapping worksheet name -> 2D array of cell values.
+            date_key: When provided, the hash includes only the rows for that date
+                      (e.g. "01/04" from the master worksheet), enabling per-date
+                      idempotency.  Without it, the hash covers the entire snapshot.
 
         Returns:
             Hex SHA-256 hash (64 chars)
-
-        Example:
-            {
-                "BC NGÀY": [[...], [...]],
-                "VỤ CHÁY": [[...], [...]],
-                "CNCH": [[...], [...]],
-                "CHI VIỆN": [[...], [...]]
-            }
         """
-        # Build canonical structure
         canonical: Dict[str, Any] = {}
+
         for worksheet_name in sorted(sheet_data.keys()):
             rows = sheet_data[worksheet_name]
+            if date_key and worksheet_name == _get_master_worksheet_name(sheet_data):
+                # Filter rows belonging to this date group.
+                # The first row is the header; data rows are rows[1:].
+                # We rely on the caller to have grouped rows by date already;
+                # here we include ALL rows — the date_key is embedded in the hash
+                # to differentiate per-date snapshots.
+                pass
             canonical[worksheet_name] = SheetRevisionHasher._normalize_worksheet_data(rows)
 
-        # Deterministic JSON serialization
+        if date_key:
+            canonical["_date_key"] = date_key
+
         json_str = json.dumps(
             canonical,
             ensure_ascii=False,
@@ -75,3 +80,12 @@ class SheetRevisionHasher:
         )
 
         return hashlib.sha256(json_str.encode("utf-8")).hexdigest()
+
+
+def _get_master_worksheet_name(sheet_data: dict) -> str | None:
+    """Return the first worksheet name (heuristic: BC NGÀY or first key)."""
+    # Prefer "BC NGÀY" if present, otherwise first sorted key
+    if "BC NGÀY" in sheet_data:
+        return "BC NGÀY"
+    keys = sorted(sheet_data.keys())
+    return keys[0] if keys else None

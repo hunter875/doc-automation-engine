@@ -25,76 +25,74 @@ logger = logging.getLogger(__name__)
 
 # ── STT definitions ─────────────────────────────────────────────────────────────────
 
-# All 61 statistical rows (STT 1–61), with Vietnamese labels
-STT_DEFINITIONS: dict[str, str] = {
-    "1":  "I. TÌNH HÌNH CHÁY, NỔ VÀ TAI NẠN, SỰ CỐ",
-    "2":  "1. Tổng số vụ cháy",
-    "3":  "2. Số người chết (cháy)",
-    "4":  "3. Số người bị thương (cháy)",
-    "5":  "4. Số người được cứu thoát (cháy)",
-    "6":  "5. Tổng thiệt hại tài sản (cháy) — triệu đồng",
-    "7":  "6. Tài sản được cứu thoát (cháy) — triệu đồng",
-    "8":  "7. Tổng số vụ nổ",
-    "9":  "8. Số người chết (nổ)",
-    "10": "9. Số người bị thương (nổ)",
-    "11": "10. Số người được cứu thoát (nổ)",
-    "12": "11. Thiệt hại tài sản (nổ) — triệu đồng",
-    "13": "12. Tài sản được cứu thoát (nổ) — triệu đồng",
-    "14": "3. Tổng số vụ tai nạn, sự cố",
-    "15": "4. Số người được cứu thoát",
-    "16": "5. Tổng số vụ tàu tự thoát",
-    "17": "6. Tổng số vụ tháo gỡ thi thể",
-    "18": "7. Tổng số vụ phát hiện thi thể",
-    "19": "8. Tổng số phương tiện được cứu thoát",
-    "20": "II. TUYÊN TRUYỀN PCCC&CNCH",
-    "21": "1. Tuyên truyền qua internet, MXH",
-    "22": "1.1 Tổng số tin bài",
-    "23": "1.2 Số tin bài viết bài",
-    "24": "1.3 Số tin bài đăng ảnh",
-    "25": "1.4 Số tin bài đăng video",
-    "26": "2. Tổng số lớp phóng sự",
-    "27": "2.1 Số cuộc phóng sự",
-    "28": "2.2 Số người tham gia",
-    "29": "3. Tổng số tờ rơi / khuyến cáo",
-    "30": "III. CÔNG TÁC KIỂM TRA",
-    "31": "1. Tổng số cuộc kiểm tra",
-    "32": "  1.1 Định kỳ — Nhóm I",
-    "33": "  1.2 Định kỳ — Nhóm II",
-    "34": "  1.3 Đột xuất — Nhóm I",
-    "35": "  1.4 Đột xuất — Nhóm II",
-    "36": "  1.5 Hướng dẫn an toàn",
-    "37": "  1.6 Số kiến nghị đơn vị",
-    "38": "2. Tổng số vụ vi phạm phát hiện",
-    "39": "3. Tổng số lần xử phạt",
-    "40": "  3.1 Phạt cảnh cáo",
-    "41": "  3.2 Đình chỉ tạm thời",
-    "42": "  3.3 Đình chỉ hoạt động",
-    "43": "  3.4 Phạt tiền",
-    "44": "  3.5 Tổng tiền phạt (triệu đồng)",
-    "45": "  3.6 Phục hồi hoạt động",
-    "46": "IV. PACC&CNCH CƠ SỞ — PC06",
-    "47": "  1. Số PA được xây dựng và phê duyệt",
-    "48": "  2. Số PA được thực tập phương án",
-    "49": "V. PACC&CNCH CƠ QUAN, CÔNG AN — PC08",
-    "50": "  1. Số PA được xây dựng và phê duyệt",
-    "51": "  2. Số PA được thực tập phương án",
-    "52": "VI. PACC&CNCH CÔNG AN CẤP TỈNH — PC09",
-    "53": "  1. Số PA được xây dựng và phê duyệt",
-    "54": "  2. Số PA được thực tập phương án",
-    "55": "VII. PACC&CNCH PHƯƠNG TIỆN GTVT — PC07",
-    "56": "  1. Số PA được xây dựng và phê duyệt",
-    "57": "  2. Số PA được thực tập phương án",
-    "58": "VIII. HUẤN LUYỆN PCCC&CNCH",
-    "59": "  1. Tổng số lớp huấn luyện",
-    "60": "  1.1 Số người tham dự",
-    "61": "  2. Tổng số CBCS được huấn luyện",
-    "62": "  2.1 Chi huy phòng",
-    "63": "  2.2 Chi huy đội",
-    "64": "  2.3 Cán bộ các phòng ban",
-    "65": "  2.4 Chiến sĩ PCCC cơ sở",
-    "66": "  2.5 Lái tàu, lái xe",
-    "67": "  2.6 Thuyền viên",
+# STT 1–61 only — sourced from bc_ngay_schema.yaml bang_thong_ke.stt_map
+# Section-header STTs (is_section=True) are skipped in issue detection.
+STT_DEFINITIONS: dict[str, dict] = {
+    "1":  {"label": "I. TÌNH HÌNH CHÁY, NỔ, SỰ CỐ TAI NẠN", "is_section": True},
+    "2":  {"label": "1. Tổng số vụ cháy",                       "is_section": False},
+    "3":  {"label": "Số người chết",                            "is_section": False},
+    "4":  {"label": "Số người bị thương",                       "is_section": False},
+    "5":  {"label": "Số người cứu được",                        "is_section": False},
+    "6":  {"label": "Tài sản thiệt hại",                        "is_section": False},
+    "7":  {"label": "Tài sản cứu được",                          "is_section": False},
+    "8":  {"label": "2. Tổng số vụ nổ",                         "is_section": False},
+    "9":  {"label": "Số người chết",                             "is_section": False},
+    "10": {"label": "Số người bị thương",                       "is_section": False},
+    "11": {"label": "Số người cứu được",                         "is_section": False},
+    "12": {"label": "Tài sản thiệt hại",                         "is_section": False},
+    "13": {"label": "Tài sản cứu được",                          "is_section": False},
+    "14": {"label": "3. Tổng số vụ tai nạn, sự cố",            "is_section": False},
+    "15": {"label": "Số người cứu được (=16+17)",               "is_section": False},
+    "16": {"label": "Trực tiếp cứu được",                        "is_section": False},
+    "17": {"label": "Hướng dẫn thoát nạn",                      "is_section": False},
+    "18": {"label": "Số thi thể",                                 "is_section": False},
+    "19": {"label": "Tài sản cứu được",                          "is_section": False},
+    "20": {"label": "II. KẾT QUẢ CÔNG TÁC PCCC VÀ CNCH",        "is_section": True},
+    "21": {"label": "1. Tuyên truyền về PCCC và CNCH",           "is_section": True},
+    "22": {"label": "1.1 Tuyên truyền qua các phương tiện thông tin truyền thông và nền tảng trực tuyến MXH", "is_section": False},
+    "23": {"label": "Số tin, bài đã đăng phát",                 "is_section": False},
+    "24": {"label": "Số hình ảnh được đăng tải",                 "is_section": False},
+    "25": {"label": "Số lượt cài đặt ứng dụng HELP 114",       "is_section": False},
+    "26": {"label": "1.2 Tuyên truyền trực tiếp tại cơ sở, doanh nghiệp, các khu dân cư", "is_section": True},
+    "27": {"label": "Số cuộc",                                   "is_section": False},
+    "28": {"label": "Số người tham dự",                           "is_section": False},
+    "29": {"label": "Số khuyến cáo, tờ rơi đã phát hành",       "is_section": False},
+    "30": {"label": "2. Hướng dẫn, kiểm tra về PCCC và CNCH",   "is_section": True},
+    "31": {"label": "Số cơ sở được kiểm an toàn PCCC (=STT 32+STT 33)", "is_section": False},
+    "32": {"label": "Kiểm tra định kỳ",                          "is_section": False},
+    "33": {"label": "Kiểm tra đột xuất theo chuyên đề",          "is_section": False},
+    "34": {"label": "Số vi phạm được phát hiện",                  "is_section": False},
+    "35": {"label": "Tổng số cơ sở bị xử phạt VPHC về PCCC (=STT 36+…+STT 39)", "is_section": False},
+    "36": {"label": "Trong đó, phạt cảnh cáo",                   "is_section": False},
+    "37": {"label": "Trong đó, tạm đình chỉ hoạt động",          "is_section": False},
+    "38": {"label": "Trong đó, đình chỉ hoạt động",              "is_section": False},
+    "39": {"label": "Trong đó, phạt tiền",                        "is_section": False},
+    "40": {"label": "Số tiền phạt thu được (triệu đồng)",        "is_section": False},
+    "41": {"label": "3. Xây dựng, thực tập phương án chữa cháy, CNCH", "is_section": True},
+    "42": {"label": "3.1 Cơ sở theo Mẫu số PC06",               "is_section": True},
+    "43": {"label": "Số phương án được xây dựng và phê duyệt",  "is_section": False},
+    "44": {"label": "Số phương án được thực tập",                 "is_section": False},
+    "45": {"label": "3.2 Phương tiện giao thông theo Mẫu số PC07", "is_section": True},
+    "46": {"label": "Số phương án được xây dựng và phê duyệt",  "is_section": False},
+    "47": {"label": "Số phương án được thực tập",                 "is_section": False},
+    "48": {"label": "3.3 CQ Công an thực hiện theo Mẫu số PC08", "is_section": True},
+    "49": {"label": "Số phương án được xây dựng và phê duyệt",   "is_section": False},
+    "50": {"label": "Số phương án được thực tập",                 "is_section": False},
+    "51": {"label": "3.4 CNCH CQ Công an thực hiện theo Mẫu số PC09", "is_section": True},
+    "52": {"label": "Số phương án được xây dựng và phê duyệt",   "is_section": False},
+    "53": {"label": "Số phương án được thực tập",                 "is_section": False},
+    "54": {"label": "4. Công tác huấn luyện nghiệp vụ chữa cháy và CNCH thường xuyên", "is_section": True},
+    "55": {"label": "Tổng số CBCS tham gia huấn luyện (=STT 56+…+STT 61)", "is_section": False},
+    "56": {"label": "Chỉ huy phòng",                              "is_section": False},
+    "57": {"label": "Chỉ huy Đội",                                "is_section": False},
+    "58": {"label": "Cán bộ tiểu đội",                            "is_section": False},
+    "59": {"label": "Chiến sĩ CC và CNCH",                        "is_section": False},
+    "60": {"label": "Chiến sĩ nghĩa vụ (hợp đồng lao động)",    "is_section": False},
+    "61": {"label": "Lái tàu CC và CNCH",                         "is_section": False},
 }
+
+# Section-header STTs that should never be flagged as zero-count issues
+_SECTION_HEADERS = {"1", "20", "21", "26", "30", "41", "42", "45", "48", "51", "54"}
 
 # Key STTs to show in the grid tab (most important ones)
 GRID_STTS = ["2", "14", "22", "31", "32", "33", "43", "47", "50", "52", "55", "60", "61"]
@@ -234,7 +232,7 @@ class SheetInspectService:
         from collections import defaultdict
         by_date: dict[str, dict] = defaultdict(lambda: {
             "date": "", "job_count": 0, "approved_count": 0,
-            "jobs": [], "has_issues": False,
+            "jobs": [], "issue_count": 0,
         })
         for job in jobs:
             day_str = (job.created_at.date() if job.created_at else start).isoformat()
@@ -243,16 +241,25 @@ class SheetInspectService:
             entry["job_count"] += 1
             if job.status in ("approved", "aggregated"):
                 entry["approved_count"] += 1
-            if job.status == "failed":
-                entry["has_issues"] = True
 
             # Best data source
             raw = job.reviewed_data or job.extracted_data or {}
             btk = _as_list(raw.get("bang_thong_ke"))
-            if len(btk) < 20:
-                entry["has_issues"] = True
 
             stt_vals = _extract_stt_values(raw)
+            job_issue_count = 0
+            if len(btk) < 20:
+                job_issue_count += 1
+            present_stts = {str(r.get("stt", "")).strip() for r in btk if r.get("stt")}
+            for stt_num, defn in STT_DEFINITIONS.items():
+                if defn["is_section"]:
+                    continue
+                if stt_num not in present_stts:
+                    job_issue_count += 1
+                elif stt_vals.get(f"stt_{int(stt_num):02d}", 0) == 0:
+                    job_issue_count += 1
+            entry["issue_count"] += job_issue_count
+
             entry["jobs"].append({
                 "id": str(job.id),
                 "file_name": job.file_name or "",
@@ -263,7 +270,7 @@ class SheetInspectService:
                 "stt_values": stt_vals,
                 "btk_rows": btk,
                 "named_lists": _named_list_counts(raw),
-                "has_issues": entry["has_issues"],
+                "issue_count": job_issue_count,
             })
 
         # Fill all days
@@ -274,7 +281,7 @@ class SheetInspectService:
             if ds in by_date:
                 result.append(by_date[ds])
             else:
-                result.append({"date": ds, "job_count": 0, "approved_count": 0, "jobs": [], "has_issues": False})
+                result.append({"date": ds, "job_count": 0, "approved_count": 0, "jobs": [], "issue_count": 0})
             current += timedelta(days=1)
         return result
 
@@ -287,9 +294,19 @@ class SheetInspectService:
         year: int,
         document_id: Optional[uuid.UUID] = None,
         job_id: Optional[uuid.UUID] = None,
+        worksheet: Optional[str] = None,
     ) -> list[dict]:
         """Identify STT fields that are zero or missing in extracted data,
-        optionally comparing against the raw Excel from MinIO."""
+        optionally comparing against the raw Excel from MinIO.
+
+        Args:
+            worksheet: if provided, only check jobs where parser_used matches.
+                       If "BC NGÀY" → check bang_thong_ke STT fields.
+                       If "VỤ CHÁY THỐNG KÊ" → check danh_sach_chay.
+                       If "CNCH" → check danh_sach_cnch.
+                       If "CHI VIỆN" → check danh_sach_chi_vien.
+                       If None → check all worksheets (legacy behaviour).
+        """
         issues: list[dict] = []
 
         # Load jobs for the month
@@ -299,49 +316,146 @@ class SheetInspectService:
                 if job_id and str(job_data["id"]) != str(job_id):
                     continue
 
-                btk = _as_list(job_data.get("btk_rows", []))
-                present_stts = {str(r.get("stt", "")).strip(): r.get("ket_qua", 0) for r in btk if r.get("stt")}
+                parser = job_data.get("parser_used", "") or ""
+                # Filter by worksheet if specified
+                if worksheet and worksheet not in parser:
+                    continue
 
-                for stt_num, label in STT_DEFINITIONS.items():
-                    stt_val = present_stts.get(stt_num)
-                    if stt_val is None:
-                        # STT not present at all in extracted data
-                        issues.append({
-                            "stt": stt_num,
-                            "field": f"stt_{int(stt_num):02d}",
-                            "label": label,
-                            "date": day_data["date"],
-                            "job_id": job_data["id"],
-                            "file_name": job_data["file_name"],
-                            "severity": "missing",
-                            "excel_value": None,
-                            "system_value": 0,
-                            "description": f"STT {stt_num} không có trong dữ liệu trích xuất",
-                        })
-                    elif stt_val == 0 and stt_num not in ("1", "20", "30", "46", "49", "55", "58"):
-                        # Zero value for a countable field (skip section headers)
-                        issues.append({
-                            "stt": stt_num,
-                            "field": f"stt_{int(stt_num):02d}",
-                            "label": label,
-                            "date": day_data["date"],
-                            "job_id": job_data["id"],
-                            "file_name": job_data["file_name"],
-                            "severity": "zero",
-                            "excel_value": 0,
-                            "system_value": 0,
-                            "description": f"STT {stt_num} có giá trị = 0",
-                        })
+                worksheet_issues = self._build_worksheet_issues(
+                    job_data, day_data["date"], worksheet
+                )
+                issues.extend(worksheet_issues)
 
                 # If document_id given, also fetch raw Excel and compare
-                if document_id:
+                # (only makes sense for BC NGÀY worksheet)
+                if document_id and (worksheet == "BC NGÀY" or (not worksheet and "BC NGÀY" in parser)):
                     doc = self.db.query(Document).filter(Document.id == document_id).first()
                     if doc:
                         excel_bytes = _get_excel_bytes(doc)
                         if excel_bytes:
+                            btk = _as_list(job_data.get("btk_rows", []))
                             issues.extend(self._compare_with_excel(
-                                excel_bytes, btk, day_data["date"], job_data["id"], job_data["file_name"]
+                                excel_bytes, btk, day_data["date"],
+                                job_data["id"], job_data["file_name"], parser
                             ))
+
+        # Deduplicate by stable key: (job_id, worksheet, stt_or_row_idx, issue_type)
+        seen: set[tuple] = set()
+        deduped: list[dict] = []
+        for issue in issues:
+            key = (
+                issue["job_id"],
+                issue.get("worksheet", ""),
+                issue.get("stt", ""),
+                issue.get("row_index", ""),
+                issue["severity"],
+            )
+            if key not in seen:
+                seen.add(key)
+                deduped.append(issue)
+
+        return deduped
+
+    def _build_worksheet_issues(
+        self,
+        job_data: dict,
+        date_str: str,
+        worksheet: Optional[str],
+    ) -> list[dict]:
+        """Build issues for a single job based on its worksheet type."""
+        issues: list[dict] = []
+        raw = job_data  # already a dict from get_month_data output
+        parser = raw.get("parser_used", "") or ""
+
+        if worksheet == "BC NGÀY" or (not worksheet and "BC NGÀY" in parser):
+            # BC NGÀY: check bang_thong_ke STT fields (STT 1–61)
+            btk = _as_list(raw.get("btk_rows", []))
+            present_stts = {str(r.get("stt", "")).strip(): r.get("ket_qua", 0) for r in btk if r.get("stt")}
+
+            for stt_num, defn in STT_DEFINITIONS.items():
+                if defn["is_section"]:
+                    continue
+                stt_val = present_stts.get(stt_num)
+                stt_key = f"stt_{int(stt_num):02d}"
+                if stt_val is None:
+                    issues.append({
+                        "stt": stt_num,
+                        "field": stt_key,
+                        "label": defn["label"],
+                        "date": date_str,
+                        "job_id": job_data["id"],
+                        "file_name": job_data["file_name"],
+                        "worksheet": "BC NGÀY",
+                        "severity": "missing",
+                        "excel_value": None,
+                        "system_value": 0,
+                        "description": f"STT {stt_num} không có trong dữ liệu trích xuất",
+                    })
+                elif stt_val == 0 and stt_num not in _SECTION_HEADERS:
+                    issues.append({
+                        "stt": stt_num,
+                        "field": stt_key,
+                        "label": defn["label"],
+                        "date": date_str,
+                        "job_id": job_data["id"],
+                        "file_name": job_data["file_name"],
+                        "worksheet": "BC NGÀY",
+                        "severity": "zero",
+                        "excel_value": 0,
+                        "system_value": 0,
+                        "description": f"STT {stt_num} có giá trị = 0",
+                    })
+
+        elif worksheet == "VỤ CHÁY THỐNG KÊ" or "CHÁY" in parser.upper():
+            chay_rows = _as_list(raw.get("btk_rows", []))  # btk_rows holds raw event rows for event sheets
+            if len(chay_rows) == 0:
+                issues.append({
+                    "stt": "1",
+                    "field": "danh_sach_chay",
+                    "label": "Danh sách vụ cháy",
+                    "date": date_str,
+                    "job_id": job_data["id"],
+                    "file_name": job_data["file_name"],
+                    "worksheet": "VỤ CHÁY THỐNG KÊ",
+                    "severity": "missing",
+                    "excel_value": None,
+                    "system_value": 0,
+                    "description": "Sheet VỤ CHÁY THỐNG KÊ không có dữ liệu trong dữ liệu trích xuất",
+                })
+
+        elif worksheet == "CNCH" or "CNCH" in parser.upper():
+            cnch_rows = _as_list(raw.get("btk_rows", []))
+            if len(cnch_rows) == 0:
+                issues.append({
+                    "stt": "1",
+                    "field": "danh_sach_cnch",
+                    "label": "Danh sách CNCH",
+                    "date": date_str,
+                    "job_id": job_data["id"],
+                    "file_name": job_data["file_name"],
+                    "worksheet": "CNCH",
+                    "severity": "missing",
+                    "excel_value": None,
+                    "system_value": 0,
+                    "description": "Sheet CNCH không có dữ liệu trong dữ liệu trích xuất",
+                })
+
+        elif worksheet == "CHI VIỆN" or "CHI VIỆN" in parser.upper():
+            cv_rows = _as_list(raw.get("btk_rows", []))
+            if len(cv_rows) == 0:
+                issues.append({
+                    "stt": "1",
+                    "field": "danh_sach_chi_vien",
+                    "label": "Danh sách chi viện",
+                    "date": date_str,
+                    "job_id": job_data["id"],
+                    "file_name": job_data["file_name"],
+                    "worksheet": "CHI VIỆN",
+                    "severity": "missing",
+                    "excel_value": None,
+                    "system_value": 0,
+                    "description": "Sheet CHI VIỆN không có dữ liệu trong dữ liệu trích xuất",
+                })
 
         return issues
 
@@ -352,6 +466,7 @@ class SheetInspectService:
         date_str: str,
         job_id: str,
         file_name: str,
+        parser: str = "",
     ) -> list[dict]:
         """Read raw Excel and compare ket_qua values with extracted data."""
         issues: list[dict] = []
@@ -387,13 +502,16 @@ class SheetInspectService:
                     sys_val = btk_dict.get(stt_key, 0)
                     if sys_val != excel_val and excel_val != 0:
                         stt_num = stt_key.split("_")[1].lstrip("0")
+                        defn = STT_DEFINITIONS.get(stt_num, {})
+                        label = defn.get("label", stt_key) if defn else stt_key
                         issues.append({
                             "stt": stt_num,
                             "field": stt_key,
-                            "label": STT_DEFINITIONS.get(stt_num, stt_key),
+                            "label": label,
                             "date": date_str,
                             "job_id": job_id,
                             "file_name": file_name,
+                            "worksheet": "BC NGÀY",
                             "severity": "mismatch",
                             "excel_value": excel_val,
                             "system_value": sys_val,

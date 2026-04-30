@@ -11,8 +11,11 @@ from app.engines.extraction.mapping.schema_loader import FieldSchema
 
 
 def normalize_unicode_text(value: Any) -> str:
-    text = unicodedata.normalize("NFC", str(value or "")).strip()
-    return re.sub(r"\s+", " ", text)
+    """Normalize text: NFC, remove diacritics, collapse spaces."""
+    t = unicodedata.normalize("NFC", str(value or "")).strip()
+    nfkd = unicodedata.normalize("NFKD", t)
+    t = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", t).lower()
 
 
 def parse_date_ddmmyyyy(value: str) -> str | None:
@@ -79,6 +82,19 @@ def apply_transform(value: Any, rule: str | None) -> Any:
 
 def normalize_field_value(raw_value: Any, field: FieldSchema) -> Any:
     """Normalize a raw cell value according to schema field type."""
+    # Handle numeric types BEFORE string conversion — critical for Excel numeric cells
+    # where float 0.0/1.0 must NOT be stringified to "0.0"/"1.0" and mangled by
+    # the diacritics-stripping pipeline.
+    if isinstance(raw_value, float):
+        if field.field_type in ("integer", "int"):
+            return int(raw_value)
+        if field.field_type in ("float", "double"):
+            return float(raw_value)
+        return raw_value
+    if isinstance(raw_value, int) and field.field_type in ("integer", "int"):
+        return int(raw_value)
+
+    # String normalization path for text/date/array fields
     text = normalize_unicode_text(raw_value)
     if text == "":
         raw_normalized: Any = None

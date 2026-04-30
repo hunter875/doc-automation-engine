@@ -1,0 +1,37 @@
+# Schema cho sheet "CHI VIỆN"
+# Row 0 = group header "VỤ CHÁY CHI VIỆN", Row 1 = sub-headers, Row 2+ = data
+# Column mapping (from excel_headers.json row_1):
+#   col_0=STT, col_1=VỤ CHÁY NGÀY, col_2=ĐỊA ĐIỂM, col_3=KHU VỰC QUẢN LÝ,
+#   col_4=SỐ LƯỢNG XE, col_5=THỜI GIAN ĐI, col_6=THỜI GIAN VỀ,
+#   col_7=CHỈ HUY CHỮA CHÁY, col_8=GHI CHÚ
+
+sheet_mapping:
+  danh_sach_chi_vien:
+    fields:
+      stt:
+        aliases: ["STT", "stt"]
+        type: integer
+      ngay:
+        aliases: ["VỤ CHÁY NGÀY", "Vụ cháy ngày", "NGÀY"]
+        type: string
+      dia_diem:
+        aliases: ["ĐỊA ĐIỂM", "Dia diem"]
+        type: string
+      khu_vuc_quan_ly:
+        aliases: ["KHU VỰC QUẢN LÝ", "Khu vực quản lý", "KHU VỰC"]
+        type: string
+      so_luong_xe:
+        aliases: ["SỐ LƯỢNG XE", "Số lượng xe", "SỐ XE"]
+        type: integer
+      thoi_gian_di:
+        aliases: ["THỜI GIAN ĐI", "Thời gian đi"]
+        type: string
+      thoi_gian_ve:
+        aliases: ["THỜI GIAN VỀ", "Thời gian về"]
+        type: string
+      chi_huy:
+        aliases: ["CHỈ HUY CHỮA CHÁY", "Chỉ huy chữa cháy", "CHỈ HUY"]
+        type: string
+      ghi_chu:
+        aliases: ["GHI CHÚ", "Ghi chú"]
+        type: string

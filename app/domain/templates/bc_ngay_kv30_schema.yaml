@@ -1,0 +1,199 @@
+# Schema cho sheet "BC NGÀY" - THỐNG KÊ CÔNG TÁC NGÀY PC KV30 2026
+# Row 0 = group headers (merged), Row 1 = sub-headers (actual column names), Row 2+ = data
+# Column index mapping (from excel_detail.json):
+#   col_0=NGÀY, col_1=THÁNG, col_2=VỤ CHÁY THỐNG KÊ, col_3=SCLQ ĐẾN PCCC&CNCH
+#   col_4=CHI VIỆN, col_5=CNCH, col_6=ĐỊNH KỲ NHÓM I, col_7=ĐỊNH KỲ NHÓM II,
+#   col_8=ĐỘT XUẤT NHÓM I, col_9=ĐỘT XUẤT NHÓM II,
+#   col_10=HƯỚNG DẪN, col_11=KIẾN NGHỊ, col_12=XỬ PHẠT, col_13=TIỀN PHẠT,
+#   col_14=ĐÌNH CHỈ, col_15=PHỤC HỒI, col_16=TIN BÀI, col_17=PHÓNG SỰ,
+#   col_18=SỐ LỚP TUYÊN TRUYỀN, col_19=SỐ NGƯỜI THAM DỰ, col_20=SỐ KHUYẾN CÁO,
+#   col_21=SỐ LỚP HUẤN LUYỆN, col_22=SỐ NGƯỜI THAM DỰ HUẤN LUYỆN,
+#   col_23-26=PC06, col_27-28=PC08, col_29-30=PC09, col_31-32=PC07, col_33=Ghi chú
+
+sheet_mapping:
+  header:
+    ngay_bao_cao_day:
+      aliases: ["NGÀY", "ngày", "Ngày", "ngay"]
+      type: integer
+      required: false
+    ngay_bao_cao_month:
+      aliases: ["THÁNG", "tháng", "Tháng", "thang"]
+      type: integer
+      required: false
+
+  nghiep_vu:
+    # Vụ cháy / SCLQ / Chi viện / CNCH (4 cột đầu tiên)
+    tong_so_vu_chay:
+      aliases: ["VỤ CHÁY THỐNG KÊ", "Vụ cháy thống kê", "VỤ CHÁY CÓ THỐNG KÊ", "VỤ CHÁY VÀ CNCH", "Vụ cháy và CNCH"]
+      type: integer
+      required: false
+    tong_sclq:
+      aliases: ["SỰ CỐ LIÊN QUAN ĐẾN PCCC&CNCH", "SCLQ ĐẾN PCCC&CNCH", "SỰ CỐ LIÊN QUAN ĐẾN PCCC & CNCH", "SCLQ Đến PCCC&CNCH"]
+      type: integer
+      required: false
+    tong_chi_vien:
+      aliases: ["VỤ CHÁY CHI VIỆN", "CHI VIỆN", "Chi viện"]
+      type: integer
+      required: false
+    tong_so_vu_cnch:
+      aliases: ["CNCH", "Cnch"]
+      type: integer
+      required: false
+
+    # Kiểm tra nhóm I+II (ĐỊNH KỲ / ĐỘT XUẤT — mỗi loại tách NHÓM I, NHÓM II)
+    kiem_tra_dinh_ky_n1:
+      aliases: ["NHÓM I ĐỊNH KỲ", "ĐỊNH KỲ NHÓM I", "NHÓM I"]
+      type: integer
+      required: false
+    kiem_tra_dinh_ky_n2:
+      aliases: ["NHÓM II ĐỊNH KỲ", "ĐỊNH KỲ NHÓM II", "NHÓM II ĐỊNH KỲ"]
+      type: integer
+      required: false
+    kiem_tra_dot_xuat_n1:
+      aliases: ["NHÓM I ĐỘT XUẤT", "ĐỘT XUẤT NHÓM I"]
+      type: integer
+      required: false
+    kiem_tra_dot_xuat_n2:
+      aliases: ["NHÓM II ĐỘT XUẤT", "ĐỘT XUẤT NHÓM II", "NHÓM II ĐỘT XUẤT"]
+      type: integer
+      required: false
+
+    # Tuyên truyền / Huấn luyện / Kiến nghị / Xử phạt
+    huong_dan:
+      aliases: ["HƯỚNG DẪN"]
+      type: integer
+      required: false
+    kien_nghi:
+      aliases: ["KIẾN NGHỊ", "KIẾN\nNGHỊ"]
+      type: integer
+      required: false
+    xu_phat:
+      aliases: ["XỬ PHẠT"]
+      type: integer
+      required: false
+    tien_phat:
+      aliases: ["TIỀN PHẠT\n(triệu đồng)", "TIỀN PHẠT (triệu đồng)", "TIỀN PHẠT"]
+      type: string
+      required: false
+    tam_dinh_chi:
+      aliases: ["ĐÌNH CHỈ"]
+      type: integer
+      required: false
+    phuc_hoi:
+      aliases: ["PHỤC HỒI"]
+      type: integer
+      required: false
+
+    # Tuyên truyền online
+    tong_tin_bai:
+      aliases: ["TIN BÀI", "TIN BÀI, PHÓNG SỰ"]
+      type: integer
+      required: false
+    tong_hinh_anh:
+      aliases: ["PHÓNG SỰ", "TỔNG HÌNH ẢNH"]
+      type: integer
+      required: false
+    so_lan_cai_app_114:
+      aliases: ["CÀI APP HELP 114", "SỐ LƯỢT CÀI APP 114", "APP 114"]
+      type: integer
+      required: false
+    tuyen_truyen_lop:
+      aliases: ["SỐ LỚP TUYÊN TRUYỀN", "SĐ LỚP TUYÊN TRUYỀN"]
+      type: integer
+      required: false
+    tuyen_truyen_nguoi:
+      aliases: ["SỐ NGƯỜI THAM DỰ TUYÊN TRUYỀN", "SỐ NGƯỜI THAM DỰ", "SỐ NGƯỜI THAM DỰ TUYÊN TRUYỀN"]
+      type: integer
+      required: false
+    khuyen_cao:
+      aliases: ["SỐ KHUYẾN CÁO, TỜ RƠI ĐÃ PHÁT", "SỐ KHUYẾN CÁO", "SĐ KHUYẾN CÁO, TỜ RƠI ĐÃ PHÁT", "SĐ KHUYẾN CÁO"]
+      type: integer
+      required: false
+
+    # Huấn luyện
+    huan_luyen_lop:
+      aliases: ["SỐ LỚP HUẤN LUYỆN", "SỐ LỚP", "SĐ LỚP"]
+      type: integer
+      required: false
+    huan_luyen_nguoi:
+      aliases: ["SỐ NGƯỜI THAM DỰ HUẤN LUYỆN", "SỐ NGƯỜI THAM DỰ HUẤN LUYỆN"]
+      type: integer
+      required: false
+
+    # PC06 (PACC cơ sở)
+    pa_pc06_xd:
+      aliases: ["SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT", "SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT PC06"]
+      type: integer
+      required: false
+    pa_pc06_tt:
+      aliases: ["SỐ PA ĐƯỢC THỰC TẬP", "SỐ PA ĐƯỢC THỰC TẬP PC06"]
+      type: integer
+      required: false
+
+    # PC08 (PACC CQCA)
+    pa_pc08_xd:
+      aliases: ["SỐ PA PC08 XÂY DỰNG VÀ PHÊ DUYỆT", "SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT PC08"]
+      type: integer
+      required: false
+    pa_pc08_tt:
+      aliases: ["SỐ PA PC08 ĐƯỢC THỰC TẬP", "SỐ PA ĐƯỢC THỰC TẬP PC08"]
+      type: integer
+      required: false
+
+    # PC09 (CNCH CQCA)
+    pa_pc09_xd:
+      aliases: ["SỐ PA PC09 XÂY DỰNG VÀ PHÊ DUYỆT", "SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT PC09"]
+      type: integer
+      required: false
+    pa_pc09_tt:
+      aliases: ["SỐ PA PC09 ĐƯỢC THỰC TẬP", "SỐ PA ĐƯỢC THỰC TẬP PC09"]
+      type: integer
+      required: false
+
+    # PC07 (PACC phương tiện)
+    pa_pc07_xd:
+      aliases: ["SỐ PA PC07 XÂY DỰNG VÀ PHÊ DUYỆT", "SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT PC07"]
+      type: integer
+      required: false
+    pa_pc07_tt:
+      aliases: ["SỐ PA PC07 ĐƯỢC THỰC TẬP", "SỐ PA ĐƯỢC THỰC TẬP PC07"]
+      type: integer
+      required: false
+
+  bang_thong_ke:
+    fields:
+      stt: ["STT", "stt"]
+      noi_dung: ["nội dung", "noi_dung"]
+      ket_qua: ["kết quả", "ket_qua"]
+    stt_map:
+      "2": {noi_dung: "1. Tổng số vụ cháy", field: "tong_so_vu_chay"}
+      "3": {noi_dung: "2. Tổng số SCLQ đến PCCC&CNCH", field: "tong_sclq"}
+      "4": {noi_dung: "3. Tổng số CNCH", field: "tong_so_vu_cnch"}
+      "20": {noi_dung: "II. KẾT QUẢ CÔNG TÁC PCCC VÀ CNCH", field: null}
+      "21": {noi_dung: "1. Tuyên truyền về PCCC và CNCH", field: null}
+      "22": {noi_dung: "Tin bài phóng sự đăng tải", field: "tong_tin_bai"}
+      "23": {noi_dung: "Hình ảnh đăng tải", field: "tong_hinh_anh"}
+      "24": {noi_dung: "Số lượt cài app HELP 114", field: "so_lan_cai_app_114"}
+      "25": {noi_dung: "1.2 Tuyên truyền trực tiếp tại cơ sở", field: null}
+      "26": {noi_dung: "Số cuộc tuyên truyền", field: "tuyen_truyen_lop"}
+      "27": {noi_dung: "Số người tham dự", field: "tuyen_truyen_nguoi"}
+      "28": {noi_dung: "Số khuyến cáo tờ rơi đã phát", field: "khuyen_cao"}
+      "31": {noi_dung: "Số cơ sở được kiểm tra", field: null}
+      "32": {noi_dung: "Kiểm tra định kỳ nhóm I", field: "kiem_tra_dinh_ky_n1"}
+      "33": {noi_dung: "Kiểm tra định kỳ nhóm II", field: "kiem_tra_dinh_ky_n2"}
+      "34": {noi_dung: "Kiểm tra đột xuất nhóm I", field: "kiem_tra_dot_xuat_n1"}
+      "35": {noi_dung: "Kiểm tra đột xuất nhóm II", field: "kiem_tra_dot_xuat_n2"}
+      "41": {noi_dung: "Số cơ sở bị xử phạt", field: "xu_phat"}
+      "42": {noi_dung: "Số tiền phạt thu được (triệu đồng)", field: "tien_phat"}
+      "43": {noi_dung: "Đình chỉ hoạt động", field: "tam_dinh_chi"}
+      "44": {noi_dung: "Phục hồi", field: "phuc_hoi"}
+      "51": {noi_dung: "Số lớp huấn luyện", field: "huan_luyen_lop"}
+      "52": {noi_dung: "Số người tham dự huấn luyện", field: "huan_luyen_nguoi"}
+      "61": {noi_dung: "PA PC06 xây dựng và phê duyệt", field: "pa_pc06_xd"}
+      "62": {noi_dung: "PA PC06 thực tập", field: "pa_pc06_tt"}
+      "63": {noi_dung: "PA PC08 xây dựng và phê duyệt", field: "pa_pc08_xd"}
+      "64": {noi_dung: "PA PC08 thực tập", field: "pa_pc08_tt"}
+      "65": {noi_dung: "PA PC09 xây dựng và phê duyệt", field: "pa_pc09_xd"}
+      "66": {noi_dung: "PA PC09 thực tập", field: "pa_pc09_tt"}
+      "67": {noi_dung: "PA PC07 xây dựng và phê duyệt", field: "pa_pc07_xd"}
+      "68": {noi_dung: "PA PC07 thực tập", field: "pa_pc07_tt"}

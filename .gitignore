@@ -1,3 +1,22 @@
+# Git
+.git/
+.gitignore
+
+# Docker
+.docker/
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -50,15 +69,6 @@ coverage.xml
 *.mo
 *.pot
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
 # IDE
 .idea/
 .vscode/
@@ -74,21 +84,25 @@ venv.bak/
 
 # celery beat schedule file
 celerybeat-schedule
+celerybeat.pid
 
 # Logs
 *.log
 logs/
 
-# Local development
+# Local development & OS files
 .DS_Store
 Thumbs.db
 
-# Docker
-.docker/
-
-# Data volumes (local dev)
+# Data volumes & static (local dev)
 data/
 uploads/
+media/
+static/
+
+# Frontend (just in case)
+node_modules/
+npm-debug.log
 
 # Secrets
 *.pem
