@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ProcessingError
+from app.domain.models.daily_report_edit import DailyReportEdit
 from app.domain.models.extraction_job import ExtractionJob
 from app.application.job_service import JobManager
 from app.application.aggregation_service import AggregationService
+from app.engines.extraction.schemas import BlockExtractionOutput
 
 
 class DailyReportService:
@@ -127,3 +131,108 @@ class DailyReportService:
             }
             for job in jobs
         ]
+
+    def _unwrap_extracted_data(self, extracted_data: dict) -> dict:
+        """Extract BlockExtractionOutput from wrapper if present."""
+        if isinstance(extracted_data, dict) and isinstance(extracted_data.get("data"), dict):
+            nested = extracted_data["data"]
+            if "header" in nested:
+                return nested
+        return extracted_data
+
+    def get_latest_manual_edit(
+        self, tenant_id: UUID, template_id: UUID, report_date: date
+    ) -> Optional[DailyReportEdit]:
+        """Get latest manual edit for given date."""
+        return (
+            self.db.query(DailyReportEdit)
+            .filter(
+                DailyReportEdit.tenant_id == tenant_id,
+                DailyReportEdit.template_id == template_id,
+                DailyReportEdit.report_date == report_date,
+            )
+            .order_by(DailyReportEdit.created_at.desc(), DailyReportEdit.id.desc())
+            .first()
+        )
+
+    def get_report_detail(
+        self, tenant_id: UUID, template_id: UUID, report_date: date, source: str = "default"
+    ) -> dict:
+        """Get report detail with manual edit support.
+
+        source: "default" (manual if exists else auto), "auto" (force auto), "manual" (force manual, 404 if none)
+        """
+        snapshot_job = self.get_latest_snapshot_version(str(tenant_id), str(template_id), report_date)
+        if not snapshot_job:
+            raise ProcessingError(message=f"No extraction job found for date {report_date.isoformat()}")
+
+        latest_edit = self.get_latest_manual_edit(tenant_id, template_id, report_date)
+
+        if source == "manual":
+            if not latest_edit:
+                raise ProcessingError(message=f"No manual edit found for date {report_date.isoformat()}")
+            data = latest_edit.edited_data
+            response_source = "manual_edit"
+        elif source == "auto":
+            data = self._unwrap_extracted_data(snapshot_job.extracted_data)
+            response_source = "auto_sync"
+        else:  # default
+            if latest_edit:
+                data = latest_edit.edited_data
+                response_source = "manual_edit"
+            else:
+                data = self._unwrap_extracted_data(snapshot_job.extracted_data)
+                response_source = "auto_sync"
+
+        return {
+            "date": report_date.isoformat(),
+            "job_id": str(snapshot_job.id),
+            "version": snapshot_job.report_version,
+            "source": response_source,
+            "has_manual_edits": bool(latest_edit),
+            "manual_edit_id": str(latest_edit.id) if latest_edit else None,
+            "data": data,
+            "validation_report": snapshot_job.validation_report or {},
+        }
+
+    def save_manual_edit(
+        self,
+        tenant_id: UUID,
+        template_id: UUID,
+        report_date: date,
+        edited_data: dict,
+        reason: str | None = None,
+        edited_by: UUID | None = None,
+    ) -> dict:
+        """Save manual edit without mutating ExtractionJob.extracted_data."""
+        snapshot_job = self.get_latest_snapshot_version(str(tenant_id), str(template_id), report_date)
+        if not snapshot_job:
+            raise ProcessingError(message=f"No extraction job found for date {report_date.isoformat()}")
+
+        # Validate edited_data
+        try:
+            BlockExtractionOutput.model_validate(edited_data)
+        except Exception as e:
+            raise ProcessingError(message=f"Invalid edited_data: {e}")
+
+        # Create edit record
+        edit = DailyReportEdit(
+            tenant_id=tenant_id,
+            template_id=template_id,
+            report_date=report_date,
+            extraction_job_id=snapshot_job.id,
+            edited_data=edited_data,
+            reason=reason,
+            edited_by=edited_by,
+        )
+        self.db.add(edit)
+        self.db.commit()
+        self.db.refresh(edit)
+
+        return {
+            "status": "ok",
+            "date": report_date.isoformat(),
+            "job_id": str(snapshot_job.id),
+            "edit_id": str(edit.id),
+            "has_manual_edits": True,
+        }

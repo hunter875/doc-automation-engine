@@ -1,7 +1,6 @@
 # Schema cho sheet "CHI VIỆN"
 # Row 0 = group header "VỤ CHÁY CHI VIỆN", Row 1 = sub-headers, Row 2+ = data
-# Column mapping (from excel_headers.json row_1):
-#   col_0=STT, col_1=VỤ CHÁY NGÀY, col_2=ĐỊA ĐIỂM, col_3=KHU VỰC QUẢN LÝ,
+# Column mapping: col_0=STT, col_1=VỤ CHÁY NGÀY, col_2=ĐỊA ĐIỂM, col_3=KHU VỰC QUẢN LÝ,
 #   col_4=SỐ LƯỢNG XE, col_5=THỜI GIAN ĐI, col_6=THỜI GIAN VỀ,
 #   col_7=CHỈ HUY CHỮA CHÁY, col_8=GHI CHÚ
 
@@ -15,7 +14,7 @@ sheet_mapping:
         aliases: ["VỤ CHÁY NGÀY", "Vụ cháy ngày", "NGÀY"]
         type: string
       dia_diem:
-        aliases: ["ĐỊA ĐIỂM", "Dia diem"]
+        aliases: ["ĐỊA ĐIỂM", "Địa điểm"]
         type: string
       khu_vuc_quan_ly:
         aliases: ["KHU VỰC QUẢN LÝ", "Khu vực quản lý", "KHU VỰC"]

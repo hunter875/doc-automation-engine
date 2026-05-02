@@ -49,31 +49,29 @@ POST /jobs/ingest/google-sheet/sync
 GoogleSheetIngestionService.ingest()  [SHEET_INGESTION_MODE=snapshot]
     ↓
 1. Load template → google_sheet_configs
-2. Parallel fetch all worksheets → sheet_data dict
+2. Parallel fetch all worksheets → sheet_data dict (worksheet_name → rows)
 3. DailyReportBuilder.build(template, sheet_data, worksheet_configs)
    a. For each config:
-      - detect_header_row() → find header row
+      - detect_header_row() → find header row index
       - For each data row:
-        > map_row_to_document_data() → normalized dict
-        > validate_row() → RowValidationResult
-        > SheetExtractionPipeline.run() → partial BlockExtractionOutput
+        > Build row_dict: {normalized_header: cell_value}
+        > validate_row() → RowValidationResult (optional)
+        > SheetExtractionPipeline.run(row_dict, schema_path) → partial BlockExtractionOutput
+          (Note: pipeline expects raw column headers as keys, NOT field names)
       - Merge partial output into full report by target_section
    b. Extract report_date from header.ngay_bao_cao (required)
    c. Build validation_summary from row results
-4. SheetRevisionHasher.compute_hash() → sheet_revision_hash
-5. Duplicate check: existing job with same (tenant, template, report_date, hash)?
-   → If duplicate: return existing job (idempotent)
-6. report_version = latest + 1 for this (tenant, template, report_date)
-7. Create source document (full sheet snapshot JSON)
-8. Create ExtractionJob:
+4. Flatten aggregated BlockExtractionOutput → flat_dict via _flatten_report()
+   Output shape: { ...all fields at top level (header fields, nghiệp vụ fields, lists) }
+5. Create ExtractionJob with intermediate payload:
    - extraction_mode = "block"
-   - status = "extracted"
    - parser_used = "google_sheets"
-   - extracted_data = BlockExtractionOutput (from builder)
-   - sheet_revision_hash, report_date, report_version
-   - validation_report = row-level summary
-   - supersedes_job_id = previous version (if any)
-9. Return: { job_id, report_date, report_version, worksheets_processed, validation_summary }
+   - extracted_data = {
+       "source": "google_sheet",
+       "sheet_id": <sheet_id>,
+       "data": <flat_dict>
+     }
+6. Return: { job_id, status, parser_used, template_id, worksheets_processed, rows_fetched }
 ```
 
 ---
@@ -90,6 +88,12 @@ GoogleSheetIngestionService.ingest()  [SHEET_INGESTION_MODE=snapshot]
 - **File:** `app/engines/extraction/daily_report_builder.py`
 - **Purpose:** Assemble full `BlockExtractionOutput` from multiple worksheet snapshots.
 - **Critical:** Extracts `report_date` from `header.ngay_bao_cao` (must exist after fix 2026-04-28).
+- **Per-Row Processing:**
+  1. Build `row_dict`: `{normalized_header → cell_value}` using `normalize_unicode_text()` on column headers.
+  2. Validate via `validate_row()` against Pydantic model (optional).
+  3. Call `SheetExtractionPipeline.run(row_dict, schema_path)` to produce partial output.
+  4. Merge partial output into master report by `target_section`.
+- **CRITICAL BUG (2026-04-30):** Current code incorrectly passes `doc_data` (field-name keys) to the pipeline instead of `row_dict`. This breaks field matching. **Fix:** Replace `pipeline.run({"data": doc_data})` with `pipeline.run(row_dict)`.
 
 ### 5.3 `SheetExtractionPipeline`
 
@@ -308,6 +312,30 @@ The `ExcelKV30Reader` class reads the `.xlsx` file directly for local developmen
 
 ---
 
+## Column Header Normalization & Aliases
+
+To ensure robust matching across diverse Google Sheets exports, both column headers and schema aliases undergo the same normalization pipeline:
+
+1. Unicode NFC normalization
+2. Strip leading/trailing whitespace
+3. Remove diacritics (e.g., "ĐỀ" → "DE", "ngày" → "ngay")
+4. Collapse all whitespace (including newlines, tabs) to single space
+5. Lowercase
+
+**Example:**  
+Raw header: `"VỤ CHÁY \nTHỐNG KÊ "` → Normalized: `"vu chay thong ke"`
+
+Schema alias: `"VỤ CHÁY THỐNG KÊ"` → Normalized: `"vu chay thong ke"` → **MATCH**
+
+**Schema authoring must include all observed header variants** (including newlines, trailing spaces, merged headers) as aliases to guarantee matching. The normalization step makes matching tolerant to formatting differences.
+
+**Matching algorithm** (`_resolve_field_value`):
+1. Try the canonical `field_name` first (e.g., `"ngay_bao_cao_day"` → `"ngay bao cao day"`).
+2. Then try each alias in order.
+3. Also supports diacritics-stripped exact match and prefix matching for single-word candidates.
+
+---
+
 ## Known Issues (Open)
 
 | # | Description | File | Status |
@@ -316,6 +344,7 @@ The `ExcelKV30Reader` class reads the `.xlsx` file directly for local developmen
 | Bug #4 | Race condition on duplicate check (in-memory set) | `sheet_job_writer.py` | Open |
 | Bug #9 | No transaction rollback on batch failure | `sheet_job_writer.py` | Open |
 | Bug #11 | `detect_header_row` scan_limit=15 may miss header | `header_detector.py` | Open |
+| Bug #12 | `DailyReportBuilder._process_worksheet_with_schema()` passes `doc_data` (field-name keys) to pipeline instead of raw `row_dict`, causing field matching to fail. Integration tests return empty reports. | `daily_report_builder.py:789` | **Open (Critical)** |
 
 ---
 

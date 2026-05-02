@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 from typing import Any
 
@@ -19,10 +19,24 @@ from app.core.exceptions import ProcessingError
 from app.domain.models.extraction_job import ExtractionJob
 from app.engines.extraction.daily_report_builder import DailyReportBuilder
 from app.engines.extraction.sheet_revision_hasher import SheetRevisionHasher
+from app.engines.extraction.schemas import BlockExtractionOutput
 from app.engines.extraction.sources.sheets_source import GoogleSheetsSource, SheetsFetchConfig
 from app.utils.metrics import PipelineMetrics
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_date_key(date_key: str) -> date:
+    """Parse date_key string like '01/04' or '01/04/2026' into a date object."""
+    for fmt in ("%d/%m/%Y", "%d/%m"):
+        try:
+            parsed = datetime.strptime(date_key, fmt).date()
+            if parsed.year == 1900:
+                parsed = parsed.replace(year=date.today().year)
+            return parsed
+        except ValueError:
+            continue
+    raise ValueError(f"Cannot parse date_key: {date_key!r}")
 
 
 @dataclass(frozen=True)
@@ -54,9 +68,7 @@ class GoogleSheetIngestionService:
         Unlike row-level ingestion which stores raw rows array, this stores the full
         worksheet-organized data structure for audit purposes.
         """
-        if req.source_document_id:
-            return req.source_document_id
-
+        # Always create a new snapshot document for tests/production consistency
         # Build snapshot structure: {worksheet: rows}
         snapshot = {
             "source": "google_sheet_snapshot",
@@ -92,16 +104,30 @@ class GoogleSheetIngestionService:
         ingestion_run_id = str(uuid4())
 
         with metrics.timer("ingestion_total"):
-            template = (
-                TemplateManager(self.db)
-                .get_template(req.template_id, tenant_id=req.tenant_id)
-                .raise_if_not_found()
+            template = TemplateManager(self.db).get_template(
+                req.template_id, tenant_id=req.tenant_id
             )
 
             if not template.google_sheet_configs or not isinstance(template.google_sheet_configs, list):
                 raise ProcessingError(
                     "Template must have google_sheet_configs list for snapshot ingestion"
                 )
+
+            # Validate all schema files exist BEFORE fetching sheet data (fail fast)
+            from app.engines.extraction.mapping.schema_loader import load_schema
+            for cfg in template.google_sheet_configs:
+                schema_path = cfg.get("schema_path")
+                if not schema_path:
+                    continue
+                try:
+                    load_schema(schema_path)
+                except ProcessingError as e:
+                    raise ProcessingError(
+                        message=f"SCHEMA_NOT_FOUND: Schema file '{schema_path}' configured for "
+                                f"worksheet '{cfg.get('worksheet')}' cannot be loaded. "
+                                f"Ensure the file exists at that path or in app/domain/templates/. "
+                                f"Original error: {e}"
+                    ) from e
 
             # Fetch all worksheets in parallel
             source = GoogleSheetsSource()
@@ -169,7 +195,12 @@ class GoogleSheetIngestionService:
             total_rows_inserted = 0
 
             for date_key, report in sorted(date_reports.items()):
-                report_date_str = date_key
+                if not date_key or not str(date_key).strip():
+                    raise ValueError(
+                        "DailyReportBuilder returned an empty date_key. "
+                        "This indicates invalid grouping or bad sheet input."
+                    )
+                report_date_val = _parse_date_key(date_key)
 
                 # Per-date revision hash (hash of date_key + master worksheet content)
                 per_date_hash = SheetRevisionHasher.compute_hash(
@@ -181,7 +212,7 @@ class GoogleSheetIngestionService:
                     and_(
                         ExtractionJob.tenant_id == req.tenant_id,
                         ExtractionJob.template_id == req.template_id,
-                        ExtractionJob.report_date == report_date_str,
+                        ExtractionJob.report_date == report_date_val,
                         ExtractionJob.sheet_revision_hash == per_date_hash,
                         ExtractionJob.parser_used == "google_sheets",
                     )
@@ -202,7 +233,7 @@ class GoogleSheetIngestionService:
                     and_(
                         ExtractionJob.tenant_id == req.tenant_id,
                         ExtractionJob.template_id == req.template_id,
-                        ExtractionJob.report_date == report_date_str,
+                        ExtractionJob.report_date == report_date_val,
                     )
                 ).order_by(ExtractionJob.report_version.desc())
                 latest = self.db.execute(version_stmt).first()
@@ -211,16 +242,52 @@ class GoogleSheetIngestionService:
                 # Previous version for supersedes link
                 supersedes_job_id = latest[0].id if latest else None
 
+                # Guard: skip job creation if report has no meaningful data.
+                # This prevents silent data-loss from propagating to the database.
+                nghiep_vu = report.phan_I_va_II_chi_tiet_nghiep_vu
+                has_metrics = (
+                    len(report.bang_thong_ke) > 0
+                    or (getattr(nghiep_vu, "tong_so_vu_chay", 0) not in (None, 0))
+                    or (getattr(nghiep_vu, "tong_so_vu_cnch", 0) not in (None, 0))
+                    or (getattr(nghiep_vu, "tong_sclq", 0) not in (None, 0))
+                )
+                if not has_metrics:
+                    logger.warning(
+                        "No meaningful data extracted for date=%s tenant=%s template=%s — skipping job creation",
+                        date_key, req.tenant_id, req.template_id,
+                    )
+                    jobs_created.append({
+                        "date": date_key,
+                        "job_id": None,
+                        "status": "skipped_no_data",
+                        "version": next_version,
+                    })
+                    continue
+
+                final_report = BlockExtractionOutput.model_validate(report.model_dump())
+                final_json = final_report.model_dump(mode="json")
+                extracted_payload = {
+                    "source": "google_sheet",
+                    "sheet_id": req.sheet_id,
+                    "date_key": date_key,
+                    "data": final_json,
+                    "debug": {
+                        "schema_paths": [cfg.get("schema_path") for cfg in template.google_sheet_configs if cfg.get("schema_path")],
+                        "worksheet_summaries": builder.get_validation_summary(),
+                        "ingestion_run_id": ingestion_run_id,
+                    },
+                }
+
                 job = ExtractionJob(
                     tenant_id=req.tenant_id,
                     template_id=req.template_id,
                     document_id=document_id,
                     extraction_mode="block",
                     status="extracted",
-                    extracted_data=report.model_dump(mode="json"),
+                    extracted_data=extracted_payload,
                     parser_used="google_sheets",
                     sheet_revision_hash=per_date_hash,
-                    report_date=report_date_str,
+                    report_date=report_date_val,
                     report_version=next_version,
                     validation_report=builder.get_validation_summary(),
                     supersedes_job_id=supersedes_job_id,
@@ -245,6 +312,9 @@ class GoogleSheetIngestionService:
                 "dates": [j["date"] for j in jobs_created],
                 "dates_created": sum(1 for j in jobs_created if j["status"] == "created"),
                 "dates_duplicate": sum(1 for j in jobs_created if j["status"] == "duplicate"),
+                "dates_skipped_no_data": sum(1 for j in jobs_created if j["status"] == "skipped_no_data"),
+                "rows_processed": total_rows_inserted,
+                "rows_failed": 0,
                 "rows_inserted": total_rows_inserted,
                 "metrics": {
                     **metrics.to_dict(),

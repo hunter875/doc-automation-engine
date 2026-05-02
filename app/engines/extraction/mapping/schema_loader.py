@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from app.core.exceptions import ProcessingError
+from app.engines.extraction.schema_resolver import SchemaResolver
 
 
 @dataclass(frozen=True)
@@ -87,20 +86,24 @@ def _collect_sheet_mapping_fields(raw: dict[str, Any]) -> dict[str, dict[str, An
 
     collected: dict[str, dict[str, Any]] = {}
 
-    def _upsert(field_name: str, aliases: list[str]) -> None:
+    def _upsert(field_name: str, aliases: list[str], field_type: str | None = None, required: bool = False) -> None:
         normalized_name = str(field_name).strip()
         if not normalized_name:
             return
         if normalized_name not in collected:
             collected[normalized_name] = {
-                "type": _infer_field_type(normalized_name),
+                "type": field_type or _infer_field_type(normalized_name),
                 "aliases": aliases or [normalized_name],
-                "required": False,
+                "required": required,
             }
             return
         existing_aliases = set(collected[normalized_name].get("aliases", []))
         merged = list(existing_aliases.union(set(aliases or [])))
         collected[normalized_name]["aliases"] = merged or [normalized_name]
+        if field_type:
+            collected[normalized_name]["type"] = field_type
+        if required:
+            collected[normalized_name]["required"] = required
 
     for section_data in mapping.values():
         if not isinstance(section_data, dict):
@@ -120,18 +123,21 @@ def _collect_sheet_mapping_fields(raw: dict[str, Any]) -> dict[str, dict[str, An
                 aliases = value.get("aliases")
                 if isinstance(aliases, list):
                     normalized_aliases = _normalize_aliases(aliases, str(key).strip())
-                    _upsert(str(key).strip(), normalized_aliases)
+                    field_type = value.get("type")
+                    required = bool(value.get("required", False))
+                    _upsert(str(key).strip(), normalized_aliases, field_type, required)
 
     return collected
 
 
 def load_schema(schema_path: str) -> IngestionSchema:
-    path = Path(schema_path).expanduser().resolve()
-    if not path.is_file():
-        raise ProcessingError(message=f"Schema YAML not found: {path}")
-
-    with open(path, encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
+    """Load and parse a schema YAML file using SchemaResolver."""
+    try:
+        raw = SchemaResolver.load_schema(schema_path)
+    except ProcessingError:
+        raise
+    except Exception as e:
+        raise ProcessingError(message=f"Failed to load schema '{schema_path}': {e}") from e
 
     field_block = raw.get("fields")
     if not isinstance(field_block, dict) or not field_block:

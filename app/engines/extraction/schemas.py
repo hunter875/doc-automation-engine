@@ -71,8 +71,9 @@ class CNCHItem(BaseModel):
             r"^\d{2}:\d{2}\s+ngày\s+\d{2}/\d{2}/\d{4}$",
             r"^\d{2}:\d{2}$",
             r"^\d{1,2}\s*giờ\s*\d{1,2}\s*phút\s*ngày\s*\d{2}/\d{2}/\d{4}$",
+            # Standalone Vietnamese time without date (KV30 format: "22 giờ 36 phút")
+            r"^\d{1,2}\s*giờ\s*\d{1,2}\s*phút$",
         ]
-
         if not any(re.match(pattern, value, flags=re.IGNORECASE) for pattern in patterns):
             raise ValueError(
                 "thoi_gian không đúng định dạng nghiệp vụ (dd/mm/yyyy, dd/mm/yyyy HH:MM, HH:MM dd/mm/yyyy, hoặc 'HH giờ MM phút ngày dd/mm/yyyy')"

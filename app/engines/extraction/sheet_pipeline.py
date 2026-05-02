@@ -5,12 +5,11 @@ from __future__ import annotations
 from functools import lru_cache
 import re
 import unicodedata
-from pathlib import Path
 from typing import Any
 
-import yaml
-
 from app.core.exceptions import ProcessingError
+from app.engines.extraction.mapping.normalizer import normalize_header_key
+from app.engines.extraction.schema_resolver import SchemaResolver
 from app.engines.extraction.schemas import (
     BlockExtractionOutput,
     BlockHeader,
@@ -21,6 +20,7 @@ from app.engines.extraction.schemas import (
     CongVanItem,
     PhuongTienHuHongItem,
     PipelineResult,
+    SCLQItem,
     TuyenTruyenOnline,
     VuChayItem,
 )
@@ -95,11 +95,13 @@ def _coerce_value(raw_value: Any, field_type: str) -> Any:
             return int(raw_value)
         if isinstance(raw_value, str):
             text = raw_value.strip().replace(".", "").replace(",", "")
+            if not text:
+                return 0
             try:
                 return int(float(text))
             except (ValueError, TypeError):
-                return raw_value
-        return raw_value
+                return 0
+        return 0
 
     if ft in ("float", "double"):
         if isinstance(raw_value, str):
@@ -141,9 +143,15 @@ def _get_schema_field_types(schema_path: str, field_map: dict) -> dict[str, str]
 
 
 def _get_first(data: dict[str, Any], aliases: list[str], default: Any = "") -> Any:
-    normalized = {str(k).strip().lower(): v for k, v in data.items()}
-    for key in aliases:
-        lookup = key.strip().lower()
+    """Look up a value by trying exact match with normalized keys.
+
+    Normalizes BOTH data keys AND aliases using normalize_header_key (the single
+    source of truth), so keys with Vietnamese diacritics match aliases with or
+    without diacritics. The normalization is idempotent.
+    """
+    normalized = {normalize_header_key(str(k)): v for k, v in data.items()}
+    for alias in aliases:
+        lookup = normalize_header_key(str(alias))
         if lookup in normalized:
             return normalized[lookup]
     return default
@@ -206,7 +214,10 @@ def _resolve_field_value(
     import unicodedata
 
     def _strip_diacritics(text: str) -> str:
-        nfkd = unicodedata.normalize("NFKD", text)
+        # NFC → NFD first so precomposed chars (Đ=U+0111, ơ=U+01A1, etc.)
+        # decompose to base letter + combining mark, then strip the combining mark.
+        nfc = unicodedata.normalize("NFC", text)
+        nfkd = unicodedata.normalize("NFKD", nfc)
         return "".join(c for c in nfkd if not unicodedata.combining(c))
 
     # Build deduplicated candidate list: field_name first, then aliases
@@ -321,8 +332,8 @@ def _build_output_custom_header(core: dict, mapping: dict, year: int = 2026) -> 
                 month_val = _resolve_field_value(core_norm, field_name, aliases)
         if day_val is not None and month_val is not None:
             try:
-                day_int = int(str(day_val).strip())
-                month_int = int(str(month_val).strip())
+                day_int = int(float(str(day_val).strip()))
+                month_int = int(float(str(month_val).strip()))
                 # All worksheets in this ingestion run share the same year
                 header_dict["ngay_bao_cao"] = f"{day_int:02d}/{month_int:02d}/{year}"
             except Exception:
@@ -343,33 +354,11 @@ def _extract_core(sheet_data: dict[str, Any] | None) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _load_sheet_mapping() -> dict[str, Any]:
-    mapping_path = Path(__file__).resolve().parents[2] / "domain" / "templates" / "sheet_mapping.yaml"
-    try:
-        with open(mapping_path, encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-    except Exception:
-        return {}
-    mapping = data.get("sheet_mapping")
-    return mapping if isinstance(mapping, dict) else {}
-
-
-# Global cache for custom schemas (not using lru_cache because paths are dynamic)
-_CUSTOM_MAPPING_CACHE: dict[str, dict[str, Any]] = {}
+    return SchemaResolver.load_sheet_mapping()
 
 
 def _load_custom_mapping(schema_path: str) -> dict[str, Any]:
-    if schema_path in _CUSTOM_MAPPING_CACHE:
-        return _CUSTOM_MAPPING_CACHE[schema_path]
-    path = Path(schema_path).expanduser().resolve()
-    if not path.is_file():
-        raise ProcessingError(message=f"Schema YAML not found: {path}")
-    with open(path, encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
-    mapping = raw.get("sheet_mapping")
-    if not isinstance(mapping, dict):
-        raise ProcessingError(message=f"Invalid schema: missing 'sheet_mapping' in {schema_path}")
-    _CUSTOM_MAPPING_CACHE[schema_path] = mapping
-    return mapping
+    return SchemaResolver.get_sheet_mapping(schema_path)
 
 
 def _aliases(mapping: dict[str, Any], section: str, field: str, fallback: list[str]) -> list[str]:
@@ -399,6 +388,16 @@ def _aliases(mapping: dict[str, Any], section: str, field: str, fallback: list[s
             return values or fallback
 
     return fallback
+
+
+def _aliases_normalized(mapping: dict[str, Any], section: str, field: str, fallback: list[str]) -> list[str]:
+    """Return aliases normalized via normalize_header_key so they match row_dict keys.
+
+    Uses the same normalize_header_key function as _get_first and _normalize_key,
+    ensuring consistent matching between schema aliases and sheet header keys.
+    """
+    raw = _aliases(mapping, section, field, fallback)
+    return [normalize_header_key(str(a)) for a in raw]
 
 
 def _stt_noi_dung(mapping: dict[str, Any], stt: str) -> str:
@@ -435,17 +434,39 @@ def _build_bang_thong_ke_from_flat(
         if not isinstance(spec, dict):
             continue
         field_name = _to_text(spec.get("field"))
+        noi_dung = _to_text(spec.get("noi_dung"))
+
+        # If field is null/unset, this is a section-header row — include it
+        # even with ket_qua=0 so the output has the label.
         if not field_name:
+            rows.append({
+                "stt": str(stt).strip(),
+                "noi_dung": noi_dung,
+                "ket_qua": 0,
+            })
             continue
 
         raw_value = flat_data.get(field_name)
         if _is_blank(raw_value):
+            nghiep_vu_section = mapping.get("nghiep_vu", {})
+            aliases: list[str] = []
+            if isinstance(nghiep_vu_section, dict):
+                spec_ngv = nghiep_vu_section.get(field_name)
+                if isinstance(spec_ngv, dict):
+                    aliases = spec_ngv.get("aliases", [])
+                elif isinstance(spec_ngv, list):
+                    aliases = spec_ngv
+            core_norm = {_normalize_key(k): v for k, v in flat_data.items()}
+            raw_value = _resolve_field_value(core_norm, field_name, aliases)
+
+        # Only skip if noi_dung is also empty (not a valid entry)
+        if _is_blank(raw_value) and _is_blank(noi_dung):
             continue
 
         rows.append(
             {
                 "stt": str(stt).strip(),
-                "noi_dung": _to_text(spec.get("noi_dung")),
+                "noi_dung": noi_dung,
                 "ket_qua": _to_int(raw_value, 0),
             }
         )
@@ -481,6 +502,21 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
 
     # Build phan_I_va_II_chi_tiet_nghiep_vu
     nghiep_vu_dict: dict[str, Any] = {}
+    numeric_fields = {
+        "tong_so_vu_chay",
+        "tong_so_vu_no",
+        "tong_sclq",
+        "tong_so_vu_cnch",
+        "quan_so_truc",
+        "tong_chi_vien",
+        "tong_cong_van",
+        "tong_bao_cao",
+        "tong_ke_hoach",
+        "tong_xe_hu_hong",
+        "tong_tin_bai",
+        "tong_hinh_anh",
+        "so_lan_cai_app_114",
+    }
     if "nghiep_vu" in sheet_mapping:
         nv_spec = sheet_mapping["nghiep_vu"]
         # Determine actual fields dict (support both direct and fields sub-dict)
@@ -492,7 +528,10 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
             aliases = _extract_aliases(spec)
             val = _resolve_field_value(core_norm, field_name, aliases)
             if val is not None:
-                nghiep_vu_dict[field_name] = val
+                if field_name in numeric_fields:
+                    nghiep_vu_dict[field_name] = _to_int(val, 0)
+                elif not _is_blank(val):
+                    nghiep_vu_dict[field_name] = val
     nghiep_vu = BlockNghiepVu(**nghiep_vu_dict)
 
     # Build bang_thong_ke from flat if section present
@@ -529,8 +568,8 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
                 if item_dict:
                     try:
                         cnch_items.append(CNCHItem(**item_dict))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[PIPELINE WARN] CNCHItem failed: item_dict={item_dict!r} error={exc}")
 
     # Build danh_sach_phuong_tien_hu_hong (list of items)
     phuong_tien_items: list[PhuongTienHuHongItem] = []
@@ -588,11 +627,11 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
                         coerced = _coerce_value(val, ft)
                         if coerced is not None:
                             item_dict[field_name] = coerced
-                if item_dict:
-                    try:
-                        cong_van_items.append(CongVanItem(**item_dict))
-                    except Exception:
-                        pass
+                    if item_dict:
+                        try:
+                            cong_van_items.append(CongVanItem(**item_dict))
+                        except Exception as exc:
+                            print(f"[PIPELINE WARN] CongVanItem failed: item_dict={item_dict!r} error={exc}")
 
     # Build danh_sach_cong_tac_khac (list of strings)
     cong_tac_khac: list[str] = []
@@ -652,8 +691,8 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
                 if item_dict:
                     try:
                         chi_vien_items.append(ChiVienItem(**item_dict))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[PIPELINE WARN] ChiVienItem failed: item_dict={item_dict!r} error={exc}")
 
     # Build danh_sach_chay (list of items)
     chay_items: list[VuChayItem] = []
@@ -683,8 +722,8 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
                 if item_dict:
                     try:
                         chay_items.append(VuChayItem(**item_dict))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"[PIPELINE WARN] VuChayItem failed: item_dict={item_dict!r} error={exc}")
 
     # Build tuyen_truyen_online from nghiep_vu resolved values
     # (reads from nghiep_vu which has resolved aliases, not raw unnormalized keys)
@@ -693,6 +732,37 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
         so_hinh_anh=getattr(nghiep_vu, "tong_hinh_anh", 0) or _to_int(nghiep_vu_dict.get("tong_hinh_anh", 0)),
         cai_app_114=getattr(nghiep_vu, "so_lan_cai_app_114", 0) or _to_int(nghiep_vu_dict.get("so_lan_cai_app_114", 0)),
     )
+
+    # Build danh_sach_sclq (list of items)
+    sclq_items: list = []
+    if "danh_sach_sclq" in sheet_mapping:
+        fields_spec = sheet_mapping["danh_sach_sclq"]
+        if isinstance(fields_spec, dict) and "fields" in fields_spec:
+            sclq_field_map = fields_spec["fields"]
+        else:
+            sclq_field_map = fields_spec
+        raw_list = core.get("danh_sach_sclq") or []
+        if isinstance(raw_list, list):
+            for row in raw_list:
+                if not isinstance(row, dict):
+                    continue
+                row_norm = {_normalize_key(k): v for k, v in row.items()}
+                item_dict: dict[str, Any] = {}
+                for field_name, spec in sclq_field_map.items():
+                    if field_name in ("stt_map", "fields"):
+                        continue
+                    aliases = _extract_aliases(spec)
+                    val = _resolve_field_value(row_norm, field_name, aliases)
+                    if val is not None:
+                        ft = field_types.get(field_name, "string")
+                        coerced = _coerce_value(val, ft)
+                        if coerced is not None:
+                            item_dict[field_name] = coerced
+                if item_dict:
+                    try:
+                        sclq_items.append(SCLQItem(**item_dict))
+                    except Exception as exc:
+                        print(f"[PIPELINE WARN] SCLQItem failed: item_dict={item_dict!r} error={exc}")
 
     return BlockExtractionOutput(
         header=header,
@@ -704,7 +774,7 @@ def _build_output_custom(core: dict, mapping: dict, schema_path: str = "") -> Bl
         danh_sach_cong_tac_khac=cong_tac_khac,
         danh_sach_chi_vien=chi_vien_items,
         danh_sach_chay=chay_items,
-        danh_sach_sclq=[],
+        danh_sach_sclq=sclq_items,
         tuyen_truyen_online=tuyen_truyen_online,
     )
 
@@ -857,25 +927,25 @@ class SheetExtractionPipeline:
             so_bao_cao=_to_text(
                 _get_first(
                     header_raw,
-                    _aliases(mapping, "header", "so_bao_cao", ["so_bao_cao", "số báo cáo", "so bao cao", "report_no"]),
+                    _aliases_normalized(mapping, "header", "so_bao_cao", ["so_bao_cao", "số báo cáo", "so bao cao", "report_no"]),
                 )
             ),
             ngay_bao_cao=_to_text(
                 _get_first(
                     header_raw,
-                    _aliases(mapping, "header", "ngay_bao_cao", ["ngay_bao_cao", "ngày báo cáo", "report_date"]),
+                    _aliases_normalized(mapping, "header", "ngay_bao_cao", ["ngay_bao_cao", "ngày báo cáo", "report_date"]),
                 )
             ),
             thoi_gian_tu_den=_to_text(
                 _get_first(
                     header_raw,
-                    _aliases(mapping, "header", "thoi_gian_tu_den", ["thoi_gian_tu_den", "thời gian từ đến", "report_period"]),
+                    _aliases_normalized(mapping, "header", "thoi_gian_tu_den", ["thoi_gian_tu_den", "thời gian từ đến", "report_period"]),
                 )
             ),
             don_vi_bao_cao=_to_text(
                 _get_first(
                     header_raw,
-                    _aliases(mapping, "header", "don_vi_bao_cao", ["don_vi_bao_cao", "đơn vị báo cáo", "unit"]),
+                    _aliases_normalized(mapping, "header", "don_vi_bao_cao", ["don_vi_bao_cao", "đơn vị báo cáo", "unit"]),
                 )
             ),
         )
@@ -884,11 +954,11 @@ class SheetExtractionPipeline:
         for row in btk_raw:
             if not isinstance(row, dict):
                 continue
-            stt = _to_text(_get_first(row, _aliases(mapping, "bang_thong_ke", "stt", ["stt", "STT", "id"])))
+            stt = _to_text(_get_first(row, _aliases_normalized(mapping, "bang_thong_ke", "stt", ["stt", "STT", "id"])))
             if not stt:
                 continue
             row_noi_dung = _to_text(
-                _get_first(row, _aliases(mapping, "bang_thong_ke", "noi_dung", ["noi_dung", "nội dung", "name", "chi_tieu"]), "")
+                _get_first(row, _aliases_normalized(mapping, "bang_thong_ke", "noi_dung", ["noi_dung", "nội dung", "name", "chi_tieu"]), "")
             )
             if not row_noi_dung:
                 row_noi_dung = _stt_noi_dung(mapping, stt)
@@ -897,7 +967,7 @@ class SheetExtractionPipeline:
                     stt=stt,
                     noi_dung=row_noi_dung,
                     ket_qua=_to_int(
-                        _get_first(row, _aliases(mapping, "bang_thong_ke", "ket_qua", ["ket_qua", "kết quả", "value", "so_lieu"]), 0)
+                        _get_first(row, _aliases_normalized(mapping, "bang_thong_ke", "ket_qua", ["ket_qua", "kết quả", "value", "so_lieu"]), 0)
                     ),
                 )
             )
@@ -909,69 +979,69 @@ class SheetExtractionPipeline:
             tong_so_vu_chay=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_so_vu_chay", ["tong_so_vu_chay", "tổng số vụ cháy"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_so_vu_chay", ["tong_so_vu_chay", "tổng số vụ cháy"]),
                     _to_int(getattr(by_stt.get("2"), "ket_qua", 0)),
                 )
             ),
             tong_so_vu_no=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_so_vu_no", ["tong_so_vu_no", "tổng số vụ nổ"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_so_vu_no", ["tong_so_vu_no", "tổng số vụ nổ"]),
                     _to_int(getattr(by_stt.get("8"), "ket_qua", 0)),
                 )
             ),
             tong_so_vu_cnch=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_so_vu_cnch", ["tong_so_vu_cnch", "tổng số vụ cnch"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_so_vu_cnch", ["tong_so_vu_cnch", "tổng số vụ cnch"]),
                     _to_int(getattr(by_stt.get("14"), "ket_qua", 0)),
                 )
             ),
             chi_tiet_cnch=_to_text(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "chi_tiet_cnch", ["chi_tiet_cnch", "chi tiết cnch"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "chi_tiet_cnch", ["chi_tiet_cnch", "chi tiết cnch"]),
                     "",
                 )
             ),
-            quan_so_truc=_to_int(_get_first(nghiep_vu_raw, _aliases(mapping, "nghiep_vu", "quan_so_truc", ["quan_so_truc", "quân số trực"]), 0)),
-            tong_chi_vien=_to_int(_get_first(nghiep_vu_raw, _aliases(mapping, "nghiep_vu", "tong_chi_vien", ["tong_chi_vien", "tổng chi viện"]), 0)),
+            quan_so_truc=_to_int(_get_first(nghiep_vu_raw, _aliases_normalized(mapping, "nghiep_vu", "quan_so_truc", ["quan_so_truc", "quân số trực"]), 0)),
+            tong_chi_vien=_to_int(_get_first(nghiep_vu_raw, _aliases_normalized(mapping, "nghiep_vu", "tong_chi_vien", ["tong_chi_vien", "tổng chi viện"]), 0)),
             tong_cong_van=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_cong_van", ["tong_cong_van", "tổng công văn"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_cong_van", ["tong_cong_van", "tổng công văn"]),
                     len(normalized.get("danh_sach_cong_van_tham_muu") or []),
                 )
             ),
-            tong_bao_cao=_to_int(_get_first(nghiep_vu_raw, _aliases(mapping, "nghiep_vu", "tong_bao_cao", ["tong_bao_cao", "tổng báo cáo"]), 0)),
-            tong_ke_hoach=_to_int(_get_first(nghiep_vu_raw, _aliases(mapping, "nghiep_vu", "tong_ke_hoach", ["tong_ke_hoach", "tổng kế hoạch"]), 0)),
-            cong_tac_an_ninh=_to_text(_get_first(nghiep_vu_raw, _aliases(mapping, "nghiep_vu", "cong_tac_an_ninh", ["cong_tac_an_ninh", "công tác an ninh"]), "")),
+            tong_bao_cao=_to_int(_get_first(nghiep_vu_raw, _aliases_normalized(mapping, "nghiep_vu", "tong_bao_cao", ["tong_bao_cao", "tổng báo cáo"]), 0)),
+            tong_ke_hoach=_to_int(_get_first(nghiep_vu_raw, _aliases_normalized(mapping, "nghiep_vu", "tong_ke_hoach", ["tong_ke_hoach", "tổng kế hoạch"]), 0)),
+            cong_tac_an_ninh=_to_text(_get_first(nghiep_vu_raw, _aliases_normalized(mapping, "nghiep_vu", "cong_tac_an_ninh", ["cong_tac_an_ninh", "công tác an ninh"]), "")),
             tong_xe_hu_hong=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_xe_hu_hong", ["tong_xe_hu_hong", "tổng xe hư hỏng"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_xe_hu_hong", ["tong_xe_hu_hong", "tổng xe hư hỏng"]),
                     len(normalized.get("danh_sach_phuong_tien_hu_hong") or []),
                 )
             ),
-            # NEW: online tuyên truyền fields
+            # online tuyên truyền fields
             tong_tin_bai=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_tin_bai", ["tong_tin_bai", "tổng tin bài", "tin bài online"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_tin_bai", ["tong_tin_bai", "tổng tin bài", "tin bài online"]),
                     0,
                 )
             ),
             tong_hinh_anh=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "tong_hinh_anh", ["tong_hinh_anh", "số hình ảnh"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "tong_hinh_anh", ["tong_hinh_anh", "số hình ảnh"]),
                     0,
                 )
             ),
             so_lan_cai_app_114=_to_int(
                 _get_first(
                     nghiep_vu_raw,
-                    _aliases(mapping, "nghiep_vu", "so_lan_cai_app_114", ["so_lan_cai_app_114", "cài app 114"]),
+                    _aliases_normalized(mapping, "nghiep_vu", "so_lan_cai_app_114", ["so_lan_cai_app_114", "cài app 114"]),
                     0,
                 )
             ),
@@ -983,16 +1053,16 @@ class SheetExtractionPipeline:
                 continue
             cnch_items.append(
                 CNCHItem(
-                    stt=_to_int(_get_first(row, _aliases(mapping, "danh_sach_cnch", "stt", ["stt", "STT"]), len(cnch_items) + 1)),
-                    ngay_xay_ra=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "ngay_xay_ra", ["ngay_xay_ra", "ngày xảy ra", "ngay"]))),
-                    thoi_gian=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "thoi_gian", ["thoi_gian", "thời gian", "time"]))),
-                    dia_diem=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "dia_diem", ["dia_diem", "địa điểm", "location"]))),
-                    noi_dung_tin_bao=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "noi_dung_tin_bao", ["noi_dung_tin_bao", "nội dung tin báo", "noi_dung"]))),
-                    luc_luong_tham_gia=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "luc_luong_tham_gia", ["luc_luong_tham_gia", "lực lượng tham gia"]))),
-                    ket_qua_xu_ly=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "ket_qua_xu_ly", ["ket_qua_xu_ly", "kết quả xử lý"]))),
-                    thiet_hai=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "thiet_hai", ["thiet_hai", "thiệt hại"]))),
-                    thong_tin_nan_nhan=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "thong_tin_nan_nhan", ["thong_tin_nan_nhan", "thông tin nạn nhân"]))),
-                    mo_ta=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cnch", "mo_ta", ["mo_ta", "mô tả"]), "")),
+                    stt=_to_int(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "stt", ["stt", "STT"]), len(cnch_items) + 1)),
+                    ngay_xay_ra=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "ngay_xay_ra", ["ngay_xay_ra", "ngày xảy ra", "ngay"]))),
+                    thoi_gian=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "thoi_gian", ["thoi_gian", "thời gian", "time"]))),
+                    dia_diem=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "dia_diem", ["dia_diem", "địa điểm", "location"]))),
+                    noi_dung_tin_bao=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "noi_dung_tin_bao", ["noi_dung_tin_bao", "nội dung tin báo", "noi_dung"]))),
+                    luc_luong_tham_gia=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "luc_luong_tham_gia", ["luc_luong_tham_gia", "lực lượng tham gia"]))),
+                    ket_qua_xu_ly=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "ket_qua_xu_ly", ["ket_qua_xu_ly", "kết quả xử lý"]))),
+                    thiet_hai=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "thiet_hai", ["thiet_hai", "thiệt hại"]))),
+                    thong_tin_nan_nhan=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "thong_tin_nan_nhan", ["thong_tin_nan_nhan", "thông tin nạn nhân"]))),
+                    mo_ta=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cnch", "mo_ta", ["mo_ta", "mô tả"]), "")),
                 )
             )
 
@@ -1002,8 +1072,8 @@ class SheetExtractionPipeline:
                 continue
             phuong_tien_items.append(
                 PhuongTienHuHongItem(
-                    bien_so=_to_text(_get_first(row, _aliases(mapping, "danh_sach_phuong_tien_hu_hong", "bien_so", ["bien_so", "biển số", "plate"]))),
-                    tinh_trang=_to_text(_get_first(row, _aliases(mapping, "danh_sach_phuong_tien_hu_hong", "tinh_trang", ["tinh_trang", "tình trạng", "status"]))),
+                    bien_so=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_phuong_tien_hu_hong", "bien_so", ["bien_so", "biển số", "plate"]))),
+                    tinh_trang=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_phuong_tien_hu_hong", "tinh_trang", ["tinh_trang", "tình trạng", "status"]))),
                 )
             )
 
@@ -1013,8 +1083,8 @@ class SheetExtractionPipeline:
                 continue
             cong_van_items.append(
                 CongVanItem(
-                    so_ky_hieu=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cong_van_tham_muu", "so_ky_hieu", ["so_ky_hieu", "số ký hiệu", "so_hieu"]))),
-                    noi_dung=_to_text(_get_first(row, _aliases(mapping, "danh_sach_cong_van_tham_muu", "noi_dung", ["noi_dung", "nội dung", "trich_yeu"]))),
+                    so_ky_hieu=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cong_van_tham_muu", "so_ky_hieu", ["so_ky_hieu", "số ký hiệu", "so_hieu"]))),
+                    noi_dung=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_cong_van_tham_muu", "noi_dung", ["noi_dung", "nội dung", "trich_yeu"]))),
                 )
             )
 
@@ -1023,7 +1093,7 @@ class SheetExtractionPipeline:
             if isinstance(item, str):
                 text = _to_text(item)
             elif isinstance(item, dict):
-                text = _to_text(_get_first(item, _aliases(mapping, "danh_sach_cong_tac_khac", "noi_dung", ["noi_dung", "nội dung", "content"]), ""))
+                text = _to_text(_get_first(item, _aliases_normalized(mapping, "danh_sach_cong_tac_khac", "noi_dung", ["noi_dung", "nội dung", "content"]), ""))
             else:
                 text = _to_text(item)
             if text:
@@ -1039,15 +1109,15 @@ class SheetExtractionPipeline:
                 continue
             chi_vien_items.append(
                 ChiVienItem(
-                    stt=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "stt", ["STT", "stt"]), 0)),
-                    ngay=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "ngay", ["NGÀY", "Ngày", "ngay"]))),
-                    dia_diem=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "dia_diem", ["ĐỊA ĐIỂM", "dia_diem"]))),
-                    khu_vuc_quan_ly=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "khu_vuc_quan_ly", ["KHU VỰC QUẢN LÝ", "khu_vuc"]))),
-                    so_luong_xe=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "so_luong_xe", ["SỐ LƯỢNG XE", "so_xe"]), 0)),
-                    thoi_gian_di=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "thoi_gian_di", ["THỜI GIAN ĐI", "thoi_gian_di"]))),
-                    thoi_gian_ve=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "thoi_gian_ve", ["THỜI GIAN VỀ", "thoi_gian_ve"]))),
-                    chi_huy_chua_chay=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "chi_huy", ["CHỈ HUY", "chi_huy"]))),
-                    ghi_chu=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chi_vien", "ghi_chu", ["Ghi chú", "ghi_chu"]))),
+                    stt=_to_int(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "stt", ["STT", "stt"]), 0)),
+                    ngay=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "ngay", ["NGÀY", "Ngày", "ngay"]))),
+                    dia_diem=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "dia_diem", ["ĐỊA ĐIỂM", "dia_diem"]))),
+                    khu_vuc_quan_ly=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "khu_vuc_quan_ly", ["KHU VỰC QUẢN LÝ", "khu_vuc"]))),
+                    so_luong_xe=_to_int(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "so_luong_xe", ["SỐ LƯỢNG XE", "so_xe"]), 0)),
+                    thoi_gian_di=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "thoi_gian_di", ["THỜI GIAN ĐI", "thoi_gian_di"]))),
+                    thoi_gian_ve=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "thoi_gian_ve", ["THỜI GIAN VỀ", "thoi_gian_ve"]))),
+                    chi_huy_chua_chay=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "chi_huy", ["CHỈ HUY", "chi_huy"]))),
+                    ghi_chu=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chi_vien", "ghi_chu", ["Ghi chú", "ghi_chu"]))),
                 )
             )
 
@@ -1058,18 +1128,18 @@ class SheetExtractionPipeline:
                 continue
             chay_items.append(
                 VuChayItem(
-                    stt=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chay", "stt", ["STT", "stt"]), 0)),
-                    ngay_xay_ra=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "ngay_xay_ra", ["NGÀY", "ngay"]))),
-                    thoi_gian=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thoi_gian", ["THỜI GIAN", "thoi_gian"]))),
-                    ten_vu_chay=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "ten_vu_chay", ["VỤ CHÁY", "ten_vu"]))),
-                    dia_diem=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "dia_diem", ["ĐỊA ĐIỂM", "dia_diem"]))),
-                    nguyen_nhan=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "nguyen_nhan", ["NGUYÊN NHÂN", "nguyen_nhan"]))),
-                    thiet_hai_nguoi=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thiet_hai_nguoi", ["THIỆT HẠI VỀ NGƯỜI", "thiet_hai"]))),
-                    thiet_hai_tai_san=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thiet_hai_tai_san", ["THIỆT HẠI TÀI SẢN", "tai_san"]))),
-                    thoi_gian_khong_che=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thoi_gian_khong_che", ["THỜI GIAN KHỐNG CHẾ"]))),
-                    thoi_gian_dap_tat=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "thoi_gian_dap_tat", ["THỜI GIAN DẬP TẮT"]))),
-                    so_luong_xe=_to_int(_get_first(row, _aliases(mapping, "danh_sach_chay", "so_luong_xe", ["SỐ LƯỢNG XE"]), 0)),
-                    chi_huy=_to_text(_get_first(row, _aliases(mapping, "danh_sach_chay", "chi_huy", ["CHỈ HUY"]))),
+                    stt=_to_int(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "stt", ["STT", "stt"]), 0)),
+                    ngay_xay_ra=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "ngay_xay_ra", ["NGÀY", "ngay"]))),
+                    thoi_gian=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "thoi_gian", ["THỜI GIAN", "thoi_gian"]))),
+                    ten_vu_chay=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "ten_vu_chay", ["VỤ CHÁY", "ten_vu"]))),
+                    dia_diem=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "dia_diem", ["ĐỊA ĐIỂM", "dia_diem"]))),
+                    nguyen_nhan=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "nguyen_nhan", ["NGUYÊN NHÂN", "nguyen_nhan"]))),
+                    thiet_hai_nguoi=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "thiet_hai_nguoi", ["THIỆT HẠI VỀ NGƯỜI", "thiet_hai"]))),
+                    thiet_hai_tai_san=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "thiet_hai_tai_san", ["THIỆT HẠI TÀI SẢN", "tai_san"]))),
+                    thoi_gian_khong_che=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "thoi_gian_khong_che", ["THỜI GIAN KHỐNG CHẾ"]))),
+                    thoi_gian_dap_tat=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "thoi_gian_dap_tat", ["THỜI GIAN DẬP TẮT"]))),
+                    so_luong_xe=_to_int(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "so_luong_xe", ["SỐ LƯỢNG XE"]), 0)),
+                    chi_huy=_to_text(_get_first(row, _aliases_normalized(mapping, "danh_sach_chay", "chi_huy", ["CHỈ HUY"]))),
                 )
             )
 

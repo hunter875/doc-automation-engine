@@ -9,10 +9,13 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import TenantContext, get_tenant_context, require_admin, require_viewer
+from app.application.daily_report_service import DailyReportService
 from app.application.report_service import CalendarService, ReportService, WeeklyReportAggregator
 from app.infrastructure.db.session import get_db
 from app.schemas.report_schema import (
     CalendarResponse,
+    DailyReportDetailResponse,
+    DailyReportEditRequest,
     DailyReportResponse,
     WeeklyReportCreateRequest,
     WeeklyReportResponse,
@@ -29,13 +32,31 @@ class ReportController:
         self.ctx = ctx
         self.calendar_service = CalendarService(db)
         self.report_service = ReportService(db)
+        self.daily_service = DailyReportService(db)
         self.weekly_aggregator = WeeklyReportAggregator(db)
 
-    def get_calendar(self) -> dict:
+    def get_calendar(self, with_metadata: bool = False) -> dict:
+        if with_metadata:
+            return self.calendar_service.get_calendar_dates_with_metadata(self.ctx.tenant_id)
         return self.calendar_service.get_calendar_dates(self.ctx.tenant_id)
 
-    def get_daily(self, report_date: date) -> dict:
-        return self.report_service.get_daily_report(self.ctx.tenant_id, report_date)
+    def get_daily(self, report_date: date, template_id: str, source: str = "default") -> dict:
+        from uuid import UUID
+        return self.daily_service.get_report_detail(
+            UUID(self.ctx.tenant_id), UUID(template_id), report_date, source
+        )
+
+    def save_daily_edit(self, report_date: date, template_id: str, body: DailyReportEditRequest) -> dict:
+        from uuid import UUID
+        user_id = getattr(self.ctx.user, "id", None)
+        return self.daily_service.save_manual_edit(
+            tenant_id=UUID(self.ctx.tenant_id),
+            template_id=UUID(template_id),
+            report_date=report_date,
+            edited_data=body.data,
+            reason=body.reason,
+            edited_by=UUID(user_id) if user_id else None,
+        )
 
     def create_weekly(self, week_start: date):
         return self.weekly_aggregator.generate_weekly_report(
@@ -50,23 +71,39 @@ class ReportController:
 
 @router.get("/calendar", response_model=CalendarResponse)
 def get_calendar_reports(
+    with_metadata: bool = Query(False, description="Include manual edit metadata"),
     ctx: Annotated[TenantContext, Depends(get_tenant_context)],
     role: Annotated[None, Depends(require_viewer)],
     db: Session = Depends(get_db),
 ):
     controller = ReportController(db, ctx)
-    return controller.get_calendar()
+    return controller.get_calendar(with_metadata=with_metadata)
 
 
-@router.get("/daily", response_model=DailyReportResponse)
+@router.get("/daily", response_model=DailyReportDetailResponse)
 def get_daily_report(
     date: date = Query(..., description="Business report date (YYYY-MM-DD)"),
+    template_id: str = Query(..., description="Template ID"),
+    source: str = Query("default", description="Data source: default|auto|manual"),
     ctx: TenantContext = Depends(get_tenant_context),
     role: None = Depends(require_viewer),
     db: Session = Depends(get_db),
 ):
     controller = ReportController(db, ctx)
-    return controller.get_daily(date)
+    return controller.get_daily(date, template_id, source)
+
+
+@router.patch("/daily", status_code=status.HTTP_200_OK)
+def save_daily_report_edit(
+    body: DailyReportEditRequest,
+    date: date = Query(..., description="Business report date (YYYY-MM-DD)"),
+    template_id: str = Query(..., description="Template ID"),
+    ctx: TenantContext = Depends(get_tenant_context),
+    role: None = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    controller = ReportController(db, ctx)
+    return controller.save_daily_edit(date, template_id, body)
 
 
 @router.post("/weekly", response_model=WeeklyReportResponse, status_code=status.HTTP_201_CREATED)

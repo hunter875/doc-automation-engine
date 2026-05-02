@@ -120,6 +120,8 @@ class GoogleSheetWorksheetConfig(BaseModel):
     schema_path: str = Field(..., min_length=1, max_length=500, description="Path to YAML schema file for mapping sheet columns.")
     range: Optional[str] = Field(None, max_length=200, description="A1 notation range (e.g., A1:ZZZ). Defaults to A1:ZZZ if omitted.")
     mode: Optional[str] = Field(None, description="Ingestion mode: 'row' (default, one job per data row) or 'single_document' (one job for entire worksheet).")
+    header_row: int = Field(0, description="0-indexed row that contains column headers. For KV30 BC NGÀY sheets, this is row 0 (the merged group-header row). For sheets without a header row, set to -1 to use schema field names as column names.")
+    data_start_row: int = Field(2, description="0-indexed row where data starts. For KV30 BC NGÀY sheets, data starts at row 2 (rows 0-1 are headers). For sheets with 1 header row, data starts at row 1.")
 
 
 # ──────────────────────────────────────────────
@@ -526,8 +528,8 @@ class GoogleSheetIngestionSummary(BaseModel):
     sheet_id: str
     # Row-level: worksheet name; Snapshot: None (multiple worksheets)
     worksheet: Optional[str] = None
-    rows_processed: int
-    rows_failed: int
+    rows_processed: Optional[int] = None
+    rows_failed: Optional[int] = None
     # Row-level: number of rows inserted; Snapshot: unused
     rows_inserted: Optional[int] = None
     # Row-level: duplicate/empty rows; Snapshot: unused

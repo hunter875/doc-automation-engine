@@ -18,6 +18,30 @@ def normalize_unicode_text(value: Any) -> str:
     return re.sub(r"\s+", " ", t).lower()
 
 
+def normalize_header_key(value: str) -> str:
+    """Normalize a sheet column header key: strip diacritics, collapse spaces, lowercase.
+
+    This is the SINGLE source of truth for normalizing header keys across the pipeline.
+    MUST produce consistent output for both row_dict keys (built via normalize_unicode_text)
+    and schema aliases. Uses explicit replacement for Vietnamese letters that NFKD+combining
+    strip does not handle (đ/Đ/ơ/Ơ/ư/Ư).
+    """
+    text = str(value or "").strip()
+    # Explicit Vietnamese special-letter → ASCII mapping (covers đ/Đ/ơ/Ơ/ư/Ư)
+    _VN_MAP = {
+        "đ": "d", "Đ": "D",
+        "ơ": "o", "Ơ": "O",
+        "ư": "u", "Ư": "U",
+    }
+    for vn, asc in _VN_MAP.items():
+        text = text.replace(vn, asc)
+    # Now NFKD + strip remaining combining characters (handles à/â/á/ả/ạ, etc.)
+    nfkd = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in nfkd if not unicodedata.combining(c))
+    # Collapse underscores/spaces, lowercase
+    return re.sub(r"[_\s]+", " ", text).strip().lower()
+
+
 def parse_date_ddmmyyyy(value: str) -> str | None:
     text = normalize_unicode_text(value)
     if not text:

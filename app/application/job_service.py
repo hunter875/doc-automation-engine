@@ -76,6 +76,7 @@ class JobManager:
         status: str | None = None,
         template_id: str | None = None,
         batch_id: str | None = None,
+        exclude_parser: str | None = None,
     ) -> tuple[list[ExtractionJob], int]:
         query = self.db.query(ExtractionJob).filter(ExtractionJob.tenant_id == tenant_id)
         if status:
@@ -84,6 +85,8 @@ class JobManager:
             query = query.filter(ExtractionJob.template_id == template_id)
         if batch_id:
             query = query.filter(ExtractionJob.batch_id == batch_id)
+        if exclude_parser:
+            query = query.filter(ExtractionJob.parser_used != exclude_parser)
 
         total = query.count()
         items = (

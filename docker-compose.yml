@@ -45,6 +45,7 @@ services:
       BATCH_CLOSER_MAX_WAIT_MINUTES: ${BATCH_CLOSER_MAX_WAIT_MINUTES:-60}
       BATCH_CLOSER_AUTO_AGGREGATE: ${BATCH_CLOSER_AUTO_AGGREGATE:-true}
       STUCK_JOB_CLEANUP_POLL_SECONDS: ${STUCK_JOB_CLEANUP_POLL_SECONDS:-30}
+      TEST_DATABASE_URL: postgresql+psycopg2://raguser:ragpassword@postgres:5432/rag_test
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

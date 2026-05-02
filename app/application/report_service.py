@@ -46,9 +46,13 @@ def _parse_report_date(value: Any) -> date | None:
     if not text:
         return None
 
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d/%m", "%d-%m"):
         try:
-            return datetime.strptime(text, fmt).date()
+            parsed = datetime.strptime(text, fmt).date()
+            # If only day/month was provided, assume current year
+            if parsed.year == 1900:
+                parsed = parsed.replace(year=date.today().year)
+            return parsed
         except ValueError:
             continue
     return None
@@ -411,6 +415,7 @@ class CalendarService:
     """Calendar projection service for report dates having data."""
 
     def __init__(self, db: Session):
+        self.db = db
         self.repository = ReportRepository(db)
 
     def get_calendar_dates(self, tenant_id: str) -> dict[str, Any]:
@@ -418,6 +423,78 @@ class CalendarService:
         weekly_starts = self.repository.list_weekly_report_starts(tenant_id)
         merged = sorted(daily_dates.union(weekly_starts))
         return {"dates_with_reports": merged}
+
+    def get_calendar_dates_with_metadata(self, tenant_id: str) -> dict[str, Any]:
+        """Calendar with manual edit metadata per date."""
+        from app.domain.models.daily_report_edit import DailyReportEdit
+        from app.domain.models.extraction_job import ExtractionJob
+
+        daily_dates = self.repository.list_daily_report_dates(tenant_id)
+        weekly_starts = self.repository.list_weekly_report_starts(tenant_id)
+
+        # Query latest snapshot jobs for metadata
+        jobs = (
+            self.db.query(ExtractionJob)
+            .filter(
+                ExtractionJob.tenant_id == tenant_id,
+                ExtractionJob.parser_used == "google_sheets",
+                ExtractionJob.sheet_revision_hash.is_not(None),
+            )
+            .order_by(ExtractionJob.report_date, ExtractionJob.report_version.desc())
+            .all()
+        )
+
+        # Build latest job per date
+        latest_job: dict[date, ExtractionJob] = {}
+        for job in jobs:
+            d = job.report_date
+            if d not in latest_job:
+                latest_job[d] = job
+
+        # Query all manual edits for this tenant
+        edits = (
+            self.db.query(DailyReportEdit.report_date, DailyReportEdit.id)
+            .filter(DailyReportEdit.tenant_id == tenant_id)
+            .order_by(DailyReportEdit.report_date, DailyReportEdit.created_at.desc())
+            .all()
+        )
+
+        # Build set of dates with manual edits (latest edit per date)
+        edited_dates: dict[date, str] = {}
+        for report_date, edit_id in edits:
+            if report_date not in edited_dates:
+                edited_dates[report_date] = str(edit_id)
+
+        # Build calendar days
+        all_dates = sorted(daily_dates.union(weekly_starts))
+        days = []
+        for d in all_dates:
+            job = latest_job.get(d)
+            has_edit = d in edited_dates
+            day_info = {
+                "date": d.isoformat(),
+                "has_data": True,
+            }
+            if job:
+                day_info["job_id"] = str(job.id)
+                day_info["version"] = job.report_version
+                day_info["status"] = job.status or "auto_synced"
+                day_info["validation_status"] = "ok"
+                day_info["warning_count"] = 0
+                day_info["error_count"] = 0
+            if has_edit:
+                day_info["has_manual_edits"] = True
+                day_info["manual_edit_id"] = edited_dates[d]
+                day_info["review_status"] = "manual_edited"
+                day_info["source_displayed_by_default"] = "manual_edit"
+            else:
+                day_info["has_manual_edits"] = False
+                day_info["review_status"] = "no_edit"
+                day_info["source_displayed_by_default"] = "auto_sync"
+
+            days.append(day_info)
+
+        return {"days": days}
 
 
 class WeeklyReportAggregator:

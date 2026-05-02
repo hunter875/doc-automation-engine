@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.engines.extraction.mapping.normalizer import normalize_field_value, normalize_unicode_text
+from app.engines.extraction.mapping.normalizer import normalize_field_value, normalize_unicode_text, normalize_header_key
 from app.engines.extraction.mapping.schema_loader import IngestionSchema
 
 
 def _normalize_key(key: str) -> str:
-    return normalize_unicode_text(key).lower()
+    """Delegate to normalize_header_key for pipeline-wide consistency."""
+    return normalize_header_key(key)
 
 
 def map_row_to_document_data(
@@ -31,6 +32,13 @@ def map_row_to_document_data(
             if lookup in normalized_row:
                 value = normalized_row[lookup]
                 found = True
+                break
+            for candidate_key, candidate_value in normalized_row.items():
+                if candidate_key and lookup and (lookup in candidate_key or candidate_key in lookup):
+                    value = candidate_value
+                    found = True
+                    break
+            if found:
                 break
 
         normalized_value = normalize_field_value(value, field)

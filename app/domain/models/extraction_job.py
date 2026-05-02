@@ -208,6 +208,8 @@ class ExtractionJob(Base):
         ForeignKey("extraction_jobs.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Raw source data for sheet ingestion (stores Google Sheets snapshot)
+    source_data = Column(JSONB, nullable=True)
 
     created_by = Column(
         UUID(as_uuid=True),

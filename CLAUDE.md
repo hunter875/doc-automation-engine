@@ -1,17 +1,22 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Current Task: Schema YAML Upload Endpoint
 
-## Tech Stack
+**Problem:** Frontend wizard lacks easy way to upload schema YAML files. Users must manually type S3 key, which is error-prone and confusing.
 
-- **Backend**: FastAPI + Pydantic v2 + SQLAlchemy
-- **Task Queue**: Celery + Redis
-- **Database**: PostgreSQL + JSONB (with pgvector extension)
-- **Object Storage**: MinIO (S3-compatible)
-- **LLM**: Ollama (qwen2.5:7b-instruct or gemini) via Instructor
-- **Frontend**: Next.js 14 + React + Tailwind CSS + Radix UI
-- **Document Processing**: pdfplumber, docxtpl, Jinja2
-- **Container**: Docker Compose
+**Solution:** Create dedicated endpoint `POST /templates/upload-schema` that:
+- Accepts YAML file upload
+- Stores in MinIO under `sheet_schemas/{uuid}/{filename}`
+- Returns `{ schema_s3_key: string }`
+- Frontend uses this key in worksheet config
+
+**Files to modify:**
+- `app/api/v1/templates.py` - add endpoint
+- `frontend/components/extraction/templates-tab.tsx` - add upload button
+
+**Testing:**
+- Upload .yaml via API → get S3 key
+- Use key in worksheet config → ingestion succeeds
 
 ## Project Architecture
 

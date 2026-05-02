@@ -213,12 +213,16 @@ def test_snapshot_build_returns_valid_report(monkeypatch: pytest.MonkeyPatch, si
         {"worksheet": "WS1", "schema_path": "/tmp/schema.yaml", "target_section": "header"}
     ]
 
+    import app.engines.extraction.daily_report_builder as drb_mod
+
+    # Mock load_schema to return a proper schema-like object with fields
     class _Schema:
         all_aliases = {"ngay_bao_cao"}
+        fields = []  # Add empty fields to satisfy attribute checks
 
     monkeypatch.setattr(
-        "app.engines.extraction.sheet_ingestion_service.load_schema",
-        lambda *_: _Schema(),
+        "app.engines.extraction.daily_report_builder.load_schema",
+        lambda *_: type("S", (), {"fields": []})(),
     )
     monkeypatch.setattr(
         "app.engines.extraction.mapping.header_detector.detect_header_row",
@@ -228,6 +232,8 @@ def test_snapshot_build_returns_valid_report(monkeypatch: pytest.MonkeyPatch, si
     def _map_row_to_document_data(row_dict, schema):
         return {"ngay_bao_cao": row_dict.get("ngay_bao_cao")}, 1, 1, set()
 
+    # Patch map_row_to_document_data in the module where it's used
+    monkeypatch.setattr(drb_mod, "map_row_to_document_data", _map_row_to_document_data)
     monkeypatch.setattr(
         "app.engines.extraction.mapping.mapper.map_row_to_document_data",
         _map_row_to_document_data,

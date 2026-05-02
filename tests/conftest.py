@@ -7,8 +7,11 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.types import TypeDecorator
 
 # Override settings before importing app modules
 os.environ["SECRET_KEY"] = "test-secret-key-for-unit-tests-only"
@@ -21,19 +24,156 @@ os.environ["REDIS_HOST"] = "localhost"
 
 from app.infrastructure.db.session import Base
 
+# Ensure all SQLAlchemy models are registered on Base.metadata before create_all
+import app.domain.models  # noqa: F401
+
+
+# ============================================================================
+# PostgreSQL Test Fixtures (for integration tests)
+# ============================================================================
+
+@pytest.fixture(scope="session")
+def pg_test_engine():
+    """PostgreSQL test engine for integration tests."""
+    test_db_url = os.getenv("TEST_DATABASE_URL")
+
+    if not test_db_url:
+        pytest.skip("TEST_DATABASE_URL required for Postgres integration tests")
+
+    assert test_db_url.startswith(
+        ("postgresql://", "postgresql+psycopg2://", "postgresql+psycopg://")
+    ), f"TEST_DATABASE_URL must be PostgreSQL, got: {test_db_url}"
+
+    assert "rag_test" in test_db_url.lower(), (
+        f"Refusing to run destructive tests against non-test DB: {test_db_url}"
+    )
+
+    engine = create_engine(test_db_url)
+
+    yield engine
+
+    engine.dispose()
+
+
+@pytest.fixture
+def pg_test_session(pg_test_engine) -> Generator[Session, None, None]:
+    """PostgreSQL test session with clean schema per test."""
+    Base.metadata.drop_all(bind=pg_test_engine)
+    Base.metadata.create_all(bind=pg_test_engine)
+
+    SessionLocal = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=pg_test_engine,
+    )
+
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=pg_test_engine)
+
+
+# ============================================================================
+# SQLite Type Compatibility Shims (for unit tests)
+# ============================================================================
+
+class SQLiteARRAY(TypeDecorator):
+    """SQLite-compatible ARRAY type using JSON serialization."""
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        import json
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return []
+        import json
+        return json.loads(value)
+
+
+class SQLiteJSONB(TypeDecorator):
+    """SQLite-compatible JSONB type using JSON serialization."""
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        import json
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        import json
+        return json.loads(value)
+
+
+class SQLiteUUID(TypeDecorator):
+    """SQLite-compatible UUID type using string storage."""
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        import uuid
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        import uuid
+        return uuid.UUID(value)
+
+
+@compiles(ARRAY, "sqlite")
+def compile_array_sqlite(type_, compiler, **kw):
+    return "TEXT"
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "TEXT"
+
+
+@compiles(PG_UUID, "sqlite")
+def compile_uuid_sqlite(type_, compiler, **kw):
+    return "VARCHAR(36)"
+
 
 # ============================================================================
 # Database Fixtures (SQLite in-memory for tests)
 # ============================================================================
 
 @pytest.fixture(scope="session")
-def test_engine():
+def sqlite_test_engine():
     """Create test database engine using SQLite in-memory."""
     engine = create_engine(
         "sqlite:///:memory:",
         echo=False,
         connect_args={"check_same_thread": False},
     )
+
+    # Enable foreign keys in SQLite
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    assert "users" in Base.metadata.tables
+    assert "tenants" in Base.metadata.tables
+    assert "extraction_templates" in Base.metadata.tables
+    assert "extraction_jobs" in Base.metadata.tables
     # Create all tables
     Base.metadata.create_all(bind=engine)
     yield engine
@@ -41,12 +181,12 @@ def test_engine():
 
 
 @pytest.fixture(scope="function")
-def db_session(test_engine) -> Generator[Session, None, None]:
+def db_session(sqlite_test_engine) -> Generator[Session, None, None]:
     """Create a fresh database session for each test."""
     TestSessionLocal = sessionmaker(
         autocommit=False,
         autoflush=False,
-        bind=test_engine,
+        bind=sqlite_test_engine,
     )
 
     session = TestSessionLocal()

@@ -1,4 +1,43 @@
-# Schema cho sheet "BC NGÀY" - THỐNG KÊ CÔNG TÁC NGÀY PC KV30 2026
+#!/usr/bin/env python3
+"""Update bc_ngay_kv30_schema.yaml in container with correct aliases matching actual Google Sheet headers."""
+import re
+
+# Correct aliases based on actual Google Sheet column headers (after normalize)
+# The actual column headers are (from debug_trace):
+# col_0: NGÀY  -> 'ngay'
+# col_1: THÁNG  -> 'thang'
+# col_2: VỤ CHÁY VÀ CNCH VỤ CHÁY \nTHỐNG KÊ  -> 'vu chay va cnch vu chay thong ke'
+# col_3: SCLQ ĐẾN \nPCCC&\nCNCH  -> 'sclq đen pccc& cnch'
+# col_4: CHI VIỆN  -> 'chi vien'
+# col_5: CNCH  -> 'cnch'
+# col_6: CÔNG TÁC KIỂM TRA ĐỊNH KỲ NHÓM I  -> 'cong tac kiem tra đinh ky nhom i'
+# col_7: NHÓM II  -> 'nhom ii'
+# col_8: ĐỘT XUẤT NHÓM I  -> 'đot xuat nhom i'
+# col_9: NHÓM II  -> 'nhom ii'
+# col_10: HƯỚNG DẪN  -> 'huong dan'
+# col_11: KIẾN\nNGHỊ  -> 'kien nghi'
+# col_12: XỬ PHẠT  -> 'xu phat'
+# col_13: TIỀN PHẠT\n(triệu đồng)  -> 'tien phat (trieu đong)'
+# col_14: ĐÌNH CHỈ  -> 'đinh chi'
+# col_15: PHỤC HỒI  -> 'phuc hoi'
+# col_16: TUYÊN TRUYỀN PCCC TIN BÀI  -> 'tuyen truyen pccc tin bai'
+# col_17: PHÓNG SỰ  -> 'phong su'
+# col_18: SỐ LỚP TUYÊN TRUYỀN  -> 'so lop tuyen truyen'
+# col_19: SỐ NGƯỜI THAM DỰ  -> 'so nguoi tham du'
+# col_20: SỐ KHUYẾN CÁO, TỜ RƠI ĐÃ PHÁT  -> 'so khuyen cao, to roi đa phat'
+# col_21: HUẤN LUYỆN PCCC SỐ LỚP HUẤN LUYỆN  -> 'huan luyen pccc so lop huan luyen'
+# col_22: SỐ NGƯỜI THAM DỰ  -> 'so nguoi tham du'
+# col_23: PACC&CNCH của cơ sở theo mẫu PC06 SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT  -> 'pacc&cnch cua co so theo mau pc06 so pa xay dung va phe duyet'
+# col_24: SỐ PA ĐƯỢC THỰC TẬP  -> 'so pa đuoc thuc tap'
+# col_25: PACC&CNCH của CQ CA theo mẫu PC08 SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT  -> 'pacc&cnch cua cq ca theo mau pc08 so pa xay dung va phe duyet'
+# col_26: SỐ PA ĐƯỢC THỰC TẬP  -> 'so pa đuoc thuc tap'
+# col_27: PA CNCH của CQ CA theo mẫu PC09 SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT  -> 'pa cnch cua cq ca theo mau pc09 so pa xay dung va phe duyet'
+# col_28: SỐ PA ĐƯỢC THỰC TẬP  -> 'so pa đuoc thuc tap'
+# col_29: PACC&CNCH của phương tiện giao thông theo mẫu PC07 SỐ PA XÂY DỰNG VÀ PHÊ DUYỆT  -> 'pacc&cnch cua phuong tien giao thong theo mau pc07 so pa xay dung va phe duyet'
+# col_30: SỐ PA ĐƯỢC THỰC TẬP  -> 'so pa đuoc thuc tap'
+# col_31: Ghi chú  -> 'ghi chu'
+
+UPDATED_SCHEMA = """# Schema cho sheet "BC NGÀY" - THỐNG KÊ CÔNG TÁC NGÀY PC KV30 2026
 # Row 0 = group headers (merged), Row 1 = sub-headers (actual column names), Row 2+ = data
 # Updated aliases to match actual Google Sheet column headers exactly
 
@@ -16,11 +55,11 @@ sheet_mapping:
   nghiep_vu:
     # Vụ cháy / SCLQ / Chi viện / CNCH (4 cột đầu tiên)
     tong_so_vu_chay:
-      aliases: ["VỤ CHÁY VÀ CNCH VỤ CHÁY \nTHỐNG KÊ", "VỤ CHÁY THỐNG KÊ", "Vụ cháy thống kê", "VỤ CHÁY CÓ THỐNG KÊ", "VỤ CHÁY VÀ CNCH", "Vụ cháy và CNCH"]
+      aliases: ["VỤ CHÁY VÀ CNCH VỤ CHÁY \\nTHỐNG KÊ", "VỤ CHÁY THỐNG KÊ", "Vụ cháy thống kê", "VỤ CHÁY CÓ THỐNG KÊ", "VỤ CHÁY VÀ CNCH", "Vụ cháy và CNCH"]
       type: integer
       required: false
     tong_sclq:
-      aliases: ["SCLQ ĐẾN \nPCCC&\nCNCH", "SỰ CỐ LIÊN QUAN ĐẾN PCCC&CNCH", "SCLQ ĐẾN PCCC&CNCH", "SỰ CỐ LIÊN QUAN ĐẾN PCCC & CNCH", "SCLQ Đến PCCC&CNCH"]
+      aliases: ["SCLQ ĐẾN \\nPCCC&\\nCNCH", "SỰ CỐ LIÊN QUAN ĐẾN PCCC&CNCH", "SCLQ ĐẾN PCCC&CNCH", "SỰ CỐ LIÊN QUAN ĐẾN PCCC & CNCH", "SCLQ Đến PCCC&CNCH"]
       type: integer
       required: false
     tong_chi_vien:
@@ -56,7 +95,7 @@ sheet_mapping:
       type: integer
       required: false
     kien_nghi:
-      aliases: ["KIẾN\nNGHỊ", "KIẾN NGHỊ", "KIẾN\nNGHỊ "]
+      aliases: ["KIẾN\\nNGHỊ", "KIẾN NGHỊ", "KIẾN\\nNGHỊ "]
       type: integer
       required: false
     xu_phat:
@@ -64,8 +103,8 @@ sheet_mapping:
       type: integer
       required: false
     tien_phat:
-      aliases: ["TIỀN PHẠT\n(triệu đồng)", "TIỀN PHẠT\n(triệu đồng) ", "TIỀN PHẠT (triệu đồng)", "TIỀN PHẠT"]
-      type: float
+      aliases: ["TIỀN PHẠT\\n(triệu đồng)", "TIỀN PHẠT\\n(triệu đồng) ", "TIỀN PHẠT (triệu đồng)", "TIỀN PHẠT"]
+      type: string
       required: false
     tam_dinh_chi:
       aliases: ["ĐÌNH CHỈ"]
@@ -189,3 +228,11 @@ sheet_mapping:
       "66": {noi_dung: "PA PC09 thực tập", field: "pa_pc09_tt"}
       "67": {noi_dung: "PA PC07 xây dựng và phê duyệt", field: "pa_pc07_xd"}
       "68": {noi_dung: "PA PC07 thực tập", field: "pa_pc07_tt"}
+"""
+
+SCHEMA_PATH = "/app/app/domain/templates/bc_ngay_kv30_schema.yaml"
+
+with open(SCHEMA_PATH, "w", encoding="utf-8") as f:
+    f.write(UPDATED_SCHEMA)
+
+print(f"Updated schema written to {SCHEMA_PATH}")

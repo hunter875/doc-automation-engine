@@ -139,6 +139,14 @@ async def lifespan(app: FastAPI):
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS extraction_jobs
+                ADD COLUMN IF NOT EXISTS source_data JSONB
+                """
+            )
+        )
     logger.info("Database tables created/verified")
 
     yield

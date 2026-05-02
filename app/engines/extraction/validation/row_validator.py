@@ -64,6 +64,10 @@ def validate_row(
         errors.append(f"required_missing:{req}")
 
     schema_match_rate = float(matched_fields) / float(total_fields or 1)
+
+    if schema_match_rate < 0.1:
+        errors.append(f"low_match_rate:{schema_match_rate:.2f}")
+
     validation_ok = 0.0 if errors else 1.0
     confidence_overall = round((schema_match_rate * 0.6) + (validation_ok * 0.4), 4)
 

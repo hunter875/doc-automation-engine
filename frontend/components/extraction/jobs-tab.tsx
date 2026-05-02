@@ -36,28 +36,44 @@ async function waitForIngestionTask(
   const maxAttempts = 120;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    const statusRes = await api.jobs.getBatchStatus(taskId);
+    const statusRes = await api.jobs.getIngestionStatus(taskId);
     if (!statusRes.ok) {
       setSheetProgress("Lỗi đọc trạng thái ingestion");
       return;
     }
 
     const payload = statusRes.data;
-    const total = Number(payload.total || 0);
-    const processed = Math.max(0, total - Number(payload.pending || 0) - Number(payload.processing || 0));
-    setSheetProgress(`Đang chạy: ${processed}/${total || 1} (${payload.progress_percent}%)`);
+    const status = payload.status;
+    const state = payload.state;
 
-    if (Number(payload.progress_percent || 0) >= 100) {
-      const inserted = Number(payload.ready_for_review || 0);
-      const failed = Number(payload.failed || 0);
+    // Check for completion
+    if (status === "completed" && payload.summary) {
+      const summary = payload.summary;
+      const inserted = Number(summary.rows_inserted || 0);
+      const failed = Number(summary.rows_failed || 0);
+      const processed = Number(summary.rows_processed || 0);
+
       if (failed > 0) {
         toast.warning(`Đồng bộ hoàn tất có lỗi: ${inserted} thành công, ${failed} lỗi.`);
       } else {
         toast.success(`✅ Đồng bộ xong: ${inserted} bản ghi.`);
       }
-      setSheetProgress(`Hoàn tất: ${inserted} bản ghi`);
+      setSheetProgress(`Hoàn tất: ${inserted} bản ghi (${processed} rows fetched)`);
       onRefreshJobs();
       return;
+    }
+
+    if (status === "failed") {
+      toast.error(`Đồng bộ thất bại: ${payload.error || "Unknown error"}`);
+      setSheetProgress("Thất bại");
+      return;
+    }
+
+    // Running/queued - show intermediate state
+    if (status === "running" || state === "STARTED") {
+      setSheetProgress(`Đang xử lý... (${state})`);
+    } else if (status === "queued") {
+      setSheetProgress(`Đang chờ... (${state})`);
     }
   }
   toast.warning("Đồng bộ vẫn đang chạy, vui lòng kiểm tra lại sau.");

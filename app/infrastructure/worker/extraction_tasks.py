@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
@@ -13,6 +14,7 @@ from sqlalchemy import or_, and_
 from app.infrastructure.worker.celery_app import celery_app  # noqa: F401
 from app.core.config import settings
 from app.core.logger import classify_error, log_debug_step
+from app.core.exceptions import ProcessingError
 from app.infrastructure.db.session import SessionLocal
 from app.domain.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.domain.workflow import JobStatus, transition_job_state
@@ -24,41 +26,6 @@ from app.domain.models.tenant import Tenant, UserTenantRole  # noqa: F401
 from app.domain.models.user import User  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-@shared_task(
-    bind=True,
-    max_retries=2,
-    default_retry_delay=20,
-    retry_backoff=True,
-    retry_jitter=True,
-    soft_time_limit=900,
-    time_limit=1020,
-)
-def ingest_google_sheet_task(self, payload: dict):
-    """Run Google Sheets ingestion asynchronously and return ingestion summary."""
-    db = SessionLocal()
-    try:
-        from app.engines.extraction.sheet_ingestion_service import (
-            GoogleSheetIngestionService,
-            IngestionRequest,
-        )
-
-        req = IngestionRequest(
-            tenant_id=str(payload.get("tenant_id") or ""),
-            user_id=str(payload.get("user_id") or ""),
-            template_id=str(payload.get("template_id") or ""),
-            sheet_id=str(payload.get("sheet_id") or ""),
-            worksheet=str(payload.get("worksheet") or ""),
-            schema_path=str(payload.get("schema_path") or ""),
-            source_document_id=str(payload.get("source_document_id")) if payload.get("source_document_id") else None,
-            range_a1=str(payload.get("range_a1")) if payload.get("range_a1") else None,
-            configs=payload.get("configs") if payload.get("configs") else None,
-        )
-        summary = asyncio.run(GoogleSheetIngestionService(db).ingest(req))
-        return summary
-    finally:
-        db.close()
 
 
 def _is_retriable_error(error: Exception) -> bool:
@@ -152,16 +119,7 @@ def extract_document_task(self, job_id: str):
         if existing_job is None:
             raise ValueError(f"Job {job_id} not found")
 
-        parser_used = str(existing_job.parser_used or "").lower()
-        source_type = "sheet" if parser_used in {"google_sheets", "sheet"} else "pdf"
-        sheet_data = existing_job.extracted_data if source_type == "sheet" else None
-
-        job = orchestrator.run(
-            job_id,
-            progress_callback=emit_progress,
-            source_type=source_type,
-            sheet_data=sheet_data if isinstance(sheet_data, dict) else None,
-        )
+        job = orchestrator.run(job_id, progress_callback=emit_progress)
 
         logger.info(
             f"[Engine2] Extraction complete for job {job_id}: "
@@ -269,6 +227,80 @@ def extract_document_task(self, job_id: str):
             except Exception:
                 pass
             raise
+
+    finally:
+        db.close()
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    soft_time_limit=600,
+    time_limit=720,
+)
+def ingest_google_sheet_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+    """Ingest a Google Sheet and create an ExtractionJob, then enqueue extraction.
+
+    Steps:
+    1. Build IngestionRequest from payload
+    2. Call GoogleSheetIngestionService.ingest() to fetch sheet and create job
+    3. Enqueue extract_document_task(job.id)
+    4. Return job summary
+
+    On failure:
+    - Retry with exponential backoff
+    - After max retries → job marked as failed (if created) or raise
+    """
+    logger.info(f"[Ingestion] Starting Google Sheet ingestion: sheet_id={payload.get('sheet_id')}")
+
+    db = SessionLocal()
+
+    try:
+        from app.engines.extraction.sheet_ingestion_service import GoogleSheetIngestionService, IngestionRequest
+        from app.infrastructure.worker.extraction_tasks import extract_document_task
+
+        service = GoogleSheetIngestionService(db)
+
+        # Build IngestionRequest from payload
+        request = IngestionRequest(
+            tenant_id=payload["tenant_id"],
+            user_id=payload["user_id"],
+            template_id=payload["template_id"],
+            sheet_id=payload["sheet_id"],
+            worksheet=payload.get("worksheet", ""),  # may be empty if configs provided
+            schema_path=payload.get("schema_path", ""),
+            source_document_id=payload.get("source_document_id"),
+            range_a1=payload.get("range_a1"),
+            configs=payload.get("configs"),
+        )
+
+        # Ingest: fetches sheet and creates job(s)
+        result = asyncio.run(service.ingest(request))
+
+        # Enqueue extraction task for each created job (snapshot mode may create multiple)
+        if result.get("jobs"):
+            for job_info in result["jobs"]:
+                if job_info.get("status") == "created":
+                    extract_document_task.delay(job_info["job_id"])
+                    logger.info(f"[Ingestion] Enqueued extraction for job {job_info['job_id']}")
+        else:
+            # Legacy single job response
+            extract_document_task.delay(result["job_id"])
+            logger.info(f"[Ingestion] Enqueued extraction for job {result['job_id']}")
+
+        logger.info(f"[Ingestion] Completed ingestion: sheet_id={payload.get('sheet_id')}")
+
+        # Return result directly - it already matches GoogleSheetIngestionSummary schema
+        return result
+
+    except Exception as e:
+        import traceback
+        logger.error(f"[Ingestion] Failed: {e}\n{traceback.format_exc()}")
+        raise
 
     finally:
         db.close()

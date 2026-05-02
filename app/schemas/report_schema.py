@@ -8,8 +8,40 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class CalendarDayResponse(BaseModel):
+    date: str
+    has_data: bool = True
+    job_id: str | None = None
+    version: int | None = None
+    status: str | None = None
+    validation_status: str | None = None
+    warning_count: int = 0
+    error_count: int = 0
+    has_manual_edits: bool = False
+    manual_edit_id: str | None = None
+    review_status: str | None = None
+    source_displayed_by_default: str | None = None
+
+
 class CalendarResponse(BaseModel):
     dates_with_reports: list[date] = Field(default_factory=list)
+    days: list[CalendarDayResponse] = Field(default_factory=list)
+
+
+class DailyReportEditRequest(BaseModel):
+    data: dict[str, Any]
+    reason: str | None = None
+
+
+class DailyReportDetailResponse(BaseModel):
+    date: str
+    job_id: str
+    version: int | None = None
+    source: str
+    has_manual_edits: bool
+    manual_edit_id: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    validation_report: dict[str, Any] = Field(default_factory=dict)
 
 
 class DailyReportResponse(BaseModel):

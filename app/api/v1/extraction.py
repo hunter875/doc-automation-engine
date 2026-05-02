@@ -489,6 +489,7 @@ def list_jobs(
         status=job_status,
         template_id=template_id,
         batch_id=batch_id,
+        exclude_parser="google_sheets",
     )
     return JobListResponse(
         items=[JobResponse.model_validate(j) for j in items],

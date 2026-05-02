@@ -44,10 +44,21 @@ async def scan_word_template(
 ):
     from app.utils.word_scanner import scan_word_template as do_scan
 
-    if not file.filename or not file.filename.lower().endswith((".docx", ".doc")):
+    if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Chỉ hỗ trợ file .docx",
+            detail="Filename is required",
+        )
+
+    # Check file extension
+    filename_lower = file.filename.lower()
+    is_word = filename_lower.endswith((".docx", ".doc"))
+    is_yaml = filename_lower.endswith((".yaml", ".yml"))
+
+    if not (is_word or is_yaml):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Chỉ hỗ trợ file .docx, .doc, .yaml, .yml",
         )
 
     content = await file.read()
@@ -57,41 +68,58 @@ async def scan_word_template(
             detail="File quá lớn (tối đa 50 MB)",
         )
 
-    try:
-        result = do_scan(content, use_llm=use_llm)
-    except Exception as exc:
-        logger.exception("Word scan failed")
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Không thể đọc file Word: {exc}",
-        )
+    # For YAML files: skip Word scanning, just prepare result with S3 key
+    if is_yaml:
+        result = {
+            "word_template_s3_key": None,  # will be set after S3 upload
+            "stats": {"unique_variables": 0},
+            "schema_definition": None,
+            "aggregation_rules": None,
+            "variables": [],
+        }
+    else:
+        # Word file: perform scan
+        try:
+            result = do_scan(content, use_llm=use_llm)
+        except Exception as exc:
+            logger.exception("Word scan failed")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Không thể đọc file Word: {exc}",
+            )
 
-    if result["stats"]["unique_variables"] == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Không tìm thấy placeholder {{...}} nào trong file.",
-        )
+        if result["stats"]["unique_variables"] == 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Không tìm thấy placeholder {{...}} nào trong file.",
+            )
 
+    # Upload to S3
     try:
         import uuid as _uuid
 
         from app.application.doc_service import s3_client
 
-        s3_key = f"word_templates/{_uuid.uuid4()}/{file.filename}"
+        # Use appropriate prefix based on file type
+        if is_yaml:
+            s3_key = f"sheet_schemas/{_uuid.uuid4()}/{file.filename}"
+            content_type = "application/x-yaml"
+        else:
+            s3_key = f"word_templates/{_uuid.uuid4()}/{file.filename}"
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
         s3_client.put_object(
             Bucket=settings.S3_BUCKET_NAME,
             Key=s3_key,
             Body=content,
-            ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ContentType=content_type,
         )
         result["word_template_s3_key"] = s3_key
         logger.info(
-            "SCAN_WORD_SAVED | key=%s bucket=%s filename=%s",
-            s3_key, settings.S3_BUCKET_NAME, file.filename,
+            "SCAN_WORD_SAVED | key=%s bucket=%s filename=%s type=%s",
+            s3_key, settings.S3_BUCKET_NAME, file.filename, "yaml" if is_yaml else "word",
         )
     except Exception as exc:
-        # Do NOT silently return None here. A scan result without an S3 key is
-        # unusable — the user would create a template that always fails on export.
         logger.error(
             "SCAN_WORD_S3_UPLOAD_FAILED | bucket=%s filename=%s error=%s",
             settings.S3_BUCKET_NAME, file.filename, exc,
@@ -99,7 +127,7 @@ async def scan_word_template(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                f"File Word đã được đọc thành công nhưng không thể lưu vào S3 "
+                f"File đã được đọc thành công nhưng không thể lưu vào S3 "
                 f"(bucket={settings.S3_BUCKET_NAME}). "
                 f"Kiểm tra kết nối MinIO và thử lại. Chi tiết: {exc}"
             ),

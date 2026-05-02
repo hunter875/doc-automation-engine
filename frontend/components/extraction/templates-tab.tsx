@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Plus, RefreshCw, Trash2, Paperclip, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +80,10 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
   const [attachTarget, setAttachTarget] = useState<Template | null>(null);
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const [attaching, setAttaching] = useState(false);
+
+  // Schema YAML upload for worksheet configs
+  const [uploadingSchemaIdx, setUploadingSchemaIdx] = useState<number | null>(null);
+  const schemaFileInputRef = useRef<HTMLInputElement>(null);
 
   // Wizard step: 1=scan, 2=fields, 3=sheets, 4=review
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
@@ -266,25 +270,68 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
     }
   }
 
+  // Upload YAML schema for a worksheet config
+  function handleUploadSchemaClick(idx: number) {
+    setUploadingSchemaIdx(idx);
+    // Trigger hidden file input
+    if (schemaFileInputRef.current) {
+      schemaFileInputRef.current.click();
+    }
+  }
+
+  async function handleSchemaFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadingSchemaIdx(null);
+    const idx = event.target.dataset.idx ? Number(event.target.dataset.idx) : -1;
+    if (idx < 0 || idx >= worksheetConfigs.length) return;
+
+    try {
+      const res = await api.templates.scanWord(file);
+      if (res.ok) {
+        const s3Key = res.data.word_template_s3_key;
+        if (s3Key) {
+          updateWorksheetConfig(idx, "schema_path", s3Key);
+          toast.success(`Đã upload schema: ${file.name}`);
+        } else {
+          toast.error("Upload thành công nhưng không nhận được S3 key");
+        }
+      } else {
+        toast.error(`Upload thất bại: ${res.error}`);
+      }
+    } catch (err) {
+      toast.error("Lỗi khi upload schema");
+    } finally {
+      // Reset input
+      if (event.target) event.target.value = "";
+    }
+  }
+
   // Ingest from Google Sheets for a template in the list
   async function handleIngestTemplate(templateId: string) {
     const selectedTpl = templates.find(t => t.id === templateId);
-    if (!selectedTpl?.google_sheet_id) {
+    if (!selectedTpl) return;
+
+    // Check Google Sheet ID (required)
+    if (!selectedTpl.google_sheet_id) {
       toast.warning("Template chưa được cấu hình Google Sheets (thiếu Sheet ID).");
       return;
     }
-    if (!selectedTpl?.google_sheet_worksheet) {
-      toast.warning("Template chưa được cấu hình Google Sheets (thiếu worksheet name).");
-      return;
-    }
-    if (!selectedTpl?.google_sheet_schema_path) {
-      toast.warning("Template chưa được cấu hình Google Sheets (thiếu schema path).");
+
+    // Determine which config to use
+    const hasMultiConfig = selectedTpl.google_sheet_configs && selectedTpl.google_sheet_configs.length > 0;
+    const hasLegacy = selectedTpl.google_sheet_worksheet && selectedTpl.google_sheet_schema_path;
+
+    if (!hasMultiConfig && !hasLegacy) {
+      toast.warning("Template chưa được cấu hình Google Sheets (thiếu worksheet/schema config).");
       return;
     }
 
     setIngestingTplId(templateId);
     setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Đang đưa vào hàng đợi…" }));
 
+    // Backend will automatically use google_sheet_configs if available, or fallback to legacy fields
     const res = await api.jobs.ingestGoogleSheet({
       template_id: templateId,
     });
@@ -296,14 +343,14 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
       return;
     }
 
-    const batchId = res.data.batch_id || res.data.task_id;
+    const taskId = res.data.batch_id || res.data.task_id;
     setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Đang theo dõi tiến độ…" }));
 
-    // Poll for completion
+    // Poll for completion using task status endpoint
     const maxAttempts = 120;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await new Promise(resolve => setTimeout(resolve, 2000));
-      const statusRes = await api.jobs.getBatchStatus(batchId);
+      const statusRes = await api.jobs.getIngestionStatus(taskId);
       if (!statusRes.ok) {
         setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Lỗi đọc trạng thái" }));
         setIngestingTplId(null);
@@ -311,22 +358,38 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
       }
 
       const payload = statusRes.data;
-      const total = Number(payload.total || 0);
-      const processed = Math.max(0, total - Number(payload.pending || 0) - Number(payload.processing || 0));
-      setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Đang chạy: ${processed}/${total || 1} (${payload.progress_percent}%)` }));
+      const status = payload.status;
+      const state = payload.state;
 
-      if (Number(payload.progress_percent || 0) >= 100) {
-        const inserted = Number(payload.ready_for_review || 0);
-        const failed = Number(payload.failed || 0);
+      if (status === "completed" && payload.summary) {
+        const summary = payload.summary;
+        const inserted = Number(summary.rows_inserted || 0);
+        const failed = Number(summary.rows_failed || 0);
+        const processed = Number(summary.rows_processed || 0);
+
         if (failed > 0) {
           toast.warning(`Đồng bộ hoàn tất có lỗi: ${inserted} thành công, ${failed} lỗi.`);
         } else {
           toast.success(`✅ Đồng bộ xong: ${inserted} bản ghi.`);
         }
-        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Hoàn tất: ${inserted} bản ghi` }));
+        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Hoàn tất: ${inserted} bản ghi (${processed} rows fetched)` }));
         setIngestingTplId(null);
         onRefresh();
         return;
+      }
+
+      if (status === "failed") {
+        toast.error(`Đồng bộ thất bại: ${payload.error || "Unknown error"}`);
+        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Thất bại" }));
+        setIngestingTplId(null);
+        return;
+      }
+
+      // Running/queued - update progress
+      if (status === "running" || state === "STARTED") {
+        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Đang xử lý... (${state})` }));
+      } else if (status === "queued") {
+        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Đang chờ... (${state})` }));
       }
     }
     toast.warning("Đồng bộ vẫn đang chạy, vui lòng kiểm tra lại sau.");
@@ -702,11 +765,10 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
                       </p>
                     </div>
 
-                    <Alert variant="warning" className="bg-amber-50 border-amber-200">
+                    <Alert variant="info" className="bg-blue-50 border-blue-200">
                       <AlertDescription className="text-xs">
-                        <strong>Lưu ý:</strong> Schema Path phải là S3 key của file YAML đã upload lên MinIO.
-                        Sau khi tạo mẫu, vào tab <strong>Settings</strong> để upload Word template và Schema YAML.
-                        Schema YAML sẽ được lưu tại: <code>word_templates/&lt;template-id&gt;/schema.yaml</code>
+                        <strong>Lưu ý:</strong> Schema Path là S3 key của file YAML. Nhấn nút 📁 bên phải ô Schema Path để upload file YAML trực tiếp.
+                        File sẽ được lưu trên MinIO và S3 key sẽ tự động điền vào ô.
                       </AlertDescription>
                     </Alert>
 
@@ -759,14 +821,30 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
                                   />
                                 </TableCell>
                                 <TableCell>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => removeWorksheetConfig(idx)}
-                                    className="h-8 w-8 p-0 text-destructive"
-                                  >
-                                    ✕
-                                  </Button>
+                                  <div className="flex gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleUploadSchemaClick(idx)}
+                                      disabled={uploadingSchemaIdx === idx}
+                                      title="Upload YAML schema"
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      {uploadingSchemaIdx === idx ? (
+                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Paperclip className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => removeWorksheetConfig(idx)}
+                                      className="h-8 w-8 p-0 text-destructive"
+                                    >
+                                      ✕
+                                    </Button>
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             ))
@@ -926,6 +1004,16 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
               Huỷ
             </Button>
           </DialogFooter>
+
+          {/* Hidden file input for YAML schema upload (used by worksheet config table) */}
+          <input
+            ref={schemaFileInputRef}
+            type="file"
+            accept=".yaml,.yml"
+            className="hidden"
+            data-idx={uploadingSchemaIdx !== null ? uploadingSchemaIdx : undefined}
+            onChange={handleSchemaFileSelected}
+          />
         </DialogContent>
       </Dialog>
 
