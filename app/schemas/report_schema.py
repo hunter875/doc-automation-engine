@@ -21,6 +21,9 @@ class CalendarDayResponse(BaseModel):
     manual_edit_id: str | None = None
     review_status: str | None = None
     source_displayed_by_default: str | None = None
+    is_finalized: bool = False
+    has_conflict: bool = False
+    approved_source: str | None = None
 
 
 class CalendarResponse(BaseModel):
@@ -42,6 +45,11 @@ class DailyReportDetailResponse(BaseModel):
     manual_edit_id: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
     validation_report: dict[str, Any] = Field(default_factory=dict)
+    review_status: str | None = None
+    is_finalized: bool = False
+    review_id: str | None = None
+    approved_source: str | None = None
+    has_conflict: bool = False
 
 
 class DailyReportResponse(BaseModel):
@@ -62,3 +70,21 @@ class WeeklyReportResponse(BaseModel):
     generated_at: datetime
     report_payload: dict[str, Any] = Field(default_factory=dict)
     sources_used: list[str] = Field(default_factory=list)
+
+
+class DailyReportReviewRequest(BaseModel):
+    source: str  # "auto_sync" or "manual_edit"
+    manual_edit_id: str | None = None
+    reason: str | None = None
+
+
+class DailyReportRejectRequest(BaseModel):
+    manual_edit_id: str
+    reason: str | None = None
+
+
+class DailyReportDiffResponse(BaseModel):
+    report_date: str
+    base_source: str
+    compare_source: str
+    changes: list[dict[str, Any]] = Field(default_factory=list)

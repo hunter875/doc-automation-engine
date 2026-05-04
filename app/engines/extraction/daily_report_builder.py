@@ -36,6 +36,10 @@ from app.engines.extraction.kv30_fixed_mapping import (  # noqa: E402,F401
     map_kv30_sclq_row,
     map_kv30_vu_chay_row,
 )
+from app.engines.extraction.kv30_business_mapping import (
+    build_kv30_bang_thong_ke,
+    build_kv30_word_context,
+)
 from app.engines.extraction.sheet_pipeline import SheetExtractionPipeline
 from app.engines.extraction.mapping.normalizer import normalize_unicode_text, normalize_header_key
 from app.engines.extraction.mapping.schema_loader import load_schema
@@ -514,10 +518,13 @@ class DailyReportBuilder:
 
         # ── Step 3: Group rows by date ──────────────────────────────────────────
         date_groups: dict[str, list[int]] = {}  # "DD/MM" -> [row_indices]
-        # Data rows start from data_start
+
         if master_ws in {"BC NGÀY", "BC NGAY"} and is_kv30_config(master_cfg):
             # KV30 fixed path: use fixed column indices (0=day, 1=month)
-            for row_idx, row in enumerate(rows[data_start:], start=data_start):
+            # IMPORTANT: Scan ALL rows (not just from data_start) because KV30 sheets
+            # may have summary/header rows interspersed. Let kv30_extract_master_date_key
+            # filter out non-data rows.
+            for row_idx, row in enumerate(rows):
                 dk = kv30_extract_master_date_key(row)
                 if dk:
                     date_groups.setdefault(dk, []).append(row_idx)
@@ -531,7 +538,15 @@ class DailyReportBuilder:
                     date_groups.setdefault(date_key, []).append(row_idx)
 
         if not date_groups:
-            # No date found — fall back to single date with all rows
+            if master_ws in {"BC NGÀY", "BC NGAY"} and is_kv30_config(master_cfg):
+                # KV30: no valid daily rows found (maybe only summary/header rows)
+                logger.warning(
+                    "KV30 BC NGAY: no valid daily date rows found after filtering. "
+                    "First 10 rows for diagnosis: %s",
+                    rows[:10],
+                )
+                return {}  # No date reports; service will return ok with empty jobs
+            # Generic mode: fall back to single date with all rows
             report = self.build()
             return {"": report}
 
@@ -572,7 +587,30 @@ class DailyReportBuilder:
                         only_date=date_key,
                     )
 
-            # 4c: Attach report_date to the output for ingestion service
+            # 4c: Apply KV30 business mapping if this is a KV30 report
+            if master_ws in {"BC NGÀY", "BC NGAY"} and is_kv30_config(master_cfg):
+                # Extract master data from phan_I_va_II section
+                master_data = date_report.phan_I_va_II_chi_tiet_nghiep_vu.model_dump() if date_report.phan_I_va_II_chi_tiet_nghiep_vu else {}
+
+                # Collect detail items
+                detail_items = {
+                    "danh_sach_chay": [item.model_dump() if hasattr(item, "model_dump") else item for item in date_report.danh_sach_chay],
+                    "danh_sach_cnch": [item.model_dump() if hasattr(item, "model_dump") else item for item in date_report.danh_sach_cnch],
+                    "danh_sach_chi_vien": [item.model_dump() if hasattr(item, "model_dump") else item for item in date_report.danh_sach_chi_vien],
+                    "danh_sach_sclq": [item.model_dump() if hasattr(item, "model_dump") else item for item in date_report.danh_sach_sclq],
+                }
+
+                # Build full STT 1-61 bang_thong_ke
+                defaults = {}  # TODO: load from config/template if needed
+                bang_thong_ke = build_kv30_bang_thong_ke(master_data, detail_items, defaults)
+                date_report.bang_thong_ke = bang_thong_ke
+
+                logger.info(
+                    "[KV30_BUSINESS] Applied business mapping for date=%s: bang_thong_ke_count=%d",
+                    date_key, len(bang_thong_ke),
+                )
+
+            # 4d: Attach report_date to the output for ingestion service
             date_report._report_date = date_key
             results[date_key] = date_report
 
@@ -1241,10 +1279,22 @@ class DailyReportBuilder:
             "unknown_target_section": 0,
         }
 
-        for row in rows[data_start:]:
+        logger.info(
+            "[KV30_DETAIL] Processing worksheet=%s only_date=%s total_rows=%d data_start=%d",
+            worksheet, only_date, len(rows), data_start,
+        )
+
+        # Preview first 5 data rows
+        for preview_idx in range(data_start, min(data_start + 5, len(rows))):
+            if preview_idx < len(rows):
+                logger.info("[KV30_DETAIL] worksheet=%s row[%d]=%s", worksheet, preview_idx, rows[preview_idx][:10])
+
+        for row_idx, row in enumerate(rows[data_start:], start=data_start):
             mapped = map_kv30_detail_row(worksheet, row)
             if mapped is None:
                 skip_reasons["mapping_empty"] += 1
+                if row_idx < data_start + 3:
+                    logger.info("[KV30_DETAIL] row_idx=%d mapped=None row_preview=%s", row_idx, row[:5])
                 continue
             target_section, item = mapped
 
@@ -1256,6 +1306,12 @@ class DailyReportBuilder:
                     continue
 
             report_date_key = get_kv30_item_report_date_key(worksheet, item)
+            if row_idx < data_start + 3:
+                logger.info(
+                    "[KV30_DETAIL] row_idx=%d target_section=%s report_date_key=%s only_date=%s item_preview=%s",
+                    row_idx, target_section, report_date_key, only_date, str(item)[:100],
+                )
+
             if only_date and report_date_key != only_date:
                 skip_reasons["date_mismatch"] += 1
                 continue
@@ -1263,10 +1319,16 @@ class DailyReportBuilder:
             target_list = getattr(report, target_section, None)
             if target_list is None:
                 skip_reasons["unknown_target_section"] += 1
+                logger.warning("[KV30_DETAIL] Unknown target_section=%s for worksheet=%s", target_section, worksheet)
                 continue
 
             rows_valid += 1
             target_list.append(item)
+
+        logger.info(
+            "[KV30_DETAIL] Finished worksheet=%s only_date=%s rows_valid=%d skip_reasons=%s",
+            worksheet, only_date, rows_valid, skip_reasons,
+        )
 
     def _merge_kv30_detail_item(
         self,

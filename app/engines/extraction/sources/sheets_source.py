@@ -67,6 +67,96 @@ class GoogleSheetsSource:
         http = httplib2.Http(timeout=float(timeout_seconds))
         return build("sheets", "v4", credentials=credentials, cache_discovery=False, http=http)
 
+    def list_worksheets(self, sheet_id: str, *, request_timeout_seconds: float = 30.0) -> list[str]:
+        """List worksheet titles in a spreadsheet."""
+        if not sheet_id.strip():
+            raise ProcessingError(message="sheet_id is required")
+
+        service = None
+        build_error: Exception | None = None
+        try:
+            service = self._build_service(timeout_seconds=request_timeout_seconds)
+        except ProcessingError as exc:
+            build_error = exc
+
+        if service is None:
+            if build_error:
+                raise build_error
+            raise ProcessingError(message="Failed to initialize Google Sheets client")
+
+        try:
+            response: dict[str, Any] = (
+                service.spreadsheets()
+                .get(spreadsheetId=sheet_id, fields="sheets.properties.title")
+                .execute()
+            )
+        except Exception as exc:
+            raise ProcessingError(message=f"Failed listing worksheets: {exc}") from exc
+
+        sheets = response.get("sheets") or []
+        titles: list[str] = []
+        for sheet in sheets:
+            properties = sheet.get("properties") or {}
+            title = properties.get("title")
+            if isinstance(title, str) and title.strip():
+                titles.append(title)
+        return titles
+
+    def get_worksheet_title_by_gid(self, sheet_id: str, gid: str | int, *, request_timeout_seconds: float = 30.0) -> str:
+        """Resolve a worksheet title from its GID (sheetId).
+
+        Args:
+            sheet_id: Spreadsheet ID
+            gid: Worksheet GID (as string or int)
+            request_timeout_seconds: Timeout for API call
+
+        Returns:
+            The worksheet title
+
+        Raises:
+            ProcessingError: If GID not found or API error
+        """
+        if not sheet_id.strip():
+            raise ProcessingError(message="sheet_id is required")
+        gid_str = str(gid).strip()
+        if not gid_str:
+            raise ProcessingError(message="gid is required")
+
+        service = None
+        build_error: Exception | None = None
+        try:
+            service = self._build_service(timeout_seconds=request_timeout_seconds)
+        except ProcessingError as exc:
+            build_error = exc
+
+        if service is None:
+            if build_error:
+                raise build_error
+            raise ProcessingError(message="Failed to initialize Google Sheets client")
+
+        try:
+            response: dict[str, Any] = (
+                service.spreadsheets()
+                .get(spreadsheetId=sheet_id, fields="sheets.properties")
+                .execute()
+            )
+        except Exception as exc:
+            raise ProcessingError(message=f"Failed to get spreadsheet metadata: {exc}") from exc
+
+        sheets = response.get("sheets") or []
+        for sheet in sheets:
+            props = sheet.get("properties") or {}
+            sheet_gid = str(props.get("sheetId", ""))
+            title = props.get("title")
+            if sheet_gid == gid_str and isinstance(title, str) and title.strip():
+                return title.strip()
+
+        raise ProcessingError(
+            message=f"WORKSHEET_GID_NOT_FOUND: GID '{gid}' not found in spreadsheet '{sheet_id}'. "
+                    f"Available GIDs: {[str(s.get('properties', {}).get('sheetId')) for s in sheets]}"
+        )
+
+
     def fetch_values(self, cfg: SheetsFetchConfig) -> list[list[str]]:
         """Fetch values from worksheet, retrying transient API failures."""
         if not cfg.sheet_id.strip():

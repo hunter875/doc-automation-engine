@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { RefreshCw, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -133,8 +134,10 @@ export function ReviewTab({ templates, jobs, onRefreshJobs, loadingJobs }: Revie
   jobs.forEach((j) => { sc[j.status] = (sc[j.status] ?? 0) + 1; });
   const processing = (sc.processing ?? 0) + (sc.pending ?? 0) + (sc.enriching ?? 0) + (sc.extracted ?? 0);
 
+  const reviewableJobs = jobs.filter((j) => j.parser_used !== "google_sheets");
+
   // Filter
-  const filtered = jobs.filter((j) => {
+  const filtered = reviewableJobs.filter((j) => {
     if (statusFilter === "ready_for_review" && j.status !== "ready_for_review") return false;
     if (statusFilter === "approved" && j.status !== "approved") return false;
     if (statusFilter === "failed" && !["failed", "rejected"].includes(j.status)) return false;
@@ -350,10 +353,20 @@ export function ReviewTab({ templates, jobs, onRefreshJobs, loadingJobs }: Revie
         </Button>
       </div>
 
-      {jobs.length > 0 && (
+      <Alert>
+        <AlertDescription>
+          Báo cáo ngày từ Google Sheet được duyệt/chốt tại mục{" "}
+          <Link href="/reports/daily" className="underline font-semibold">
+            Báo cáo ngày
+          </Link>
+          . Tab này chỉ hiển thị hồ sơ trích xuất từ PDF.
+        </AlertDescription>
+      </Alert>
+
+      {reviewableJobs.length > 0 && (
         <div className="grid grid-cols-5 gap-3">
           {[
-            { label: "Tổng hồ sơ", val: jobs.length },
+            { label: "Tổng hồ sơ", val: reviewableJobs.length },
             { label: "Sẵn sàng duyệt", val: sc.ready_for_review ?? 0 },
             { label: "Đã duyệt", val: sc.approved ?? 0 },
             { label: "Đang xử lý", val: processing },

@@ -656,3 +656,244 @@ class TestSCLQBuilder:
         assert item.ngay == "10/04/2026"
         assert item.dia_diem == "Khu vực cầu Rạch Chiến"
         assert item.nguyen_nhan == "Chập điện"
+
+
+class TestKV30SummaryRowHandling:
+    """Test that KV30 mapper skips summary/header rows like '06 thang dau nam'."""
+
+    def test_kv30_extract_master_date_key_skips_summary_row(self):
+        """Summary row '06 thang dau nam' should return None."""
+        from app.engines.extraction.kv30_fixed_mapping import kv30_extract_master_date_key
+
+        # Summary row from real sheet
+        row = ["06 thang dau nam", "", "6.0", "0.0", "1.0", "2.0"]
+        assert kv30_extract_master_date_key(row) is None
+
+    def test_kv30_extract_master_date_key_skips_total_row(self):
+        """Total row 'tong' should return None."""
+        from app.engines.extraction.kv30_fixed_mapping import kv30_extract_master_date_key
+
+        row = ["tong", "", "100.0", "50.0"]
+        assert kv30_extract_master_date_key(row) is None
+
+    def test_kv30_extract_master_date_key_parses_numeric_day_month(self):
+        """Numeric day/month should parse correctly."""
+        from app.engines.extraction.kv30_fixed_mapping import kv30_extract_master_date_key
+
+        row = [25.0, 3.0, "1.0", "0.0"]
+        assert kv30_extract_master_date_key(row) == "25/03"
+
+    def test_kv30_extract_master_date_key_parses_string_day_month(self):
+        """String day/month should parse correctly."""
+        from app.engines.extraction.kv30_fixed_mapping import kv30_extract_master_date_key
+
+        row = ["25", "3", "1.0", "0.0"]
+        assert kv30_extract_master_date_key(row) == "25/03"
+
+    def test_kv30_extract_master_date_key_parses_decimal_string_day_month(self):
+        """Decimal string day/month like '1.0', '3.0' should parse correctly."""
+        from app.engines.extraction.kv30_fixed_mapping import kv30_extract_master_date_key
+
+        row = ["1.0", "3.0", "1.0", "0.0"]
+        assert kv30_extract_master_date_key(row) == "01/03"
+
+    def test_build_all_by_date_ignores_summary_row_before_real_rows(self):
+        """build_all_by_date should skip summary row and process real date rows."""
+        from app.engines.extraction.kv30_fixed_mapping import kv30_extract_master_date_key
+
+        # Sheet with summary row at top, then real data rows
+        rows = [
+            ["06 thang dau nam", "", "6.0", "0.0"],  # summary row → skip
+            [25.0, 3.0, 1.0, 0.0, 0.0, 0.0],  # real date row
+            [31.0, 3.0, 0.0, 0.0, 1.0, 0.0],  # real date row
+        ]
+
+        date_groups = {}
+        for row_idx, row in enumerate(rows):
+            dk = kv30_extract_master_date_key(row)
+            if dk:
+                date_groups.setdefault(dk, []).append(row_idx)
+
+        assert "25/03" in date_groups
+        assert "31/03" in date_groups
+        assert "" not in date_groups  # no empty key
+
+    def test_build_all_by_date_returns_empty_when_only_summary_rows(self):
+        """If sheet contains only summary rows, build_all_by_date should return empty dict."""
+        # Sheet with only summary rows
+        sheet_data = {
+            "BC NGAY": [
+                ["06 thang dau nam", "", "6.0", "0.0"],
+                ["tong", "", "100.0", "50.0"],
+            ],
+        }
+
+        configs = [
+            {"worksheet": "BC NGAY", "schema_path": "bc_ngay_kv30_schema.yaml", "range": "A1:ZZZ", "header_row": 0, "data_start_row": 1, "role": "master", "target_section": None},
+        ]
+
+        builder = DailyReportBuilder(
+            template=FakeTemplate(),
+            sheet_data=sheet_data,
+            worksheet_configs=configs,
+        )
+
+        result = builder.build_all_by_date()
+        assert result == {}
+
+
+
+# ─────────────────────────────────────────────────────────────────
+# Google Sheets Date normalization regression tests
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestNormalizeDateGoogleSheetsFormat:
+    """Test _normalize_date handles Google Sheets Date(...) format."""
+
+    def test_normalize_date_parses_google_sheets_date_with_january(self):
+        """Date(2026,0,31) should parse to 31/01/2026 (month 0 = January)."""
+        from app.engines.extraction.kv30_fixed_mapping import _normalize_date
+
+        assert _normalize_date("Date(2026,0,31)") == "31/01/2026"
+
+    def test_normalize_date_parses_google_sheets_date_with_march(self):
+        """Date(2026,2,21) should parse to 21/03/2026 (month 2 = March)."""
+        from app.engines.extraction.kv30_fixed_mapping import _normalize_date
+
+        assert _normalize_date("Date(2026,2,21)") == "21/03/2026"
+
+    def test_normalize_date_parses_google_sheets_date_with_april(self):
+        """Date(2026,3,10) should parse to 10/04/2026 (month 3 = April)."""
+        from app.engines.extraction.kv30_fixed_mapping import _normalize_date
+
+        assert _normalize_date("Date(2026,3,10)") == "10/04/2026"
+
+    def test_normalize_date_preserves_dd_mm_yyyy(self):
+        """DD/MM/YYYY strings should be preserved."""
+        from app.engines.extraction.kv30_fixed_mapping import _normalize_date
+
+        assert _normalize_date("10/04/2026") == "10/04/2026"
+
+    def test_normalize_date_preserves_dd_mm(self):
+        """DD/MM strings should be preserved."""
+        from app.engines.extraction.kv30_fixed_mapping import _normalize_date
+
+        assert _normalize_date("10/04") == "10/04"
+
+    def test_normalize_date_returns_empty_for_blank(self):
+        """Blank or None values should return empty string."""
+        from app.engines.extraction.kv30_fixed_mapping import _normalize_date
+
+        assert _normalize_date(None) == ""
+        assert _normalize_date("") == ""
+        assert _normalize_date("   ") == ""
+
+
+class TestKV30DetailMapperWithGoogleSheetsDate:
+    """Test KV30 detail mappers correctly handle Google Sheets Date format and route to correct report dates."""
+
+    def test_cnch_row_with_google_sheets_date_maps_to_april_10_report(self):
+        """CNCH row with Date(2026,3,9) + time should route to report 10/04 via 07:30 cutoff."""
+        from app.engines.extraction.kv30_fixed_mapping import map_kv30_cnch_row, _compute_report_date
+
+        # CNCH row: Date(2026,3,9) = April 9, 2026 + "22:36" (>= 07:30) → report date = 10/04/2026
+        row = [
+            9.0,  # STT
+            "Date(2026,3,9)",  # NGÀY (column 2)
+            "22:36",  # THỜI GIAN (column 3) - already normalized HH:MM
+            "Nhảy sông",  # ĐỊA ĐIỂM
+            "",  # CHỈ HUY (would be at col 6)
+            "",  # other fields...
+        ]
+        # Pad row to required length
+        while len(row) < 9:
+            row.append("")
+
+        item = map_kv30_cnch_row(row)
+        assert item is not None
+        assert item.ngay_xay_ra == "09/04/2026"
+        assert item.thoi_gian == "09/04/2026 22:36"
+
+        # Verify report date computation
+        report_key = _compute_report_date(item.ngay_xay_ra, item.thoi_gian.split()[-1] if " " in item.thoi_gian else "")
+        assert report_key == "10/04"
+
+    def test_chi_vien_row_with_google_sheets_date_maps_to_april_10_report(self):
+        """CHI VIỆN row with Date(2026,3,9) + time should route to report 10/04."""
+        from app.engines.extraction.kv30_fixed_mapping import map_kv30_chi_vien_row, _compute_report_date
+
+        row = [
+            6.0,  # STT
+            "Date(2026,3,9)",  # NGÀY (column 1)
+            "vụ cháy...",  # ĐỊA ĐIỂM
+            "Đội CC&CNCH KV31",  # KHU VỰC
+            2.0,  # SỐ LƯỢNG XE
+            "20:29",  # THỜI GIAN ĐI (column 5)
+            "",  # THỜI GIAN VỀ
+            "Thiếu tá Lê Minh Thành",  # CHỈ HUY
+            "",  # GHI CHÚ
+        ]
+
+        item = map_kv30_chi_vien_row(row)
+        assert item is not None
+        assert item.ngay == "09/04/2026"
+        assert item.thoi_gian_di == "20:29"
+
+        # CHI VIỆN uses thoi_gian_di as event time
+        report_key = _compute_report_date(item.ngay, item.thoi_gian_di)
+        assert report_key == "10/04"
+
+    def test_sclq_row_with_google_sheets_date_maps_to_march_31_report(self):
+        """SCLQ row with Date(2026,2,31) (March 31) with no time should report same date."""
+        from app.engines.extraction.kv30_fixed_mapping import map_kv30_sclq_row, _compute_report_date
+
+        row = [
+            57.0,  # STT
+            "Date(2026,2,31)",  # NGÀY (column 1)
+            "đường Hưng Định...",  # ĐỊA ĐIỂM
+            "Cháy cỏ",  # NGUYÊN NHÂN
+            "Không",  # THIỆT HẠI
+            "Đại úy Nguyễn Nguyên Anh",  # CHỈ HUY
+            "",  # GHI CHÚ
+        ]
+
+        item, _ = map_kv30_sclq_row(row, None)
+        assert item is not None
+        assert item.ngay == "31/03/2026"
+        assert item.thiet_hai == "Không"
+
+        # SCLQ has no time → report date = event date
+        report_key = _compute_report_date(item.ngay, "")
+        assert report_key == "31/03"
+
+    def test_vu_chay_row_with_google_sheets_date_maps_correctly(self):
+        """VỤ CHÁY row with Date(2026,3,9) + time should route to report 10/04."""
+        from app.engines.extraction.kv30_fixed_mapping import map_kv30_vu_chay_row, _compute_report_date
+
+        row = [
+            2.0,  # STT
+            "Date(2026,3,9)",  # NGÀY (column 1)
+            "Cháy phòng kỹ thuật",  # TÊN VỤ CHÁY
+            "22:36",  # THỜI GIAN (column 3)
+            "phường Bình Hoà",  # ĐỊA ĐIỂM
+            "",  # PHÂN LOẠI
+            "",  # NGUYÊN NHÂN
+            "",  # THIỆT HẠI VỀ NGƯỜI
+            "",  # THIỆT HẠI TÀI SẢN
+            "",  # TÀI SẢN CỨU
+            "",  # THỜI GIAN TỚI
+            "",  # THỜI GIAN KHỐNG CHẾ
+            "",  # THỜI GIAN DẬP TẮT
+            0.0,  # SỐ LƯỢNG XE
+            "",  # CHỈ HUY
+            "",  # GHI CHÚ
+        ]
+
+        item = map_kv30_vu_chay_row(row)
+        assert item is not None
+        assert item.ngay_xay_ra == "09/04/2026"
+        assert item.thoi_gian == "22:36"
+
+        report_key = _compute_report_date(item.ngay_xay_ra, item.thoi_gian)
+        assert report_key == "10/04"

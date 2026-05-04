@@ -501,6 +501,7 @@ class GoogleSheetIngestionRequest(BaseModel):
     template_id: uuid.UUID
     sheet_id: Optional[str] = Field(None, min_length=1, max_length=200, description="Google Sheet ID or URL. Overrides template's google_sheet_id if provided.")
     worksheet: Optional[str] = Field(None, min_length=1, max_length=200, description="Worksheet name. Used only in single-config mode (legacy).")
+    worksheet_gid: Optional[str] = Field(None, min_length=1, max_length=50, description="Google Sheet worksheet GID (numeric or alphanumeric). If provided, overrides worksheet name by looking up the actual sheet title from the spreadsheet metadata.")
     schema_path: Optional[str] = Field(None, min_length=1, max_length=500, description="Path to YAML schema. Used only in single-config mode (legacy).")
     source_document_id: Optional[uuid.UUID] = None
     range_a1: Optional[str] = Field(None, max_length=200, description="A1 notation range. Used only in single-config mode (legacy).")
@@ -508,6 +509,7 @@ class GoogleSheetIngestionRequest(BaseModel):
         None,
         description="List of worksheet configurations. If provided, overrides single-field configs and template's google_sheet_configs. Enables multi-worksheet ingestion from one Sheet ID."
     )
+    mode: Optional[str] = Field("generic", description="Ingestion mode: 'kv30' (hardcoded KV30 daily report) or 'generic' (requires worksheet/schema config).")
 
 
 class IngestionRowError(BaseModel):
@@ -549,6 +551,15 @@ class GoogleSheetIngestionSummary(BaseModel):
     rows_valid: Optional[int] = None
     validation_summary: Optional[dict[str, Any]] = None
     ingestion_mode: Optional[str] = Field(None, description="'row' or 'snapshot'")
+    error: Optional[str] = Field(None, description="Error message if status is 'error'")
+    resolver_debug: Optional[dict[str, Any]] = Field(None, description="Worksheet resolver debug info")
+
+    # KV30 daily report snapshot summary (date-level aggregation)
+    dates_created: Optional[int] = Field(None, description="Number of new date reports created")
+    dates_duplicate: Optional[int] = Field(None, description="Number of duplicate date reports skipped")
+    dates_skipped_no_data: Optional[int] = Field(None, description="Number of dates skipped due to no meaningful data")
+    dates: Optional[list[str]] = Field(None, description="List of date keys processed (YYYY-MM-DD)")
+    jobs: Optional[list[dict]] = Field(None, description="List of job creation results per date")
 
 
 class GoogleSheetIngestionEnqueueResponse(BaseModel):

@@ -108,14 +108,21 @@ class GoogleSheetIngestionService:
                 req.template_id, tenant_id=req.tenant_id
             )
 
-            if not template.google_sheet_configs or not isinstance(template.google_sheet_configs, list):
+            # Resolve worksheet configs: prioritize request-provided configs (KV30 mode),
+            # otherwise fall back to template's google_sheet_configs
+            worksheet_configs: list[dict] = []
+            if req.configs:
+                worksheet_configs = req.configs
+            elif template.google_sheet_configs and isinstance(template.google_sheet_configs, list):
+                worksheet_configs = template.google_sheet_configs
+            else:
                 raise ProcessingError(
-                    "Template must have google_sheet_configs list for snapshot ingestion"
+                    "Template must have google_sheet_configs list for snapshot ingestion, or provide configs in request"
                 )
 
             # Validate all schema files exist BEFORE fetching sheet data (fail fast)
             from app.engines.extraction.mapping.schema_loader import load_schema
-            for cfg in template.google_sheet_configs:
+            for cfg in worksheet_configs:
                 schema_path = cfg.get("schema_path")
                 if not schema_path:
                     continue
@@ -130,10 +137,34 @@ class GoogleSheetIngestionService:
                     ) from e
 
             # Fetch all worksheets in parallel
+            from app.engines.extraction.sources.sheets_source import (
+                GoogleSheetsSource,
+                SheetsFetchConfig,
+            )
+
             source = GoogleSheetsSource()
+
+            # List all available worksheets for discovery
+            all_worksheet_names: list[str] = []
+            try:
+                all_worksheet_names = await asyncio.to_thread(
+                    source.list_worksheets,
+                    req.sheet_id,
+                )
+                logger.info(
+                    "[Ingestion] Discovered worksheets in sheet_id=%s: %s",
+                    req.sheet_id,
+                    all_worksheet_names,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[Ingestion] Failed to list worksheets (will use config only): %s",
+                    e,
+                )
+
             worksheet_data: dict[str, list[list[str]]] = {}
             fetch_tasks = []
-            for cfg in template.google_sheet_configs:
+            for cfg in worksheet_configs:
                 worksheet = cfg.get("worksheet")
                 if not worksheet:
                     continue
@@ -156,25 +187,82 @@ class GoogleSheetIngestionService:
                 rows = await fetch_task
                 worksheet_data[worksheet] = rows
 
-            # Build per-date reports
-            builder = DailyReportBuilder(
-                template=template,
-                sheet_data=worksheet_data,
-                worksheet_configs=template.google_sheet_configs,
+            # Log fetched worksheets for debugging
+            logger.info(
+                "[Ingestion] Fetched worksheets from sheet_id=%s: %s",
+                req.sheet_id,
+                {ws: len(rows) for ws, rows in worksheet_data.items()},
             )
 
+            # Build per-date reports
+            resolver_debug = None
             try:
+                # For KV30 mode: auto-resolve the correct master worksheet
+                is_kv30_mode = any("kv30" in cfg.get("schema_path", "").lower() for cfg in worksheet_configs)
+                if is_kv30_mode:
+                    from app.engines.extraction.worksheet_resolver import resolve_daily_worksheet, DAILY_RESOLVER_VERSION
+
+                    logger.info(
+                        "[Ingestion] KV30 mode detected. DAILY_RESOLVER_VERSION=%s | Invoking worksheet resolver...",
+                        DAILY_RESOLVER_VERSION,
+                    )
+
+                    master_cfg_original = worksheet_configs[0]  # first config is master
+                    master_ws_original = master_cfg_original["worksheet"]
+
+                    try:
+                        resolved_ws, resolver_debug = resolve_daily_worksheet(
+                            preferred_worksheet=master_ws_original,
+                            worksheet_data=worksheet_data,
+                            all_worksheet_names=all_worksheet_names,
+                        )
+                        if resolved_ws != master_ws_original:
+                            logger.warning(
+                                "[Ingestion] ⚠️ Auto-resolved master worksheet from '%s' to '%s' | resolver_debug=%s",
+                                master_ws_original,
+                                resolved_ws,
+                                resolver_debug,
+                            )
+                            # Update config with resolved worksheet
+                            worksheet_configs = [dict(cfg) for cfg in worksheet_configs]
+                            worksheet_configs[0]["worksheet"] = resolved_ws
+                        else:
+                            logger.info(
+                                "[Ingestion] ✅ Using preferred worksheet '%s' (no fallback needed)",
+                                master_ws_original,
+                            )
+                    except ValueError as e:
+                        # No valid worksheet found
+                        logger.error(
+                            "[Ingestion] ❌ Resolver failed to find valid worksheet: %s",
+                            e,
+                        )
+                        raise ProcessingError(message=str(e)) from e
+
+                builder = DailyReportBuilder(
+                    template=template,
+                    sheet_data=worksheet_data,
+                    worksheet_configs=worksheet_configs,
+                )
                 date_reports = builder.build_all_by_date()
-            except ProcessingError:
-                return {
+            except ProcessingError as e:
+                logger.error(
+                    "[Ingestion] DailyReportBuilder.build_all_by_date failed: %s",
+                    e,
+                    exc_info=True,
+                )
+                error_response = {
                     "status": "error",
                     "sheet_id": req.sheet_id,
-                    "error": "Failed to build date reports",
+                    "error": f"Failed to build date reports: {e}",
                     "rows_processed": 0,
                     "rows_inserted": 0,
                     "metrics": {**metrics.to_dict(), "ingestion_run_id": ingestion_run_id},
                     "ingestion_mode": "snapshot",
                 }
+                if resolver_debug:
+                    error_response["resolver_debug"] = resolver_debug
+                return error_response
 
             if not date_reports:
                 return {
@@ -182,6 +270,11 @@ class GoogleSheetIngestionService:
                     "sheet_id": req.sheet_id,
                     "jobs": [],
                     "dates": [],
+                    "dates_created": 0,
+                    "dates_duplicate": 0,
+                    "dates_skipped_no_data": 0,
+                    "rows_processed": 0,
+                    "rows_failed": 0,
                     "rows_inserted": 0,
                     "message": "No date groups found in sheet",
                     "metrics": {**metrics.to_dict(), "ingestion_run_id": ingestion_run_id},
@@ -272,7 +365,7 @@ class GoogleSheetIngestionService:
                     "date_key": date_key,
                     "data": final_json,
                     "debug": {
-                        "schema_paths": [cfg.get("schema_path") for cfg in template.google_sheet_configs if cfg.get("schema_path")],
+                        "schema_paths": [cfg.get("schema_path") for cfg in worksheet_configs if cfg.get("schema_path")],
                         "worksheet_summaries": builder.get_validation_summary(),
                         "ingestion_run_id": ingestion_run_id,
                     },
@@ -313,9 +406,6 @@ class GoogleSheetIngestionService:
                 "dates_created": sum(1 for j in jobs_created if j["status"] == "created"),
                 "dates_duplicate": sum(1 for j in jobs_created if j["status"] == "duplicate"),
                 "dates_skipped_no_data": sum(1 for j in jobs_created if j["status"] == "skipped_no_data"),
-                "rows_processed": total_rows_inserted,
-                "rows_failed": 0,
-                "rows_inserted": total_rows_inserted,
                 "metrics": {
                     **metrics.to_dict(),
                     "ingestion_run_id": ingestion_run_id,

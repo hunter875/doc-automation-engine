@@ -11,6 +11,7 @@ import {
   Building2,
   ChevronDown,
   Plus,
+  Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ import { toast } from "sonner";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/reports/daily", label: "Báo cáo ngày", icon: Calendar },
   { href: "/extraction", label: "Trích xuất dữ liệu", icon: Settings2 },
   { href: "/documents", label: "Tài liệu", icon: FileText },
 ];

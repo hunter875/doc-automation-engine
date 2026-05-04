@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { RefreshCw, Download, Trash2, FileSpreadsheet, FileText, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -284,9 +285,21 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
 
   return (
     <div className="space-y-6">
+      {/* Info banner */}
+      <Alert>
+        <AlertDescription>
+          <strong>Lưu ý:</strong> Tab này dùng để tạo báo cáo tổng hợp tuần/tháng từ các hồ sơ đã duyệt.
+          Để đồng bộ báo cáo ngày từ Google Sheet KV30, vui lòng vào{" "}
+          <Link href="/reports/daily" className="underline font-semibold">
+            Báo cáo ngày
+          </Link>
+          .
+        </AlertDescription>
+      </Alert>
+
       {/* Section 1 — Create (two modes: by template / by calendar) */}
       <div>
-        <h3 className="font-semibold text-base mb-3">1️⃣ Tạo báo cáo mới</h3>
+        <h3 className="font-semibold text-base mb-3">1️⃣ Tổng hợp tuần/tháng</h3>
         {approvedJobs.length === 0 ? (
           <Alert variant="warning">
             <AlertDescription>

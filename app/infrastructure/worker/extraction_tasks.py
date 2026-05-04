@@ -282,15 +282,27 @@ def ingest_google_sheet_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = asyncio.run(service.ingest(request))
 
         # Enqueue extraction task for each created job (snapshot mode may create multiple)
-        if result.get("jobs"):
-            for job_info in result["jobs"]:
+        jobs = result.get("jobs", [])
+        if isinstance(jobs, list) and len(jobs) > 0:
+            # Snapshot or row-level multi-job response
+            for job_info in jobs:
+                # Only enqueue extraction if job needs it (status="created" and not already extracted)
                 if job_info.get("status") == "created":
-                    extract_document_task.delay(job_info["job_id"])
-                    logger.info(f"[Ingestion] Enqueued extraction for job {job_info['job_id']}")
-        else:
-            # Legacy single job response
+                    # KV30 snapshot jobs are created with extracted_data already populated (state=extracted)
+                    # Skip extraction task for those
+                    job_state = job_info.get("state")
+                    if job_state == "extracted":
+                        logger.info(f"[Ingestion] Job {job_info['job_id']} already extracted, skipping extraction task")
+                    else:
+                        extract_document_task.delay(job_info["job_id"])
+                        logger.info(f"[Ingestion] Enqueued extraction for job {job_info['job_id']}")
+        elif "job_id" in result:
+            # Legacy single-job response
             extract_document_task.delay(result["job_id"])
             logger.info(f"[Ingestion] Enqueued extraction for job {result['job_id']}")
+        else:
+            # No jobs to extract — this is valid (e.g., all duplicates or no data)
+            logger.info(f"[Ingestion] No extraction jobs to enqueue for sheet_id={payload.get('sheet_id')}")
 
         logger.info(f"[Ingestion] Completed ingestion: sheet_id={payload.get('sheet_id')}")
 
@@ -300,7 +312,28 @@ def ingest_google_sheet_task(self, payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         import traceback
         logger.error(f"[Ingestion] Failed: {e}\n{traceback.format_exc()}")
-        raise
+
+        # Return structured error so frontend shows a meaningful message instead of raw Celery exception
+        error_message = str(e)
+        if hasattr(e, "errors") and callable(e.errors):
+            try:
+                details = e.errors()
+                if details and isinstance(details, list):
+                    first = details[0]
+                    if isinstance(first, dict):
+                        error_message = first.get("msg") or str(e)
+            except Exception:
+                pass
+
+        return {
+            "status": "error",
+            "sheet_id": payload.get("sheet_id", ""),
+            "error": error_message,
+            "rows_processed": 0,
+            "rows_inserted": 0,
+            "metrics": {},
+            "ingestion_mode": "snapshot",
+        }
 
     finally:
         db.close()

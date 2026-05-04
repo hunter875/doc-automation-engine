@@ -91,7 +91,7 @@ function ExtractionContent() {
     );
   }
 
-  const validTabs = ["templates", "jobs", "review", "inspect", "export"];
+  const validTabs = ["templates", "jobs", "review", "export"];
   const initialTab = validTabs.includes(defaultTab) ? defaultTab : "templates";
 
   return (
@@ -101,12 +101,11 @@ function ExtractionContent() {
       <PipelineIndicator currentTab={initialTab} />
 
       <Tabs defaultValue={initialTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-3xl">
+        <TabsList className="grid grid-cols-4 w-full max-w-3xl">
           <TabsTrigger value="templates">⚙️ Mẫu</TabsTrigger>
           <TabsTrigger value="jobs">📤 Hồ sơ</TabsTrigger>
           <TabsTrigger value="review">🔍 Duyệt</TabsTrigger>
-          <TabsTrigger value="inspect">📋 Kiểm tra</TabsTrigger>
-          <TabsTrigger value="export">📊 Báo cáo</TabsTrigger>
+          <TabsTrigger value="export">📊 Tổng hợp tuần/tháng</TabsTrigger>
         </TabsList>
 
         <TabsContent value="templates" className="mt-4">
@@ -137,10 +136,6 @@ function ExtractionContent() {
 
         <TabsContent value="export" className="mt-4">
           <ExportTab templates={templates} jobs={jobs} onRefreshJobs={fetchJobs} />
-        </TabsContent>
-
-        <TabsContent value="inspect" className="mt-4">
-          <SheetInspector month={new Date().getMonth() + 1} year={new Date().getFullYear()} />
         </TabsContent>
       </Tabs>
     </div>

@@ -373,7 +373,7 @@ def test_calendar_marks_manual_edit(
 
     assert day2 is not None
     assert day2["has_manual_edits"] is False
-    assert day2["review_status"] == "no_edit"
+    assert day2["review_status"] == "auto_synced"
     assert day2["source_displayed_by_default"] == "auto_sync"
 
 

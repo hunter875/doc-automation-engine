@@ -425,53 +425,95 @@ class CalendarService:
         return {"dates_with_reports": merged}
 
     def get_calendar_dates_with_metadata(self, tenant_id: str) -> dict[str, Any]:
-        """Calendar with manual edit metadata per date."""
+        """Calendar with manual edit and review metadata per date.
+
+        For daily reports from Google Sheets, includes all dates with extracted jobs,
+        even if not yet reviewed/approved.
+        """
         from app.domain.models.daily_report_edit import DailyReportEdit
+        from app.domain.models.daily_report_review import DailyReportReview
         from app.domain.models.extraction_job import ExtractionJob
 
-        daily_dates = self.repository.list_daily_report_dates(tenant_id)
+        # Get weekly report dates (unchanged)
         weekly_starts = self.repository.list_weekly_report_starts(tenant_id)
 
-        # Query latest snapshot jobs for metadata
-        jobs = (
+        # For daily reports, we want to include ALL google_sheets snapshots,
+        # regardless of review status. So query directly instead of using
+        # list_daily_report_dates which filters by reportable statuses.
+        # Exclude failed/pending/processing jobs - only show successfully extracted data.
+        from sqlalchemy import not_
+        google_sheet_jobs = (
             self.db.query(ExtractionJob)
             .filter(
                 ExtractionJob.tenant_id == tenant_id,
                 ExtractionJob.parser_used == "google_sheets",
-                ExtractionJob.sheet_revision_hash.is_not(None),
+                ExtractionJob.report_date.is_not(None),
+                not_(ExtractionJob.status.in_(["pending", "processing", "failed"])),
             )
-            .order_by(ExtractionJob.report_date, ExtractionJob.report_version.desc())
             .all()
         )
 
-        # Build latest job per date
+        # Extract unique dates from these jobs
+        daily_dates: set[date] = {job.report_date for job in google_sheet_jobs if job.report_date}
+
+        # Build latest job per date (by version desc, then created_at desc)
         latest_job: dict[date, ExtractionJob] = {}
-        for job in jobs:
+        for job in google_sheet_jobs:
             d = job.report_date
+            if d is None:
+                continue
             if d not in latest_job:
                 latest_job[d] = job
+            else:
+                # Compare version then created_at
+                current = latest_job[d]
+                if (job.report_version or 0) > (current.report_version or 0):
+                    latest_job[d] = job
+                elif (job.report_version or 0) == (current.report_version or 0) and job.created_at > current.created_at:
+                    latest_job[d] = job
 
-        # Query all manual edits for this tenant
+        # Latest manual edit per date (unchanged)
         edits = (
             self.db.query(DailyReportEdit.report_date, DailyReportEdit.id)
             .filter(DailyReportEdit.tenant_id == tenant_id)
             .order_by(DailyReportEdit.report_date, DailyReportEdit.created_at.desc())
             .all()
         )
+        latest_edit_id: dict[date, str] = {}
+        for rd, eid in edits:
+            if rd not in latest_edit_id:
+                latest_edit_id[rd] = str(eid)
 
-        # Build set of dates with manual edits (latest edit per date)
-        edited_dates: dict[date, str] = {}
-        for report_date, edit_id in edits:
-            if report_date not in edited_dates:
-                edited_dates[report_date] = str(edit_id)
+        # Latest review per date (unchanged)
+        reviews = (
+            self.db.query(
+                DailyReportReview.report_date,
+                DailyReportReview.status,
+                DailyReportReview.approved_source,
+                DailyReportReview.id,
+            )
+            .filter(DailyReportReview.tenant_id == tenant_id)
+            .order_by(DailyReportReview.report_date, DailyReportReview.created_at.desc())
+            .all()
+        )
+        latest_review: dict[date, dict] = {}
+        for rd, status, approved_source, rid in reviews:
+            if rd not in latest_review:
+                latest_review[rd] = {
+                    "status": status,
+                    "approved_source": approved_source,
+                    "id": str(rid),
+                }
 
-        # Build calendar days
+        # Build days list from union of daily dates and weekly starts
         all_dates = sorted(daily_dates.union(weekly_starts))
         days = []
         for d in all_dates:
             job = latest_job.get(d)
-            has_edit = d in edited_dates
-            day_info = {
+            has_edit = d in latest_edit_id
+            review = latest_review.get(d)
+
+            day_info: dict[str, Any] = {
                 "date": d.isoformat(),
                 "has_data": True,
             }
@@ -482,19 +524,39 @@ class CalendarService:
                 day_info["validation_status"] = "ok"
                 day_info["warning_count"] = 0
                 day_info["error_count"] = 0
+
+            day_info["has_manual_edits"] = has_edit
             if has_edit:
-                day_info["has_manual_edits"] = True
-                day_info["manual_edit_id"] = edited_dates[d]
+                day_info["manual_edit_id"] = latest_edit_id[d]
+
+            # Determine review state
+            if review:
+                status = review["status"]
+                day_info["review_status"] = status
+                if status == "finalized":
+                    day_info["is_finalized"] = True
+                    day_info["source_displayed_by_default"] = review.get("approved_source") or "auto_sync"
+                    day_info["approved_source"] = review.get("approved_source")
+                elif status == "approved":
+                    day_info["source_displayed_by_default"] = review.get("approved_source") or "auto_sync"
+                    day_info["approved_source"] = review.get("approved_source")
+                elif status == "conflict_detected":
+                    day_info["has_conflict"] = True
+                    day_info["source_displayed_by_default"] = review.get("approved_source") or "auto_sync"
+                    day_info["approved_source"] = review.get("approved_source")
+            elif has_edit:
                 day_info["review_status"] = "manual_edited"
                 day_info["source_displayed_by_default"] = "manual_edit"
-            else:
-                day_info["has_manual_edits"] = False
-                day_info["review_status"] = "no_edit"
+            elif job:
+                day_info["review_status"] = "auto_synced"
                 day_info["source_displayed_by_default"] = "auto_sync"
 
             days.append(day_info)
 
-        return {"days": days}
+        return {
+            "dates_with_reports": [d.isoformat() for d in all_dates],
+            "days": days,
+        }
 
 
 class WeeklyReportAggregator:

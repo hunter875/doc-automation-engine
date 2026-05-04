@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Plus, RefreshCw, Trash2, Paperclip, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,16 +15,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
 import { formatDate, cn } from "@/lib/utils";
-import type { Template, TemplateField, ScanWordResult, GoogleSheetWorksheetConfig } from "@/lib/types";
+import type { Template, TemplateField, ScanWordResult } from "@/lib/types";
 import { toast } from "sonner";
 
 const FIELD_TYPES = ["string", "number", "boolean", "array"];
 const AGG_METHODS = ["", "SUM", "AVG", "MAX", "MIN", "COUNT", "CONCAT", "LAST"];
 const NO_AGG_VALUE = "__none";
-const DEFAULT_GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1vfWhL4ZFRiwlrhjEAlCemE9sPlNHvuxFiT_1hA5NDYI/edit?usp=sharing";
 
 interface TemplatesTabProps {
   templates: Template[];
@@ -62,31 +61,13 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
   const [templateName, setTemplateName] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Google Sheets config
-  const [gsheetId, setGsheetId] = useState(DEFAULT_GOOGLE_SHEET_URL);
-  const [aggregationGroup, setAggregationGroup] = useState("");
-  // Multi-worksheet configs (new approach)
-  const [worksheetConfigs, setWorksheetConfigs] = useState<GoogleSheetWorksheetConfig[]>([]);
-  // Quick-add inputs
-  const [newWsName, setNewWsName] = useState("");
-  const [newSchemaPath, setNewSchemaPath] = useState("");
-  const [newRange, setNewRange] = useState("A1:ZZZ");
-
-  // Ingest state for templates list
-  const [ingestingTplId, setIngestingTplId] = useState<string | null>(null);
-  const [ingestProgress, setIngestProgress] = useState<Record<string, string>>({});
-
   // Attach word dialog
   const [attachTarget, setAttachTarget] = useState<Template | null>(null);
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const [attaching, setAttaching] = useState(false);
 
-  // Schema YAML upload for worksheet configs
-  const [uploadingSchemaIdx, setUploadingSchemaIdx] = useState<number | null>(null);
-  const schemaFileInputRef = useRef<HTMLInputElement>(null);
-
-  // Wizard step: 1=scan, 2=fields, 3=sheets, 4=review
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
+  // Wizard step: 1=scan, 2=fields, 4=review (Google Sheet config removed - use /reports/daily)
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 4>(1);
 
   async function handleDelete(tpl: Template) {
     if (!confirm(`Xoá mẫu "${tpl.name}"?`)) return;
@@ -143,39 +124,6 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
     setScanFile(null);
     setFieldRows([]);
     setTemplateName("");
-    setGsheetId(DEFAULT_GOOGLE_SHEET_URL);
-    setWorksheetConfigs([]);
-    setAggregationGroup("");
-  }
-
-  // Helper for multi-worksheet config
-  function addWorksheetConfig() {
-    setWorksheetConfigs([...worksheetConfigs, { worksheet: "", schema_path: "", range: "A1:ZZZ" }]);
-  }
-  function removeWorksheetConfig(idx: number) {
-    setWorksheetConfigs(worksheetConfigs.filter((_cfg: GoogleSheetWorksheetConfig, i: number) => i !== idx));
-  }
-  function updateWorksheetConfig(idx: number, field: keyof GoogleSheetWorksheetConfig, value: string) {
-    setWorksheetConfigs(worksheetConfigs.map((cfg: GoogleSheetWorksheetConfig, i: number) =>
-      i === idx ? { ...cfg, [field]: value } : cfg
-    ));
-  }
-
-  function handleQuickAdd() {
-    if (!newWsName.trim()) {
-      toast.warning("Vui lòng nhập Worksheet name");
-      return;
-    }
-    // Schema path có thể để trống tạm, user sẽ upload schema lên MinIO sau
-    setWorksheetConfigs([...worksheetConfigs, {
-      worksheet: newWsName.trim(),
-      schema_path: newSchemaPath.trim() || `/app/app/domain/templates/sheet_mapping.yaml`,
-      range: newRange.trim() || "A1:ZZZ"
-    }]);
-    setNewWsName("");
-    setNewSchemaPath("");
-    setNewRange("A1:ZZZ");
-    toast.success(`Đã thêm worksheet "${newWsName.trim()}"`);
   }
 
   async function handleCreate() {
@@ -208,21 +156,6 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
         : {}),
     };
 
-    // Add Google Sheets config if provided
-    if (gsheetId.trim()) payload.google_sheet_id = gsheetId.trim();
-
-    // Use multi-worksheet configs if available
-    const validConfigs = worksheetConfigs.filter((cfg: GoogleSheetWorksheetConfig) => cfg.worksheet.trim() && cfg.schema_path.trim());
-    if (validConfigs.length > 0) {
-      payload.google_sheet_configs = validConfigs.map(cfg => ({
-        worksheet: cfg.worksheet.trim(),
-        schema_path: cfg.schema_path.trim(),
-        range: cfg.range.trim() || "A1:ZZZ"
-      }));
-    }
-
-    if (aggregationGroup.trim()) payload.aggregation_group = aggregationGroup.trim();
-
     setCreating(true);
     const res = await api.templates.create(payload);
     setCreating(false);
@@ -233,10 +166,6 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
       setFieldRows([]);
       setTemplateName("");
       setScanFile(null);
-      // Reset Google Sheets config
-      setGsheetId(DEFAULT_GOOGLE_SHEET_URL);
-      setWorksheetConfigs([]);
-      setAggregationGroup("");
       onRefresh();
     } else {
       toast.error(`Tạo thất bại: ${res.error}`);
@@ -268,133 +197,6 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
     } else {
       toast.error(`Gắn thất bại: ${patchRes.error}`);
     }
-  }
-
-  // Upload YAML schema for a worksheet config
-  function handleUploadSchemaClick(idx: number) {
-    setUploadingSchemaIdx(idx);
-    // Trigger hidden file input
-    if (schemaFileInputRef.current) {
-      schemaFileInputRef.current.click();
-    }
-  }
-
-  async function handleSchemaFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setUploadingSchemaIdx(null);
-    const idx = event.target.dataset.idx ? Number(event.target.dataset.idx) : -1;
-    if (idx < 0 || idx >= worksheetConfigs.length) return;
-
-    try {
-      const res = await api.templates.scanWord(file);
-      if (res.ok) {
-        const s3Key = res.data.word_template_s3_key;
-        if (s3Key) {
-          updateWorksheetConfig(idx, "schema_path", s3Key);
-          toast.success(`Đã upload schema: ${file.name}`);
-        } else {
-          toast.error("Upload thành công nhưng không nhận được S3 key");
-        }
-      } else {
-        toast.error(`Upload thất bại: ${res.error}`);
-      }
-    } catch (err) {
-      toast.error("Lỗi khi upload schema");
-    } finally {
-      // Reset input
-      if (event.target) event.target.value = "";
-    }
-  }
-
-  // Ingest from Google Sheets for a template in the list
-  async function handleIngestTemplate(templateId: string) {
-    const selectedTpl = templates.find(t => t.id === templateId);
-    if (!selectedTpl) return;
-
-    // Check Google Sheet ID (required)
-    if (!selectedTpl.google_sheet_id) {
-      toast.warning("Template chưa được cấu hình Google Sheets (thiếu Sheet ID).");
-      return;
-    }
-
-    // Determine which config to use
-    const hasMultiConfig = selectedTpl.google_sheet_configs && selectedTpl.google_sheet_configs.length > 0;
-    const hasLegacy = selectedTpl.google_sheet_worksheet && selectedTpl.google_sheet_schema_path;
-
-    if (!hasMultiConfig && !hasLegacy) {
-      toast.warning("Template chưa được cấu hình Google Sheets (thiếu worksheet/schema config).");
-      return;
-    }
-
-    setIngestingTplId(templateId);
-    setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Đang đưa vào hàng đợi…" }));
-
-    // Backend will automatically use google_sheet_configs if available, or fallback to legacy fields
-    const res = await api.jobs.ingestGoogleSheet({
-      template_id: templateId,
-    });
-
-    if (!res.ok) {
-      setIngestingTplId(null);
-      setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "" }));
-      toast.error(`Không thể đồng bộ sheet: ${res.error}`);
-      return;
-    }
-
-    const taskId = res.data.batch_id || res.data.task_id;
-    setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Đang theo dõi tiến độ…" }));
-
-    // Poll for completion using task status endpoint
-    const maxAttempts = 120;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      const statusRes = await api.jobs.getIngestionStatus(taskId);
-      if (!statusRes.ok) {
-        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Lỗi đọc trạng thái" }));
-        setIngestingTplId(null);
-        return;
-      }
-
-      const payload = statusRes.data;
-      const status = payload.status;
-      const state = payload.state;
-
-      if (status === "completed" && payload.summary) {
-        const summary = payload.summary;
-        const inserted = Number(summary.rows_inserted || 0);
-        const failed = Number(summary.rows_failed || 0);
-        const processed = Number(summary.rows_processed || 0);
-
-        if (failed > 0) {
-          toast.warning(`Đồng bộ hoàn tất có lỗi: ${inserted} thành công, ${failed} lỗi.`);
-        } else {
-          toast.success(`✅ Đồng bộ xong: ${inserted} bản ghi.`);
-        }
-        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Hoàn tất: ${inserted} bản ghi (${processed} rows fetched)` }));
-        setIngestingTplId(null);
-        onRefresh();
-        return;
-      }
-
-      if (status === "failed") {
-        toast.error(`Đồng bộ thất bại: ${payload.error || "Unknown error"}`);
-        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Thất bại" }));
-        setIngestingTplId(null);
-        return;
-      }
-
-      // Running/queued - update progress
-      if (status === "running" || state === "STARTED") {
-        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Đang xử lý... (${state})` }));
-      } else if (status === "queued") {
-        setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: `Đang chờ... (${state})` }));
-      }
-    }
-    toast.warning("Đồng bộ vẫn đang chạy, vui lòng kiểm tra lại sau.");
-    setIngestProgress((prev: Record<string, string>) => ({ ...prev, [templateId]: "Đang chạy nền…" }));
-    setIngestingTplId(null);
   }
 
   return (
@@ -505,27 +307,12 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
                         <Paperclip className="h-4 w-4 mr-1.5" />
                         {tpl.word_template_s3_key ? "Thay Word template" : "Gắn Word template"}
                       </Button>
-                      {/* Ingest from Google Sheets button - chỉ hiện nếu có config */}
-                      {tpl.google_sheet_id && tpl.google_sheet_worksheet && tpl.google_sheet_schema_path && (
-                        <div className="flex flex-col gap-1">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleIngestTemplate(tpl.id)}
-                            disabled={ingestingTplId === tpl.id}
-                          >
-                            {ingestingTplId === tpl.id ? (
-                              "⏳ Đang đồng bộ…"
-                            ) : (
-                              "📥 Đồng bộ GG Sheets"
-                            )}
-                          </Button>
-                          {ingestProgress[tpl.id] && (
-                            <span className="text-xs text-muted-foreground ml-1">
-                              {ingestProgress[tpl.id]}
-                            </span>
-                          )}
-                        </div>
+                      {tpl.google_sheet_id && (
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href="/reports/daily">
+                            📊 Đồng bộ KV30 tại Báo cáo ngày →
+                          </Link>
+                        </Button>
                       )}
                       <Button
                         variant="destructive"
@@ -558,7 +345,7 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
           <div className="space-y-4">
             {/* Wizard Progress */}
             <div className="flex items-center justify-between mb-4">
-              {[1, 2, 3, 4].map((step) => (
+              {[1, 2, 4].map((step) => (
                 <div key={step} className="flex items-center">
                   <div
                     className={cn(
@@ -570,7 +357,7 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
                         : "bg-muted text-muted-foreground"
                     )}
                   >
-                    {wizardStep > step ? "✓" : step}
+                    {wizardStep > step ? "✓" : step === 4 ? "4" : step}
                   </div>
                   {step < 4 && (
                     <div
@@ -733,201 +520,6 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
 
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => goToStep(1)}>← Quét lại</Button>
-                  <Button onClick={() => goToStep(3)} className="ml-auto">Tiếp →</Button>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Google Sheets */}
-            {wizardStep === 3 && (
-              <div className="space-y-3">
-                <Alert variant="info">
-                  <AlertDescription>
-                    Bỏ qua nếu không cần tích hợp Google Sheets. Chỉ cần thiết cho ingest tự động.
-                  </AlertDescription>
-                </Alert>
-                <details className="rounded-lg border bg-background p-4">
-                  <summary className="font-semibold cursor-pointer hover:underline">
-                    🔧 Cấu hình Google Sheets Integration
-                  </summary>
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <Label className="text-xs">Sheet ID or URL</Label>
-                      <Input
-                        type="text"
-                        value={gsheetId}
-                        onChange={(e) => setGsheetId(e.target.value)}
-                        placeholder="e.g., 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
-                        className="h-9 text-sm"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Một Sheet ID có thể chứa nhiều worksheet. Thêm từng worksheet bên dưới.
-                      </p>
-                    </div>
-
-                    <Alert variant="info" className="bg-blue-50 border-blue-200">
-                      <AlertDescription className="text-xs">
-                        <strong>Lưu ý:</strong> Schema Path là S3 key của file YAML. Nhấn nút 📁 bên phải ô Schema Path để upload file YAML trực tiếp.
-                        File sẽ được lưu trên MinIO và S3 key sẽ tự động điền vào ô.
-                      </AlertDescription>
-                    </Alert>
-
-                    {/* Multi-worksheet config table */}
-                    <div className="rounded-md border overflow-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-48">Worksheet name</TableHead>
-                            <TableHead className="w-64">Schema path (YAML)</TableHead>
-                            <TableHead className="w-32">Range (A1)</TableHead>
-                            <TableHead className="w-16"></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {worksheetConfigs.length === 0 ? (
-                            <TableRow>
-                              <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
-                                Chưa có worksheet nào. Nhập thông tin ở trên và nhấn "+" để thêm.
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            worksheetConfigs.map((cfg, idx) => (
-                              <TableRow key={idx}>
-                                <TableCell>
-                                  <Input
-                                    type="text"
-                                    value={cfg.worksheet}
-                                    onChange={(e) => updateWorksheetConfig(idx, "worksheet", e.target.value)}
-                                    placeholder="e.g., BC NGÀY"
-                                    className="h-8 text-sm"
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <Input
-                                    type="text"
-                                    value={cfg.schema_path}
-                                    onChange={(e) => updateWorksheetConfig(idx, "schema_path", e.target.value)}
-                                    placeholder="word_templates/.../schema.yaml"
-                                    className="h-8 text-sm"
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <Input
-                                    type="text"
-                                    value={cfg.range}
-                                    onChange={(e) => updateWorksheetConfig(idx, "range", e.target.value)}
-                                    placeholder="A1:ZZZ"
-                                    className="h-8 text-sm"
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleUploadSchemaClick(idx)}
-                                      disabled={uploadingSchemaIdx === idx}
-                                      title="Upload YAML schema"
-                                      className="h-8 w-8 p-0"
-                                    >
-                                      {uploadingSchemaIdx === idx ? (
-                                        <RefreshCw className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Paperclip className="h-4 w-4" />
-                                      )}
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => removeWorksheetConfig(idx)}
-                                      className="h-8 w-8 p-0 text-destructive"
-                                    >
-                                      ✕
-                                    </Button>
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-
-                    {/* Quick-add form for single worksheet */}
-                    <div className="rounded-md border p-3 bg-muted/20">
-                      <h5 className="text-sm font-semibold mb-2">Thêm Worksheet</h5>
-                      <div className="grid grid-cols-12 gap-2 items-end">
-                        <div className="col-span-4">
-                          <Label className="text-xs">Tên Worksheet</Label>
-                          <Input
-                            type="text"
-                            value={newWsName}
-                            onChange={(e) => setNewWsName(e.target.value)}
-                            placeholder="e.g., BC NGÀY"
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div className="col-span-5">
-                          <Label className="text-xs">Schema Path (S3 key)</Label>
-                          <Input
-                            type="text"
-                            value={newSchemaPath}
-                            onChange={(e) => setNewSchemaPath(e.target.value)}
-                            placeholder="word_templates/.../schema.yaml"
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <Label className="text-xs">Range</Label>
-                          <Input
-                            type="text"
-                            value={newRange}
-                            onChange={(e) => setNewRange(e.target.value)}
-                            placeholder="A1:ZZZ"
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div className="col-span-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="h-8 w-full"
-                            onClick={handleQuickAdd}
-                          >
-                            +
-                          </Button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1.5">
-                        Schema Path là S3 key của file YAML (upload lên MinIO). Ví dụ: <code>word_templates/&lt;template-id&gt;/schema.yaml</code>
-                      </p>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Sau khi thêm, upload Schema YAML lên MinIO với key: <code>word_templates/&lt;template-id&gt;/schema.yaml</code>
-                    </p>
-
-                    <div className="md:col-span-2">
-                      <Label className="text-xs">Aggregation Group (Optional)</Label>
-                      <Input
-                        type="text"
-                        value={aggregationGroup}
-                        onChange={(e) => setAggregationGroup(e.target.value)}
-                        placeholder="e.g., daily_operational"
-                        className="h-9 text-sm mt-1"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Templates with the same group name can be aggregated together in daily reports.
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Optional: Configure to enable "Ingest from Google Sheets" button in Jobs tab.
-                  </p>
-                </details>
-
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => goToStep(2)}>← Quay lại</Button>
                   <Button onClick={() => goToStep(4)} className="ml-auto">Tiếp →</Button>
                 </div>
               </div>
@@ -947,22 +539,18 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
                       <span className="text-muted-foreground">Số trường:</span>
                       <p className="font-medium">{fieldRows.filter(r => r.selected).length} được chọn</p>
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Google Sheets:</span>
-                      <p className="font-medium">
-                        {gsheetId ? (
-                          (worksheetConfigs as GoogleSheetWorksheetConfig[]).filter((cfg: GoogleSheetWorksheetConfig) => cfg.worksheet.trim() && cfg.schema_path.trim()).length > 0
-                            ? `✅ Cấu hình (${worksheetConfigs.length} worksheet${worksheetConfigs.length > 1 ? 's' : ''})`
-                            : "✅ Cấu hình (legacy)"
-                        ) : "❌ Chưa cấu hình"}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Aggregation Group:</span>
-                      <p className="font-medium">{aggregationGroup || "Không có"}</p>
-                    </div>
                   </div>
                 </div>
+
+                <Alert className="text-sm">
+                  <AlertDescription>
+                    Đồng bộ báo cáo ngày KV30 được thực hiện tại mục{" "}
+                    <Link href="/reports/daily" className="underline font-semibold">
+                      Báo cáo ngày
+                    </Link>
+                    . Không cần cấu hình worksheet/YAML trong mẫu.
+                  </AlertDescription>
+                </Alert>
 
                 <div>
                   <Label>Các trường đã chọn</Label>
@@ -1004,16 +592,6 @@ export function TemplatesTab({ templates, onRefresh, loading }: TemplatesTabProp
               Huỷ
             </Button>
           </DialogFooter>
-
-          {/* Hidden file input for YAML schema upload (used by worksheet config table) */}
-          <input
-            ref={schemaFileInputRef}
-            type="file"
-            accept=".yaml,.yml"
-            className="hidden"
-            data-idx={uploadingSchemaIdx !== null ? uploadingSchemaIdx : undefined}
-            onChange={handleSchemaFileSelected}
-          />
         </DialogContent>
       </Dialog>
 

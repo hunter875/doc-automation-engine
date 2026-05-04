@@ -644,3 +644,43 @@ class TestKV30IngestionService:
             assert job.parser_used == "google_sheets", (
                 f"Job {job.id} should have parser_used='google_sheets', got '{job.parser_used}'"
             )
+
+    @pytest.mark.asyncio
+    async def test_service_returns_error_when_no_valid_daily_rows(
+        self, pg_test_session, test_tenant_pg, test_user_pg, test_template_pg,
+        mock_s3_for_tests,
+    ):
+        """Regression: when sheet has only summary rows, service returns error with NO_VALID_DAILY_ROWS.
+
+        The Celery task should not crash with KeyError when jobs list is empty.
+        """
+        from unittest.mock import patch
+        from app.engines.extraction.sheet_ingestion_service import GoogleSheetIngestionService, IngestionRequest
+
+        # Mock sheet with only summary rows (no valid date rows)
+        def mock_fetch_values(config):
+            return [
+                ["06 thang dau nam", "", "6.0", "0.0"],  # summary row
+                ["tong", "", "100.0", "50.0"],  # total row
+            ]
+
+        with patch("app.engines.extraction.sources.sheets_source.GoogleSheetsSource.fetch_values", side_effect=mock_fetch_values):
+            req = IngestionRequest(
+                tenant_id=str(test_tenant_pg.id),
+                user_id=str(test_user_pg.id),
+                template_id=str(test_template_pg.id),
+                sheet_id="test-empty-sheet",
+                worksheet="BC NGAY",
+                schema_path="bc_ngay_kv30_schema.yaml",
+                configs=[
+                    {"worksheet": "BC NGAY", "schema_path": "bc_ngay_kv30_schema.yaml", "range": "A1:ZZZ", "header_row": 0, "data_start_row": 1, "role": "master", "target_section": None},
+                ],
+            )
+            service = GoogleSheetIngestionService(pg_test_session)
+
+            # Service should return error status with NO_VALID_DAILY_ROWS message
+            result = await service.ingest(req)
+
+            assert result["status"] == "error"
+            assert "NO_VALID_DAILY_ROWS" in result["error"]
+            assert result["rows_inserted"] == 0

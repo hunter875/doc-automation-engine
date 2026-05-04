@@ -71,13 +71,13 @@ class CNCHItem(BaseModel):
             r"^\d{2}:\d{2}\s+ngày\s+\d{2}/\d{2}/\d{4}$",
             r"^\d{2}:\d{2}$",
             r"^\d{1,2}\s*giờ\s*\d{1,2}\s*phút\s*ngày\s*\d{2}/\d{2}/\d{4}$",
-            # Standalone Vietnamese time without date (KV30 format: "22 giờ 36 phút")
             r"^\d{1,2}\s*giờ\s*\d{1,2}\s*phút$",
         ]
-        if not any(re.match(pattern, value, flags=re.IGNORECASE) for pattern in patterns):
-            raise ValueError(
-                "thoi_gian không đúng định dạng nghiệp vụ (dd/mm/yyyy, dd/mm/yyyy HH:MM, HH:MM dd/mm/yyyy, hoặc 'HH giờ MM phút ngày dd/mm/yyyy')"
-            )
+        # Relax validation: allow any non-empty string if patterns don't match
+        # (KV30 sheets may have various formats like "7.0", "N/A", etc.)
+        if value and not any(re.match(pattern, value, flags=re.IGNORECASE) for pattern in patterns):
+            import logging
+            logging.getLogger(__name__).warning("CNCHItem thoi_gian non-standard format: %r", value)
         return self
 
 

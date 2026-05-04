@@ -85,11 +85,18 @@ def _to_int(value: Any, default: int = 0) -> int:
         if value != value:  # NaN
             return default
         return int(value)
-    s = str(value).strip().replace(",", "").replace(".", "")
+    s = str(value).strip()
     if not s or s == "-":
         return default
     try:
         return int(float(s))
+    except (ValueError, TypeError):
+        pass
+    cleaned = s.replace(",", "").replace(".", "")
+    if not cleaned or cleaned == "-":
+        return default
+    try:
+        return int(cleaned)
     except (ValueError, TypeError):
         return default
 
@@ -101,13 +108,52 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         if value != value:  # NaN
             return default
         return float(value)
-    s = str(value).strip().replace(",", "").replace(".", "")
+    s = str(value).strip()
     if not s or s == "-":
         return default
     try:
         return float(s)
     except (ValueError, TypeError):
+        pass
+    cleaned = s.replace(",", "").replace(".", "")
+    if not cleaned or cleaned == "-":
         return default
+    try:
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return default
+
+
+def _normalize_date(val: Any) -> str:
+    """Normalize date value to DD/MM/YYYY format.
+
+    Handles:
+    - Google Sheets Date format: "Date(2026,0,31)" → "31/01/2026"
+    - DD/MM/YYYY: "31/01/2026" → "31/01/2026"
+    - DD/MM: "31/01" → "31/01"
+    - Empty/None → ""
+    """
+    if val is None or val == "":
+        return ""
+    s = str(val).strip()
+    if not s:
+        return ""
+
+    # Google Sheets Date format: Date(year,month,day)
+    # Note: month is 0-indexed (0=January, 11=December)
+    if s.startswith("Date(") and s.endswith(")"):
+        try:
+            parts = s[5:-1].split(",")
+            if len(parts) >= 3:
+                year = int(parts[0])
+                month = int(parts[1]) + 1  # Convert 0-indexed to 1-indexed
+                day = int(parts[2])
+                return f"{day:02d}/{month:02d}/{year:04d}"
+        except (ValueError, IndexError):
+            pass
+
+    # Already in DD/MM or DD/MM/YYYY format
+    return s
 
 
 def _to_text(value: Any) -> str:
@@ -459,11 +505,11 @@ _CNCH_COL = {"stt": 0, "loai_hinh": 1, "ngay": 2, "thoi_gian": 3,
              "dia_diem": 4, "dia_chi": 5, "chi_huy": 6, "thiet_hai": 7, "so_nguoi_cuu": 8}
 
 
-def _normalize_time(value: Any) -> str | None:
-    """Normalize various time representations to HH:MM or pass through.
+def _normalize_time(value: Any) -> str:
+    """Normalize various time representations to HH:MM or empty string.
 
     Handles:
-    - None / "": return None
+    - None / "": return ""
     - datetime.time / datetime.datetime: return "HH:MM"
     - "16:33" / "6:33": return "16:33" / "06:33"
     - "16 giờ 33 phút" / "03 giờ 24 ": return "16:33" / "03:24"
@@ -473,13 +519,13 @@ def _normalize_time(value: Any) -> str | None:
     - "21 gio 30 phut": return "21:30"
     - "05 gio 40 phut": return "05:40"
     - "06h15" / "06 h 15": return "06:15"
-    - Invalid strings: return as-is (let Pydantic catch it)
+    - Invalid strings: return as-is (let downstream validation handle)
     """
     if value is None:
-        return None
+        return ""
     s = str(value).strip()
     if not s:
-        return None
+        return ""
 
     # Already HH:MM
     m = re.match(r"^(\d{1,2}):(\d{2})$", s)
@@ -546,7 +592,7 @@ def map_kv30_cnch_row(row: list[Any]) -> CNCHItem | None:
     """Map CNCH data row (fixed columns) → CNCHItem or None if blank/no date."""
     if _is_row_blank(row):
         return None
-    ngay = _to_text(_cell(row, _CNCH_COL["ngay"]))
+    ngay = _normalize_date(_cell(row, _CNCH_COL["ngay"]))
     if not ngay.strip():
         return None
     payload = {
@@ -580,7 +626,7 @@ def map_kv30_chi_vien_row(row: list[Any]) -> ChiVienItem | None:
     """Map CHI VIỆN data row (fixed columns) → ChiVienItem or None if blank/no date."""
     if _is_row_blank(row):
         return None
-    ngay = _to_text(_cell(row, _CV_COL["ngay"]))
+    ngay = _normalize_date(_cell(row, _CV_COL["ngay"]))
     if not ngay.strip():
         return None
     return ChiVienItem(
@@ -614,7 +660,7 @@ def map_kv30_vu_chay_row(row: list[Any]) -> VuChayItem | None:
     """Map VỤ CHÁY data row (fixed columns) → VuChayItem or None if blank/no date."""
     if _is_row_blank(row):
         return None
-    ngay = _to_text(_cell(row, _VC_COL["ngay"]))
+    ngay = _normalize_date(_cell(row, _VC_COL["ngay"]))
     if not ngay.strip():
         return None
     return VuChayItem(
@@ -660,7 +706,7 @@ def map_kv30_sclq_row(
     ngay_raw = _cell(row, _SCLQ_COL["ngay"])
 
     stt = _to_int(stt_raw)
-    ngay = _to_text(ngay_raw)
+    ngay = _normalize_date(ngay_raw)
 
     if stt == 0 and not ngay.strip():
         # Continuation row — inherit from previous_context
@@ -773,12 +819,54 @@ def get_kv30_item_report_date_key(worksheet: str, item: Any) -> str | None:
 def kv30_extract_master_date_key(row: list[Any]) -> str | None:
     """Extract DD/MM date key from BC NGÀY row.
 
-    Returns None if row is blank or missing day/month.
+    Accepts:
+    - row[0]=25, row[1]=3
+    - row[0]="25", row[1]="3"
+    - row[0]="25/03/2026"
+    - row[0]="25/03"
+    - row[0]="2026-03-25"
+
+    Returns None for blank/header/summary/total rows.
     """
     if _is_row_blank(row):
         return None
-    day = _to_int(_cell(row, _BC_NGAY_COL["day"]), 0)
-    month = _to_int(_cell(row, _BC_NGAY_COL["month"]), 0)
-    if day == 0 or month == 0:
+
+    day_raw = _cell(row, _BC_NGAY_COL["day"])
+    month_raw = _cell(row, _BC_NGAY_COL["month"])
+
+    # Fast path: separate numeric day/month columns
+    day = _to_int(day_raw, 0)
+    month = _to_int(month_raw, 0)
+    if 1 <= day <= 31 and 1 <= month <= 12:
+        return f"{day:02d}/{month:02d}"
+
+    day_text = _to_text(day_raw).strip()
+    if not day_text:
         return None
-    return f"{day:02d}/{month:02d}"
+
+    day_text_lower = day_text.lower()
+
+    # Skip obvious summary/header labels
+    if any(keyword in day_text_lower for keyword in [
+        "thang dau nam", "tháng đầu năm", "tong cong", "tổng cộng",
+        "tong", "tổng", "luy ke", "lũy kế", "header", "ngay", "ngày"
+    ]):
+        return None
+
+    # Single-column date strings: DD/MM[/YYYY]
+    m = re.match(r"^(\d{1,2})/(\d{1,2})(?:/(\d{4}))?$", day_text)
+    if m:
+        day = int(m.group(1))
+        month = int(m.group(2))
+        if 1 <= day <= 31 and 1 <= month <= 12:
+            return f"{day:02d}/{month:02d}"
+
+    # ISO date string: YYYY-MM-DD
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", day_text)
+    if m:
+        month = int(m.group(2))
+        day = int(m.group(3))
+        if 1 <= day <= 31 and 1 <= month <= 12:
+            return f"{day:02d}/{month:02d}"
+
+    return None

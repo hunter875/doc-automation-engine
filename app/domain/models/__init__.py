@@ -4,6 +4,7 @@ Import all model modules so their tables register on Base.metadata.
 """
 
 from app.domain.models.daily_report_edit import DailyReportEdit
+from app.domain.models.daily_report_review import DailyReportReview
 from app.domain.models.document import Document, DocumentStatus
 from app.domain.models.extraction_job import (
     AggregationReport,
@@ -19,6 +20,7 @@ from app.domain.models.user import User
 __all__ = [
     "AggregationReport",
     "DailyReportEdit",
+    "DailyReportReview",
     "Document",
     "DocumentStatus",
     "EnrichmentStatus",

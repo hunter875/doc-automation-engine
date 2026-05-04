@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import { RefreshCw, Upload, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ interface JobsTabProps {
 }
 
 type StatusFilter = "all" | "processing" | "ready_for_review" | "approved" | "failed";
+type SourceFilter = "pdf" | "google_sheet" | "all";
 
 // Helper function outside component to avoid parser issues
 async function waitForIngestionTask(
@@ -91,6 +93,7 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
   const [sheetProgress, setSheetProgress] = useState<string>("");
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("pdf");
   const [tplFilter, setTplFilter] = useState<string>("__all");
 
   const [retrying, setRetrying] = useState(false);
@@ -155,6 +158,12 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
     if (statusFilter === "approved" && !["approved", "aggregated"].includes(j.status)) return false;
     if (statusFilter === "failed" && !["failed", "rejected"].includes(j.status)) return false;
     if (tplFilter !== "__all" && j.template_id !== tplFilter) return false;
+
+    // Source filter
+    const isGoogleSheet = j.parser_used === "google_sheets";
+    if (sourceFilter === "pdf" && isGoogleSheet) return false;
+    if (sourceFilter === "google_sheet" && !isGoogleSheet) return false;
+
     return true;
   });
 
@@ -262,6 +271,13 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
                     )}
                   </Button>
                   {sheetProgress && <p className="text-sm text-muted-foreground mt-1">{sheetProgress}</p>}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    💡 Flow mới: vào{" "}
+                    <a href="/reports/daily" className="underline font-semibold">
+                      Báo cáo ngày
+                    </a>{" "}
+                    để đồng bộ + xem/sửa theo ngày.
+                  </p>
                 </>
               );
             }
@@ -308,6 +324,16 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
 
         {/* Filters */}
         <div className="flex gap-2">
+          <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(v as SourceFilter)}>
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pdf">📄 PDF</SelectItem>
+              <SelectItem value="google_sheet">📊 Google Sheet</SelectItem>
+              <SelectItem value="all">Tất cả nguồn</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
             <SelectTrigger className="w-48">
               <SelectValue />
@@ -347,20 +373,41 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
                 {
                   key: "file_name",
                   header: "Tên file",
-                  width: "30%",
-                  renderCell: (j: ExtractionJob) => (
-                    <span className="font-medium max-w-xs truncate block" title={j.file_name ?? j.display_name ?? "(no name)"}>
-                      {j.file_name ?? j.display_name ?? "(no name)"}
-                    </span>
-                  ),
+                  width: "25%",
+                  renderCell: (j: ExtractionJob) => {
+                    const isGoogleSheet = j.parser_used === "google_sheets";
+                    return (
+                      <div className="flex items-center gap-2">
+                        <Badge variant={isGoogleSheet ? "secondary" : "outline"} className="shrink-0">
+                          {isGoogleSheet ? "📊" : "📄"}
+                        </Badge>
+                        <span className="font-medium max-w-xs truncate block" title={j.file_name ?? j.display_name ?? "(no name)"}>
+                          {j.file_name ?? j.display_name ?? "(no name)"}
+                        </span>
+                      </div>
+                    );
+                  },
                 },
                 {
                   key: "template",
                   header: "Mẫu",
-                  width: "25%",
+                  width: "20%",
                   renderCell: (j: ExtractionJob) => (
                     <span className="text-sm text-muted-foreground">{tplMap[j.template_id ?? ""] ?? "—"}</span>
                   ),
+                },
+                {
+                  key: "source",
+                  header: "Nguồn",
+                  width: "12%",
+                  renderCell: (j: ExtractionJob) => {
+                    const isGoogleSheet = j.parser_used === "google_sheets";
+                    return (
+                      <Badge variant={isGoogleSheet ? "secondary" : "outline"}>
+                        {isGoogleSheet ? "Google Sheet" : "PDF"}
+                      </Badge>
+                    );
+                  },
                 },
                 {
                   key: "status",
@@ -383,9 +430,32 @@ export function JobsTab({ templates, jobs, onRefreshJobs, loadingJobs }: JobsTab
                 {
                   key: "actions",
                   header: "Thao tác",
-                  width: "10%",
+                  width: "18%",
                   renderCell: (j: ExtractionJob) => {
+                    const isGoogleSheet = j.parser_used === "google_sheets";
                     const fname = j.file_name ?? j.display_name ?? "(no name)";
+
+                    // Google Sheet snapshots: redirect to daily reports page
+                    if (isGoogleSheet) {
+                      const reportDate = j.report_date
+                        ? new Date(j.report_date + "T00:00:00").toLocaleDateString("vi-VN")
+                        : "";
+                      return (
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            asChild
+                          >
+                            <Link href={`/reports/daily?date=${encodeURIComponent(j.report_date?.toISOString().split('T')[0] || "")}`}>
+                              Xem báo cáo ngày
+                            </Link>
+                          </Button>
+                        </div>
+                      );
+                    }
+
+                    // PDF jobs: retry/delete
                     return (
                       <div className="flex gap-1">
                         {j.status === "failed" && (
