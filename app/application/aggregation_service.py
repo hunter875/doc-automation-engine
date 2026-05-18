@@ -781,13 +781,6 @@ class AggregationService:
         if not jobs:
             return []
 
-        sheet_names: set[str] = set()
-        for job in jobs:
-            refs = job.source_references if isinstance(job.source_references, dict) else {}
-            worksheet = refs.get("worksheet")
-            if isinstance(worksheet, str) and worksheet.strip():
-                sheet_names.add(worksheet.strip())
-
         created_values = [job.created_at for job in jobs if getattr(job, "created_at", None) is not None]
         date_range = {
             "start": min(created_values).isoformat() if created_values else None,
@@ -797,7 +790,6 @@ class AggregationService:
         return [
             {
                 "template_name": template_name,
-                "sheet_names": sorted(sheet_names),
                 "row_count": len(jobs),
                 "date_range": date_range,
                 "jobs": [

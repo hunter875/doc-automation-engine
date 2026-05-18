@@ -28,7 +28,7 @@ MinIO (inbox/) → FileOperator → ExtractionJob → BlockPipeline (Stage 1, no
 
 | Component | File | Vai trò |
 |---|---|---|
-| **FastAPI API** | `app/main.py` | 33 HTTP endpoints, JWT auth, multi-tenant |
+| **FastAPI API** | `app/main.py` | HTTP API, JWT auth, multi-tenant |
 | **BlockExtractionPipeline** | `engines/extraction/block_pipeline.py` | Stage 1: pdfplumber + regex, không LLM |
 | **enrich_job_task** | `worker/enrichment_tasks.py` | Stage 2: Ollama LLM, async, fire-and-forget |
 | **ExtractionOrchestrator** | `engines/extraction/orchestrator.py` | Dispatch stage 1 → stage 2, persist results |
@@ -40,7 +40,8 @@ MinIO (inbox/) → FileOperator → ExtractionJob → BlockPipeline (Stage 1, no
 | **Celery** | `worker/celery_app.py` | 4 queues: `extraction`, `enrichment`, `default`, `document_processing` |
 | **PostgreSQL** | SQLAlchemy + JSONB | Relational schema + JSONB cho extracted_data/aggregated_data |
 | **MinIO** | S3-compatible | Lưu PDF gốc và Word template |
-| **Streamlit UI** | `ui/streamlit_app.py` | Giao diện quản lý template, job, review, export |
+| **Next.js UI** | `frontend/` | Giao diện quản lý template, job, review, export |
+| **Streamlit UI** | `ui/streamlit_app.py` | Giao diện legacy khi chạy profile cũ |
 
 ## 5. Processing Flow
 

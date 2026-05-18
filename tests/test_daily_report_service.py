@@ -26,7 +26,7 @@ def _job(
     *,
     row_hash: str | None = None,
     row_status: str | None = None,
-    parser_used: str = "google_sheets",
+    parser_used: str = "pdfplumber",
     extracted_data: dict | None = None,
 ):
     source_refs = {}
@@ -110,12 +110,12 @@ def test_build_daily_dataset_counts_partial_rows():
     assert result["row_status_counts"]["PARTIAL"] == 1
 
 
-def test_build_daily_dataset_mixed_pdf_and_sheet():
-    sheet_1 = _job(row_hash="sheet-h1", row_status="VALID", parser_used="google_sheets")
-    sheet_dup = _job(row_hash="sheet-h1", row_status="VALID", parser_used="google_sheets")
+def test_build_daily_dataset_dedupes_hash_sources_and_keeps_pdf_jobs():
+    hashed_1 = _job(row_hash="source-h1", row_status="VALID")
+    hashed_dup = _job(row_hash="source-h1", row_status="VALID")
     pdf_job = _job(row_hash=None, row_status=None, parser_used="pdfplumber")
 
-    result = build_daily_dataset([sheet_1, sheet_dup, pdf_job])
+    result = build_daily_dataset([hashed_1, hashed_dup, pdf_job])
 
     assert result["jobs_total"] == 3
     assert result["jobs_selected"] == 2

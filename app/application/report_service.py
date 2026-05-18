@@ -251,19 +251,6 @@ class ReportService:
         self.db = db
         self.repository = ReportRepository(db)
 
-    def _split_sources(self, jobs: list[ExtractionJob]) -> tuple[list[ExtractionJob], list[ExtractionJob]]:
-        system_jobs: list[ExtractionJob] = []
-        sheet_jobs: list[ExtractionJob] = []
-
-        for job in jobs:
-            parser_used = _to_text(job.parser_used).lower()
-            if parser_used == "google_sheets":
-                sheet_jobs.append(job)
-            else:
-                system_jobs.append(job)
-
-        return system_jobs, sheet_jobs
-
     def _build_source_payload(self, jobs: list[ExtractionJob]) -> dict[str, Any]:
         bang_rows: list[dict[str, Any]] = []
         cnch_rows: list[dict[str, Any]] = []
@@ -337,73 +324,25 @@ class ReportService:
             },
         }
 
-    @staticmethod
-    def _merge_with_priority(
-        system_data: dict[str, Any],
-        sheet_data: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        system_summary = _as_dict(system_data.get("summary"))
-        sheet_summary = _as_dict(sheet_data.get("summary"))
-
-        merged_summary = dict(sheet_summary)
-        for key, value in system_summary.items():
-            merged_summary[key] = value
-
-        system_details = _as_dict(system_data.get("details"))
-        sheet_details = _as_dict(sheet_data.get("details"))
-
-        merged_details = {
-            "bang_thong_ke": _merge_unique_items(
-                _as_list(system_details.get("bang_thong_ke"))
-                + _as_list(sheet_details.get("bang_thong_ke"))
-            ),
-            "danh_sach_cnch": _merge_unique_items(
-                _as_list(system_details.get("danh_sach_cnch"))
-                + _as_list(sheet_details.get("danh_sach_cnch"))
-            ),
-            "danh_sach_phuong_tien_hu_hong": _merge_unique_items(
-                _as_list(system_details.get("danh_sach_phuong_tien_hu_hong"))
-                + _as_list(sheet_details.get("danh_sach_phuong_tien_hu_hong"))
-            ),
-            "danh_sach_cong_tac_khac": _merge_unique_items(
-                _as_list(system_details.get("danh_sach_cong_tac_khac"))
-                + _as_list(sheet_details.get("danh_sach_cong_tac_khac"))
-            ),
-            "source_references": {
-                "system_job_ids": _as_list(system_data.get("job_ids")),
-                "google_sheet_job_ids": _as_list(sheet_data.get("job_ids")),
-            },
-        }
-        return merged_summary, merged_details
-
     def get_daily_report(self, tenant_id: str, report_date: date) -> dict[str, Any]:
         jobs = self.repository.list_jobs_by_report_date(tenant_id, report_date)
-        system_jobs, sheet_jobs = self._split_sources(jobs)
-
-        system_payload = (
-            self._build_source_payload(system_jobs)
-            if system_jobs
+        payload = (
+            self._build_source_payload(jobs)
+            if jobs
             else {"job_ids": [], "summary": {}, "details": {}}
         )
-        sheet_payload = (
-            self._build_source_payload(sheet_jobs)
-            if sheet_jobs
-            else {"job_ids": [], "summary": {}, "details": {}}
-        )
-
-        merged_summary, merged_details = self._merge_with_priority(system_payload, sheet_payload)
+        details = _as_dict(payload.get("details"))
+        details["source_references"] = {"system_job_ids": _as_list(payload.get("job_ids"))}
 
         data_sources: list[str] = []
-        if system_jobs:
+        if jobs:
             data_sources.append("system")
-        if sheet_jobs:
-            data_sources.append("google_sheet")
 
         return {
             "report_date": report_date,
             "data_sources": data_sources,
-            "summary": merged_summary,
-            "details": merged_details,
+            "summary": _as_dict(payload.get("summary")),
+            "details": details,
         }
 
 
@@ -455,7 +394,6 @@ class WeeklyReportAggregator:
         vehicle_rows: list[Any] = []
         other_rows: list[Any] = []
         source_refs_system: list[Any] = []
-        source_refs_sheet: list[Any] = []
         all_sources: set[str] = set()
 
         for daily in daily_reports:
@@ -473,7 +411,6 @@ class WeeklyReportAggregator:
 
             refs = _as_dict(details.get("source_references"))
             source_refs_system.extend(_as_list(refs.get("system_job_ids")))
-            source_refs_sheet.extend(_as_list(refs.get("google_sheet_job_ids")))
 
         report_payload = {
             "week_start": week_start.isoformat(),
@@ -493,7 +430,6 @@ class WeeklyReportAggregator:
                 "danh_sach_cong_tac_khac": _merge_unique_items(other_rows),
                 "source_references": {
                     "system_job_ids": _merge_unique_items(source_refs_system),
-                    "google_sheet_job_ids": _merge_unique_items(source_refs_sheet),
                 },
             },
         }

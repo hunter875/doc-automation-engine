@@ -300,8 +300,8 @@ def build_daily_dataset(jobs: list[ExtractionJob]) -> dict[str, Any]:
     """Build a deduplicated dataset summary from extraction jobs.
 
     Deduplication strategy:
-      - For Google Sheet jobs: dedupe by ``source_references.row_hash``
-      - For non-sheet jobs: keep every job (dedupe key is ``job.id``)
+      - If an upstream source supplies ``source_references.row_hash``, dedupe by that hash.
+      - Otherwise keep every job (dedupe key is ``job.id``).
     """
     selected_jobs: list[ExtractionJob] = []
     seen_keys: set[str] = set()

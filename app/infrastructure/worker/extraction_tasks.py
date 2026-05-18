@@ -1,6 +1,4 @@
 """Celery tasks for Engine 2: Extraction pipeline."""
-
-import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -24,40 +22,6 @@ from app.domain.models.tenant import Tenant, UserTenantRole  # noqa: F401
 from app.domain.models.user import User  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-@shared_task(
-    bind=True,
-    max_retries=2,
-    default_retry_delay=20,
-    retry_backoff=True,
-    retry_jitter=True,
-    soft_time_limit=900,
-    time_limit=1020,
-)
-def ingest_google_sheet_task(self, payload: dict):
-    """Run Google Sheets ingestion asynchronously and return ingestion summary."""
-    db = SessionLocal()
-    try:
-        from app.engines.extraction.sheet_ingestion_service import (
-            GoogleSheetIngestionService,
-            IngestionRequest,
-        )
-
-        req = IngestionRequest(
-            tenant_id=str(payload.get("tenant_id") or ""),
-            user_id=str(payload.get("user_id") or ""),
-            template_id=str(payload.get("template_id") or ""),
-            sheet_id=str(payload.get("sheet_id") or ""),
-            worksheet=str(payload.get("worksheet") or ""),
-            schema_path=str(payload.get("schema_path") or ""),
-            source_document_id=str(payload.get("source_document_id")) if payload.get("source_document_id") else None,
-            range_a1=str(payload.get("range_a1")) if payload.get("range_a1") else None,
-        )
-        summary = asyncio.run(GoogleSheetIngestionService(db).ingest(req))
-        return summary
-    finally:
-        db.close()
 
 
 def _is_retriable_error(error: Exception) -> bool:
@@ -151,15 +115,9 @@ def extract_document_task(self, job_id: str):
         if existing_job is None:
             raise ValueError(f"Job {job_id} not found")
 
-        parser_used = str(existing_job.parser_used or "").lower()
-        source_type = "sheet" if parser_used in {"google_sheets", "sheet"} else "pdf"
-        sheet_data = existing_job.extracted_data if source_type == "sheet" else None
-
         job = orchestrator.run(
             job_id,
             progress_callback=emit_progress,
-            source_type=source_type,
-            sheet_data=sheet_data if isinstance(sheet_data, dict) else None,
         )
 
         logger.info(

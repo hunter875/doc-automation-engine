@@ -1,7 +1,7 @@
 # 📱 UI/UX Design System — Doc Automation Engine
 
-**Version:** 1.0  
-**Last Updated:** 2026-04-21  
+**Version:** 1.0
+**Last Updated:** 2026-04-21
 **Tech Stack:** Next.js 14, React 18, TypeScript, Tailwind CSS, Radix UI, shadcn/ui
 
 ---
@@ -332,133 +332,10 @@ Two modes via Tabs:
 
 ---
 
-## 🔍 4. Sheet Inspector (`app/extraction/inspect/page.tsx` + `components/extraction/sheet-inspector.tsx`)
 
-**Purpose:** QA tool for sheet extraction. Shows STT coverage, issues, column mapping.
+## 📊 4. Common UI Patterns
 
-**URL Params:**
-- `month` (default: current)
-- `year` (default: current)
-- `document_id` (optional - filter issues by specific Excel file)
-- `sheet` (default: "BC NGÀY") - which sheet to inspect
-
-**Layout:**
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  🔍 Sheet Inspector · BC NGÀY (doc=abc123…)                │
-│  [← Quay lại Trích xuất]                                   │
-│                                                             │
-│  ┌─────────┬──────────────────────────────────────────────┐│
-│  │ Sidebar │ Content (Tabs: Grid | Calendar | Mapping |  ││
-│  │ - Sheets│         Issues)                             ││
-│  │ - Stats  │                                              ││
-│  └─────────┴──────────────────────────────────────────────┘│
-│                                                             │
-│  Status bar: Tổng STT: 61 · Cột đã map: 45/61 · Hồ sơ: 120 │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Sidebar:**
-- **Sheet selector** (buttons):
-  - BC NGÀY (bg-green-100)
-  - CNCH (bg-blue-100)
-  - CHI VIỆN (bg-purple-100)
-  - VỤ CHÁY (bg-red-100)
-- **Quick stats** (text-xs):
-  - Tháng này: N hồ sơ
-  - Có issues: M ngày
-
-**Tabs:**
-
-### Tab 1: Grid
-
-**Purpose:** Day-by-day STT coverage matrix.
-
-**Layout:**
-```
-┌─────────────────────────────────────────────────────┐
-│  Ngày | STT2 | STT14 | STT22 | STT31 | STT32 | ... │
-│  ─────┼──────┼───────┼───────┼───────┼───────┼─────┤
-│  20/4 │  3   |   2   |   0   |  10   |   10  |  ...│
-│  21/4 │  0   |   0   |   5   |   0   |   0   |  ...│
-│  ...                                          [↓] │
-└─────────────────────────────────────────────────────┘
-```
-
-- Expandable rows: click day row → show job list with STT breakdown
-- **Cell colors:**
-  - Green (bg-green-50): has value (>0)
-  - Yellow (bg-yellow-50): present but zero
-  - Red (bg-red-50): missing
-- **Header:** Fixed first column (ngày) sticky left-0
-
-**Expand Detail:**
-- Shows all jobs for that day
-- Each job: file name + status badge + STT coverage (populated/total)
-- Table of STT rows (STT, Nội dung, Kết quả) - yellow if ket_qua=0
-
-### Tab 2: Calendar
-
-**Purpose:** Visual calendar view (similar to `CalendarPicker` but read-only).
-
-- Month navigation (Prev, Next, Today)
-- Weekday headers: T2, T3, T4, T5, T6, T7, CN
-- Day cells (same color logic as CalendarPicker)
-- Click day → show detail panel below (jobs list)
-
-### Tab 3: Mapping
-
-**Purpose:** Show column → STT mapping from `sheet_mapping.yaml`.
-
-**Table:**
-- Col: Column letter (A, B, C...)
-- Header: Column header text from Excel
-- STT: Which STT number it maps to (or "—")
-- Field: Which field name (tong_so_vu_chay, etc.)
-- Status: ✅ Mapped / ⚠️ Unmapped / ⬜ Skipped
-
-**Stats:**
-- 🟢 Map: N
-- 🟡 Unmapped: N
-- ⬜ Skipped: N
-
-### Tab 4: Issues
-
-**Purpose:** Show data quality issues comparing Excel raw vs extracted.
-
-**Grouped by date:**
-- Date header
-- Table per date:
-  - STT column
-  - Mô tả (label)
-  - Excel value (right-aligned, red if null/italic)
-  - Hệ thống value (right-aligned)
-  - Hồ sơ (file name, truncated)
-
-**Issue severities:**
-- missing: 🔴 MISSING (Excel null, system has value)
-- mismatch: 🔴 MISMATCH (both have values but differ)
-- zero: 🟡 ZERO (Excel zero, system zero or missing)
-
-**Empty state:** Success alert "Không có issue nào — tất cả STT đều OK!"
-
-**API Endpoints:**
-- `GET /api/v1/sheets/inspect/by-date?month=4&year=2026`
-  - Returns `SheetInspectDay[]`: `{date, job_count, approved_count, has_issues, jobs[]}`
-  - Each job: `{id, file_name, status, template_id, created_at, stt_values, btk_rows}`
-- `GET /api/v1/sheets/inspect/issues?month=4&year=2026&document_id=...`
-  - Returns `SheetIssue[]`: `{date, stt, label, description, excel_value, system_value, file_name, severity}`
-- `GET /api/v1/sheets/inspect/mapping`
-  - Returns `ColumnMappingRow[]`: `{col_index, col_letter, col_header, stt, field, status}`
-- `GET /api/v1/sheets/names?document_id=...`
-  - Returns `{sheets: string[]}` (worksheet names)
-
----
-
-## 📊 5. Common UI Patterns
-
-### 5.1 Status Badges
+### 4.1 Status Badges
 
 **Variants (from shadcn/ui Badge):**
 - `default` / `secondary` - neutral
@@ -483,13 +360,13 @@ Two modes via Tabs:
 }
 ```
 
-### 5.2 Loading States
+### 4.2 Loading States
 
 - **Button loading:** `<Button disabled><RefreshCw className="animate-spin" /> Đang…</Button>`
 - **Table loading:** Skeleton rows with `animate-pulse bg-muted`
 - **Page loading:** Spinner centered with `h-5 w-5 animate-spin text-muted-foreground`
 
-### 5.3 Error Handling
+### 4.3 Error Handling
 
 - **Toast notifications** (sonner):
   - `toast.success()` - green
@@ -502,7 +379,7 @@ Two modes via Tabs:
   - `variant="success"` - green
   - `variant="destructive"` - red
 
-### 5.4 Tables
+### 4.4 Tables
 
 - Base: `shadcn/ui Table` component
 - Responsive: `overflow-auto` wrapper
@@ -510,7 +387,7 @@ Two modes via Tabs:
 - Zebra striping: implicit via row hover
 - Cell truncation: `truncate` class, `title` attribute for full text
 
-### 5.5 Dialogs
+### 4.5 Dialogs
 
 - **Size variants:**
   - Default: `DialogContent` (max-w-lg)
@@ -521,7 +398,7 @@ Two modes via Tabs:
 
 ---
 
-## 🎨 6. Color & Theme
+## 🎨 5. Color & Theme
 
 **Tailwind Config:**
 - `primary`: Blue (default) - used for active states, primary buttons
@@ -536,7 +413,7 @@ Two modes via Tabs:
 
 ---
 
-## 📱 7. Responsive Design
+## 📱 6. Responsive Design
 
 - **Grid systems:**
   - Dashboard stats: `grid-cols-5` (desktop) → wrap on mobile
@@ -547,7 +424,7 @@ Two modes via Tabs:
 
 ---
 
-## 🔧 8. Component Library (shadcn/ui)
+## 🔧 7. Component Library (shadcn/ui)
 
 **Used Components:**
 - `Button` (variants: default, outline, destructive, ghost, secondary)
@@ -567,32 +444,32 @@ Two modes via Tabs:
 
 ---
 
-## 🚀 9. Key UX Patterns
+## 🚀 8. Key UX Patterns
 
-### 9.1 Optimistic Updates
+### 8.1 Optimistic Updates
 
 - Upload jobs → immediate UI update (optimistic) + toast
 - Retry → immediate state change
 - Approve/Reject → detail panel closes, list refreshes
 
-### 9.2 Progressive Disclosure
+### 8.2 Progressive Disclosure
 
 - Templates: Accordion expand for details
 - Review: Split view (list above, detail below)
 - Export: Two-step (select template → select jobs)
 
-### 9.3 Inline Editing
+### 8.3 Inline Editing
 
 - Review tab: JSON edit inline with validation
 - Template creation: Field editor table with live edits
 
-### 9.4 Visual Hierarchy
+### 8.4 Visual Hierarchy
 
 - **Size:** h1 (text-2xl), h2 (text-xl), h3 (text-base), body (text-sm), helper (text-xs)
 - **Weight:** font-bold (counters), font-semibold (section headers), font-medium (labels)
 - **Color:** Primary (actions), muted-foreground (secondary info), foreground (primary text)
 
-### 9.5 Feedback
+### 8.5 Feedback
 
 - **Loading:** Spinners, disabled buttons, skeleton screens
 - **Success:** Green checkmarks, "Đã thành công" toasts
@@ -601,7 +478,7 @@ Two modes via Tabs:
 
 ---
 
-## 📝 10. Documentation & Annotations
+## 📝 9. Documentation & Annotations
 
 **In-code documentation:**
 - Component interfaces with JSDoc comments
@@ -627,7 +504,7 @@ Two modes via Tabs:
 
 ---
 
-## 🔒 11. Security & Multi-Tenancy
+## 🔒 10. Security & Multi-Tenancy
 
 **Tenant Isolation:**
 - All API calls automatically include `X-Tenant-ID` header (via `api` wrapper)
@@ -641,7 +518,7 @@ Two modes via Tabs:
 
 ---
 
-## 📈 12. Performance Considerations
+## 📈 11. Performance Considerations
 
 - **Virtualization:** None currently - tables could be virtualized for 1000+ rows
 - **Lazy loading:** Report details loaded on demand (`useEffect` when `selectedReportId` changes)
@@ -650,7 +527,7 @@ Two modes via Tabs:
 
 ---
 
-## 🐛 13. Known Issues & Tech Debt
+## 🐛 12. Known Issues & Tech Debt
 
 1. **No real-time updates:** Jobs don't auto-refresh; user must click "Làm mới"
 2. **No pagination:** Job lists load all jobs (could be thousands)
@@ -662,7 +539,7 @@ Two modes via Tabs:
 
 ---
 
-## 🎯 14. Design Principles Recap
+## 🎯 13. Design Principles Recap
 
 From system requirements:
 
@@ -670,13 +547,13 @@ From system requirements:
 |-----------|----------------|
 | **Data-first** | All screens show extracted JSON data; templates are configuration only |
 | **Template Isolation** | Word templates attached to templates but never read directly by UI |
-| **Source Independence** | UI doesn't care if job is PDF or sheet - just shows `parser_used` badge |
-| **Deterministic** | Job data is immutable after ingestion; review edits create new version |
+| **Source Clarity** | UI surfaces the document job status and `parser_used` metadata without source-specific branches |
+| **Deterministic** | Job data is immutable after extraction; review edits create new version |
 | **Auditability** | `source_references` preserved; job history via state transitions |
 
 ---
 
-## 📦 15. Component Checklist for New Features
+## 📦 14. Component Checklist for New Features
 
 When adding new UI screens:
 
@@ -693,7 +570,7 @@ When adding new UI screens:
 
 ---
 
-## 🎓 16. Developer Guide
+## 🎓 15. Developer Guide
 
 **Adding a new tab:**
 1. Create component in `components/extraction/`

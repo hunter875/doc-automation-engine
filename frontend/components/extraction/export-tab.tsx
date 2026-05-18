@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { RefreshCw, Download, Trash2, FileSpreadsheet, FileText, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,7 +87,6 @@ function RenderAggPreview({ data }: { data: Record<string, unknown> }) {
 }
 
 export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
-  const router = useRouter();
   const [reports, setReports] = useState<AggregationReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [selectedReportId, setSelectedReportId] = useState<string>("");
@@ -454,10 +452,6 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
                               <p className="font-medium">{source.row_count ?? reportDetail.total_jobs ?? 0}</p>
                             </div>
                             <div>
-                              <span className="text-muted-foreground">Worksheet:</span>
-                              <p className="font-medium">{(source.sheet_names ?? []).join(", ") || "—"}</p>
-                            </div>
-                            <div>
                               <span className="text-muted-foreground">Khoảng thời gian:</span>
                               <p className="font-medium">
                                 {source.date_range?.start ? formatDate(source.date_range.start) : "—"} - {source.date_range?.end ? formatDate(source.date_range.end) : "—"}
@@ -469,14 +463,6 @@ export function ExportTab({ templates, jobs, onRefreshJobs }: ExportTabProps) {
                     ) : (
                       <p className="text-sm text-muted-foreground">Chưa có metadata nguồn chi tiết.</p>
                     )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      onClick={() => router.push("/extraction?tab=inspect")}
-                    >
-                      🔍 Kiểm tra chi tiết trong Sheet Inspector
-                    </Button>
                   </div>
                 )}
 

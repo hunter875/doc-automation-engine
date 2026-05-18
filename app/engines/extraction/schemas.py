@@ -198,7 +198,7 @@ class CongVanItem(BaseModel):
 
 
 class ChiVienItem(BaseModel):
-    """Danh sách vụ cháy chi viện — sheet CHI VIỆN."""
+    """Danh sách vụ cháy chi viện."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -214,7 +214,7 @@ class ChiVienItem(BaseModel):
 
 
 class VuChayItem(BaseModel):
-    """Danh sách vụ cháy có thống kê — sheet VỤ CHÁY THỐNG KÊ."""
+    """Danh sách vụ cháy có thống kê."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -264,7 +264,7 @@ class BlockExtractionOutput(BaseModel):
     danh_sach_phuong_tien_hu_hong: list[PhuongTienHuHongItem] = Field(default_factory=list)
     danh_sach_cong_van_tham_muu: list[CongVanItem] = Field(default_factory=list)
     danh_sach_cong_tac_khac: list[str] = Field(default_factory=list)
-    # NEW: từ Excel sheets chuyên biệt
+    # Optional incident lists used by downstream reporting.
     danh_sach_chi_vien: list[ChiVienItem] = Field(default_factory=list)
     danh_sach_chay: list[VuChayItem] = Field(default_factory=list)
     tuyen_truyen_online: TuyenTruyenOnline = Field(default_factory=TuyenTruyenOnline)
