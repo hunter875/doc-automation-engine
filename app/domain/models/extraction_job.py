@@ -48,8 +48,8 @@ class ExtractionTemplate(Base):
     # E.g. r"PCCC.*\d{4}" or r"BC_CHAY.*".  NULL means no auto-matching.
     filename_pattern = Column(String(500), nullable=True)
 
-    # Extraction pipeline to use: standard (hybrid LLM), block (deterministic+enrichment), vision
-    extraction_mode = Column(String(20), default="standard", nullable=False, server_default="standard")
+    # Active extraction pipeline: block (deterministic stage 1 + async enrichment)
+    extraction_mode = Column(String(20), default="block", nullable=False, server_default="block")
 
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True, index=True)
@@ -145,8 +145,8 @@ class ExtractionJob(Base):
     # Batch grouping
     batch_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
-    # Extraction mode: standard (pdfplumber+Flash), vision (Pro native PDF), block (layout-aware split pipeline)
-    extraction_mode = Column(String(20), default="standard", nullable=False)
+    # Active extraction mode: block (layout-aware deterministic pipeline + async enrichment)
+    extraction_mode = Column(String(20), default="block", nullable=False)
 
     # State machine — see app.domain.workflow.JobStatus for canonical definition.
     # PENDING → PROCESSING → EXTRACTED → ENRICHING → READY_FOR_REVIEW → APPROVED → AGGREGATED

@@ -30,7 +30,7 @@ class TemplateManager:
         aggregation_rules: dict | None = None,
         word_template_s3_key: str | None = None,
         filename_pattern: str | None = None,
-        extraction_mode: str = "standard",
+        extraction_mode: str = "block",
     ) -> ExtractionTemplate:
         template = ExtractionTemplate(
             tenant_id=tenant_id,

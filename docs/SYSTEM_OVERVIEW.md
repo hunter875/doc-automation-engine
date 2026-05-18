@@ -41,7 +41,6 @@ MinIO (inbox/) → FileOperator → ExtractionJob → BlockPipeline (Stage 1, no
 | **PostgreSQL** | SQLAlchemy + JSONB | Relational schema + JSONB cho extracted_data/aggregated_data |
 | **MinIO** | S3-compatible | Lưu PDF gốc và Word template |
 | **Next.js UI** | `frontend/` | Giao diện quản lý template, job, review, export |
-| **Streamlit UI** | `ui/streamlit_app.py` | Giao diện legacy khi chạy profile cũ |
 
 ## 5. Processing Flow
 

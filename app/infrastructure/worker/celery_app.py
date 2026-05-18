@@ -53,7 +53,6 @@ celery_app.conf.update(
     # Task routing
     task_routes={
         "app.infrastructure.worker.tasks.process_document_task": {"queue": "document_processing"},
-        "app.infrastructure.worker.tasks.generate_embeddings_task": {"queue": "embeddings"},
         "app.infrastructure.worker.extraction_tasks.extract_document_task": {"queue": "extraction"},
         # Enrichment queue — separate worker pool, lower concurrency to bound LLM load
         "app.infrastructure.worker.enrichment_tasks.enrich_job_task": {"queue": "enrichment"},

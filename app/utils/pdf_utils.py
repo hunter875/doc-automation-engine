@@ -183,7 +183,7 @@ class PdfPlumberParser(BaseParser):
             logger.warning(
                 f"Detected Vietnamese mojibake in '{filename}' "
                 f"(confidence={mojibake_confidence:.2f}). "
-                f"Text extraction unreliable — recommend vision mode."
+                f"Text extraction is unreliable; review the source PDF or use an OCR fallback."
             )
 
         return ParseResult(

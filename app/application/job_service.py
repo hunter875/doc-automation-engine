@@ -34,7 +34,7 @@ class JobManager:
         batch_id: str | None = None,
         mode: str = "block",
     ) -> ExtractionJob:
-        parser_map = {"standard": "pdfplumber", "vision": "none", "block": "pdfplumber"}
+        parser_map = {"block": "pdfplumber"}
         job = ExtractionJob(
             tenant_id=tenant_id,
             template_id=template_id,

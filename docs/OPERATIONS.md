@@ -19,8 +19,8 @@ All application services run as Docker containers orchestrated by `docker-compos
 | Container | Image | Port(s) | Responsibility |
 |---|---|---|---|
 | `rag-api` | Local build | `8000` | FastAPI HTTP API — request handling, auth, DB writes |
-| `rag-streamlit` | Local build | `8501` | Streamlit operator UI |
-| `rag-celery-worker` | Local build | — | Queues: `default`, `document_processing`, `embeddings`. Concurrency: 4 |
+| `rag-frontend` | `node:20-alpine` | `3000` | Next.js operator UI |
+| `rag-celery-worker` | Local build | — | Queues: `default`, `document_processing`. Concurrency: 4 |
 | `rag-celery-extraction` | Local build | — | Queue: `extraction`. Concurrency: **1**. Max tasks per child: 10 |
 | `rag-celery-enrichment` | Local build | — | Queue: `enrichment`. Concurrency: 2. Max tasks per child: 10 |
 | `rag-celery-beat` | Local build | — | Celery Beat periodic scheduler |
@@ -38,7 +38,6 @@ All application services run as Docker containers orchestrated by `docker-compos
 | `extraction` | `rag-celery-extraction` | `extract_document_task` |
 | `enrichment` | `rag-celery-enrichment` | `enrich_job_task` |
 | `document_processing` | `rag-celery-worker` | `process_document_task` |
-| `embeddings` | `rag-celery-worker` | `generate_embeddings_task` |
 | `default` | `rag-celery-worker` | Fallback for unrouted tasks |
 
 ### Beat Periodic Tasks
@@ -79,7 +78,7 @@ Docker Compose startup order enforced by `depends_on`:
 1. `postgres` and `redis` start first (health-checked before dependents proceed)
 2. `minio` starts; `minio-init` runs once and exits
 3. `api` starts after postgres + redis healthy
-4. `streamlit` starts after `api`
+4. `frontend` starts after `api`
 5. `celery-worker`, `celery-extraction-worker`, `celery-enrichment-worker` start after postgres + redis
 6. `celery-beat` starts after all three workers
 
@@ -343,8 +342,8 @@ docker compose build api
 docker compose up -d --no-deps api
 
 # Rebuild all application services (not postgres/redis/minio)
-docker compose build api streamlit celery-worker celery-extraction-worker celery-enrichment-worker celery-enrichment-worker celery-beat flower
-docker compose up -d --no-deps api streamlit celery-worker celery-extraction-worker celery-enrichment-worker celery-beat
+docker compose build api celery-worker celery-extraction-worker celery-enrichment-worker celery-beat flower
+docker compose up -d --no-deps api frontend celery-worker celery-extraction-worker celery-enrichment-worker celery-beat
 ```
 
 ### Full clean rebuild

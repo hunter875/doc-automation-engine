@@ -68,14 +68,14 @@ services:
       - rag-network
     restart: unless-stopped
 
-  # Celery Worker — general queues (document_processing, embeddings, default)
+  # Celery Worker - general queues (document_processing, default)
   # concurrency=4 is fine here because these tasks are lightweight I/O ops
   celery-worker:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: rag-celery-worker
-    command: celery -A app.infrastructure.worker.celery_app worker --loglevel=info --concurrency=4 -Q default,document_processing,embeddings --hostname=worker-general@%h
+    command: celery -A app.infrastructure.worker.celery_app worker --loglevel=info --concurrency=4 -Q default,document_processing --hostname=worker-general@%h
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -107,9 +107,8 @@ services:
       - rag-network
     restart: unless-stopped
 
-  # Celery Extraction Worker — LLM/AI tasks chạy tuần tự 1 file / lượt
-  # concurrency=1 đảm bảo chỉ 1 job trích xuất chạy tại một thời điểm,
-  # tránh Ollama bị gọi song song gây OOM và CPU spike.
+  # Celery Extraction Worker - run one LLM extraction at a time.
+  # concurrency=1 keeps Ollama calls serialized to avoid memory spikes.
   celery-extraction-worker:
     build:
       context: .

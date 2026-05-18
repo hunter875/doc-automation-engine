@@ -38,7 +38,7 @@ Word Export — docxtpl + Jinja2 → .docx
 | PDF parsing | pdfplumber |
 | LLM (optional) | Ollama (`qwen2.5:7b-instruct`) via Instructor |
 | Word export | docxtpl + Jinja2 |
-| UI | Next.js frontend + Streamlit legacy profile |
+| UI | Next.js frontend |
 | Container | Docker Compose |
 
 ---
@@ -78,7 +78,6 @@ docs/
 └── OPERATIONS.md
 tests/                             # pytest, 60% coverage minimum
 frontend/                          # Next.js UI
-ui/                                # Streamlit UI (legacy profile)
 scripts/                           # Migration scripts
 ```
 
@@ -110,7 +109,6 @@ docker compose ps
 |---|---|---|
 | `rag-api` | http://localhost:8000 | FastAPI — API chính |
 | `frontend` | http://localhost:3000 | Next.js UI |
-| `rag-streamlit` | http://localhost:8501 | Streamlit UI (legacy, cần `--profile legacy`) |
 | `rag-celery-extraction` | — | Celery worker: queue `extraction`, concurrency=1 |
 | `rag-celery-enrichment` | — | Celery worker: queue `enrichment`, concurrency=2 |
 | `rag-celery-worker` | — | Celery worker: queues `default`, `document_processing` |
@@ -272,5 +270,5 @@ pytest tests/ --cov=app --cov-report=term-missing
 | [docs/SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) | Kiến trúc tổng quan, data authority, success criteria |
 | [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) | Schema chi tiết, write isolation rules, failure handling |
 | [docs/engine2_technical_spec.md](docs/engine2_technical_spec.md) | Two-stage pipeline, enrichment settlement gate, aggregation |
-| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Tất cả 33 endpoints, request/response format |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | API hiện tại cho auth, tenant, document, extraction, review, aggregation |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Vận hành, monitoring, troubleshooting |

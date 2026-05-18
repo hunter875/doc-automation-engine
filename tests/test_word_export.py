@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from app.services import word_export
+from app.utils import word_export
 
 
 def _build_minimal_docx(document_xml: str) -> bytes:

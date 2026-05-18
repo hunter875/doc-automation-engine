@@ -206,7 +206,7 @@ class TemplateResponse(BaseModel):
     aggregation_rules: Optional[dict]
     word_template_s3_key: Optional[str] = None
     filename_pattern: Optional[str] = None
-    extraction_mode: str = "standard"
+    extraction_mode: str = "block"
     version: int
     is_active: bool
     created_by: Optional[uuid.UUID]
@@ -230,14 +230,14 @@ class TemplateListResponse(BaseModel):
 # ──────────────────────────────────────────────
 
 # Extraction modes
-EXTRACTION_MODES = {"standard", "vision", "block"}
+EXTRACTION_MODES = {"block"}
 
 
 class JobCreate(BaseModel):
     """Request: create a single extraction job."""
 
     template_id: uuid.UUID
-    mode: str = Field("standard", pattern=r"^(standard|vision|block)$")
+    mode: str = Field("block", pattern=r"^(block)$")
 
 
 class JobFromDocumentCreate(BaseModel):
@@ -245,14 +245,14 @@ class JobFromDocumentCreate(BaseModel):
 
     document_id: uuid.UUID
     template_id: uuid.UUID
-    mode: str = Field("standard", pattern=r"^(standard|vision|block)$")
+    mode: str = Field("block", pattern=r"^(block)$")
 
 
 class BatchJobCreate(BaseModel):
     """Request: batch job creation (template_id from form field)."""
 
     template_id: uuid.UUID
-    mode: str = Field("standard", pattern=r"^(standard|vision|block)$")
+    mode: str = Field("block", pattern=r"^(block)$")
 
 
 class JobResponse(BaseModel):
@@ -265,7 +265,7 @@ class JobResponse(BaseModel):
     file_name: Optional[str] = None
     display_name: Optional[str] = None
     batch_id: Optional[uuid.UUID]
-    extraction_mode: str = "standard"
+    extraction_mode: str = "block"
     status: str
     extracted_data: Optional[dict] = Field(default=None, validation_alias="final_data")
     confidence_scores: Optional[dict]

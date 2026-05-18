@@ -1,7 +1,7 @@
-"""Thin CLI runner — delegates to block mode pipeline + business rules.
+"""Thin CLI runner - delegates to the block mode pipeline + business rules.
 
-All business logic lives in app/business/.
-All pipeline logic lives in app/services/block_extraction_pipeline.py.
+Business rules live under app/domain/rules/.
+The block pipeline lives in app/engines/extraction/block_pipeline.py.
 This file only handles: CLI entry, DB persistence, JSON output.
 """
 
@@ -63,7 +63,7 @@ def save_to_db(filename, raw_text, structured, json_out):
 def run_pipeline(pdf_path):
     init_db()
 
-    print("STEP 1 — Block Mode Pipeline (layout → detect → extract → enforce → validate)")
+    print("STEP 1 - Block Mode Pipeline (layout -> detect -> extract -> enforce -> validate)")
     workflow = BlockBusinessWorkflow()
 
     with open(pdf_path, "rb") as f:
@@ -71,17 +71,17 @@ def run_pipeline(pdf_path):
 
     result = workflow.run_from_bytes(pdf_bytes, pdf_path)
 
-    print("STEP 2 — Build Final Payload")
+    print("STEP 2 - Build Final Payload")
     final = workflow.build_final_payload(pdf_path, result)
 
-    print("STEP 3 — Save Output")
+    print("STEP 3 - Save Output")
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         json.dump(final, f, indent=2, ensure_ascii=False)
 
     raw = json.dumps(final, ensure_ascii=False)
     save_to_db(pdf_path, raw, raw, raw)
 
-    print(f"DONE — status={result['status']}, business_errors={result['business_data'].get('errors', [])}")
+    print(f"DONE - status={result['status']}, business_errors={result['business_data'].get('errors', [])}")
 
 
 # ==========================================================

@@ -76,7 +76,7 @@
 | `template_id` | UUID FK → extraction_templates | |
 | `document_id` | UUID FK → documents | |
 | `batch_id` | UUID | Nullable — groups N jobs from one upload |
-| `extraction_mode` | VARCHAR(20) | `block` \| `standard` \| `vision` |
+| `extraction_mode` | VARCHAR(20) | `block` |
 | `status` | VARCHAR(30) | See §6 state machine |
 | `extracted_data` | JSONB | Stage 1 deterministic output |
 | `confidence_scores` | JSONB | `{_validation_report: {...}, _validation_attempts: int}` |

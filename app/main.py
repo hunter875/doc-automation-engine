@@ -60,8 +60,9 @@ async def lifespan(app: FastAPI):
             text(
                 """
                 UPDATE extraction_templates
-                SET extraction_mode = 'standard'
+                SET extraction_mode = 'block'
                 WHERE extraction_mode IS NULL
+                   OR extraction_mode IN ('standard', 'vision', 'fast')
                 """
             )
         )
@@ -69,7 +70,7 @@ async def lifespan(app: FastAPI):
             text(
                 """
                 ALTER TABLE IF EXISTS extraction_templates
-                ALTER COLUMN extraction_mode SET DEFAULT 'standard'
+                ALTER COLUMN extraction_mode SET DEFAULT 'block'
                 """
             )
         )

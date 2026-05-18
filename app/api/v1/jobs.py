@@ -508,7 +508,7 @@ def get_jobs_by_date(
       - has_issues: True if any job has extraction issues
       - jobs: list of job summaries
     """
-    from datetime import date
+    from datetime import date, timedelta
     from calendar import monthrange
     from app.domain.models.extraction_job import ExtractionJob, ExtractionJobStatus
 
@@ -517,13 +517,14 @@ def get_jobs_by_date(
 
     start = date(year, month, 1)
     end = date(year, month, last_day)
+    end_exclusive = end + timedelta(days=1)
 
     jobs = (
         db.query(ExtractionJob)
         .filter(
             ExtractionJob.tenant_id == tid,
             ExtractionJob.created_at >= start,
-            ExtractionJob.created_at <= end,
+            ExtractionJob.created_at < end_exclusive,
         )
         .order_by(ExtractionJob.created_at.desc())
         .all()
@@ -551,16 +552,16 @@ def get_jobs_by_date(
 
         status = job.status or ""
         is_approved = status in (
-            ExtractionJobStatus.APPROVED.value,
-            ExtractionJobStatus.AGGREGATED.value,
+            ExtractionJobStatus.APPROVED,
+            ExtractionJobStatus.AGGREGATED,
         )
         if is_approved:
             entry["approved_count"] += 1
 
         # Mark issues if job has failed or has errors in extracted_data
-        if status == ExtractionJobStatus.FAILED.value:
+        if status == ExtractionJobStatus.FAILED:
             entry["has_issues"] = True
-        elif status == ExtractionJobStatus.READY_FOR_REVIEW.value:
+        elif status == ExtractionJobStatus.READY_FOR_REVIEW:
             # Check if extracted_data has missing STTs (heuristic)
             ed = job.extracted_data or {}
             if isinstance(ed, dict):
@@ -577,7 +578,6 @@ def get_jobs_by_date(
         })
 
     # Fill in all days of the month (even empty ones) for the calendar grid
-    from datetime import timedelta
     result = []
     current = start
     while current <= end:

@@ -217,23 +217,9 @@ def poll_inbox():
     return result
 
 
-def _auto_detect_mode(content: bytes) -> str:
-    """Detect extraction mode from PDF content."""
-    try:
-        import io
-        import pdfplumber
-
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            if not pdf.pages:
-                return "standard"
-            page = pdf.pages[0]
-            text = (page.extract_text() or "").strip()
-            tables = page.find_tables()
-            if tables or len(text) < 100:
-                return "block"
-            return "standard"
-    except Exception:
-        return "standard"
+def _auto_detect_mode(_content: bytes) -> str:
+    """Return the active extraction mode for picked-up PDFs."""
+    return "block"
 
 
 def _extract_first_page_text(content: bytes) -> str:
